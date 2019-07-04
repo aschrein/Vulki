@@ -1,0 +1,33 @@
+cmake_minimum_required(VERSION 2.8 FATAL_ERROR)
+cmake_policy(VERSION 2.8)
+
+set(NAME GRAPHICS_EXPERIMENTS)
+include_directories(3rdparty)
+include_directories(src)
+project(${NAME})
+
+find_package(Vulkan REQUIRED)
+find_package(glfw3 3.3 REQUIRED)
+IF (NOT Vulkan_FOUND)
+    find_library(Vulkan_LIBRARY NAMES vulkan HINTS "$ENV{VULKAN_SDK}/lib" "${CMAKE_SOURCE_DIR}/libs/vulkan" REQUIRED)
+    IF (Vulkan_LIBRARY)
+        set(Vulkan_FOUND ON)
+        MESSAGE("Using bundled Vulkan library version")
+    ENDIF()
+ENDIF()
+
+IF (NOT Vulkan_FOUND)
+	message(FATAL_ERROR "Could not find Vulkan library!")
+ELSE()
+	message(STATUS ${Vulkan_LIBRARY})
+ENDIF()
+
+add_definitions(-D_CRT_SECURE_NO_WARNINGS -fpermissive -std=c++17)
+# add_definitions(-std=c++17)
+# add_subdirectory(3rdparty/glfw)
+file(GLOB SOURCE src/*.cpp)
+
+add_executable(GRAPHICS_EXPERIMENTS ${SOURCE})
+target_include_directories(GRAPHICS_EXPERIMENTS PRIVATE ${Vulkan_INCLUDE_DIRS})
+target_link_libraries(GRAPHICS_EXPERIMENTS ${Vulkan_LIBRARY} glfw glslang)
+target_link_libraries(GRAPHICS_EXPERIMENTS PRIVATE shaderc_shared)
