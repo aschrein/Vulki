@@ -1,13 +1,11 @@
+#include "../include/device.hpp"
 #include "../include/error_handling.hpp"
+#include "../include/memory.hpp"
 #include "../include/shader_compiler.hpp"
 #include "gtest/gtest.h"
 #include <cstring>
-#define GLFW_INCLUDE_NONE
-#define GLFW_INCLUDE_VULKAN
 
-#include <GLFW/glfw3.h>
 #include <glm/vec3.hpp>
-#include <vulkan/vulkan.hpp>
 using namespace glm;
 
 TEST(spirv_test, simple) {
@@ -105,204 +103,9 @@ TEST(graphics, vulkan_glfw) {
   glfwTerminate();
 }
 
-PFN_vkCreateDebugReportCallbackEXT pfnVkCreateDebugReportCallbackEXT;
-PFN_vkDestroyDebugReportCallbackEXT pfnVkDestroyDebugReportCallbackEXT;
-
-VKAPI_ATTR VkResult VKAPI_CALL vkCreateDebugReportCallbackEXT(
-    VkInstance instance, const VkDebugReportCallbackCreateInfoEXT *pCreateInfo,
-    const VkAllocationCallbacks *pAllocator,
-    VkDebugReportCallbackEXT *pCallback) {
-  return pfnVkCreateDebugReportCallbackEXT(instance, pCreateInfo, pAllocator,
-                                           pCallback);
-}
-
-VKAPI_ATTR void VKAPI_CALL vkDestroyDebugReportCallbackEXT(
-    VkInstance instance, VkDebugReportCallbackEXT callback,
-    const VkAllocationCallbacks *pAllocator) {
-  pfnVkDestroyDebugReportCallbackEXT(instance, callback, pAllocator);
-}
-
-VKAPI_ATTR VkBool32 VKAPI_CALL dbgFunc(VkDebugReportFlagsEXT flags,
-                                       VkDebugReportObjectTypeEXT /*objType*/,
-                                       uint64_t /*srcObject*/,
-                                       size_t /*location*/, int32_t msgCode,
-                                       const char *pLayerPrefix,
-                                       const char *pMsg, void * /*pUserData*/) {
-  std::ostringstream message;
-
-  switch (flags) {
-  case VK_DEBUG_REPORT_INFORMATION_BIT_EXT:
-    message << "INFORMATION: ";
-    break;
-  case VK_DEBUG_REPORT_WARNING_BIT_EXT:
-    message << "WARNING: ";
-    break;
-  case VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT:
-    message << "PERFORMANCE WARNING: ";
-    break;
-  case VK_DEBUG_REPORT_ERROR_BIT_EXT:
-    message << "ERROR: ";
-    break;
-  case VK_DEBUG_REPORT_DEBUG_BIT_EXT:
-    message << "DEBUG: ";
-    break;
-  default:
-    message << "unknown flag (" << flags << "): ";
-    break;
-  }
-  message << "[" << pLayerPrefix << "] Code " << msgCode << " : " << pMsg;
-
-#ifdef _WIN32
-  MessageBox(NULL, message.str().c_str(), "Alert", MB_OK);
-#else
-  std::cout << message.str() << std::endl;
-#endif
-
-  return false;
-}
-
-static char const *AppName = "CreateDebugReportCallback";
-static char const *EngineName = "Vulkan.hpp";
-bool checkLayers(std::vector<char const *> const &layers,
-                 std::vector<vk::LayerProperties> const &properties) {
-  // return true if all layers are listed in the properties
-  return std::all_of(
-      layers.begin(), layers.end(), [&properties](char const *name) {
-        return std::find_if(properties.begin(), properties.end(),
-                            [&name](vk::LayerProperties const &property) {
-                              return strcmp(property.layerName, name) == 0;
-                            }) != properties.end();
-      });
-}
 TEST(graphics, vulkan_compute_init) {
-  std::vector<vk::LayerProperties> instanceLayerProperties =
-      vk::enumerateInstanceLayerProperties();
-
-  std::vector<char const *> instanceLayerNames;
-  instanceLayerNames.push_back("VK_LAYER_LUNARG_standard_validation");
-  ASSERT_PANIC(checkLayers(instanceLayerNames, instanceLayerProperties));
-  std::vector<vk::ExtensionProperties> props =
-      vk::enumerateInstanceExtensionProperties();
-
-  auto propsIterator = std::find_if(
-      props.begin(), props.end(), [](vk::ExtensionProperties const &ep) {
-        return strcmp(ep.extensionName, VK_EXT_DEBUG_REPORT_EXTENSION_NAME) ==
-               0;
-      });
-  ASSERT_PANIC(propsIterator != props.end());
-
-  vk::ApplicationInfo applicationInfo(AppName, 1, EngineName, 1,
-                                      VK_API_VERSION_1_1);
-
-  std::vector<char const *> instanceExtensionNames;
-  instanceExtensionNames.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
-  vk::InstanceCreateInfo instanceCreateInfo(
-      vk::InstanceCreateFlags(), &applicationInfo,
-      static_cast<uint32_t>(instanceLayerNames.size()),
-      instanceLayerNames.data(),
-      static_cast<uint32_t>(instanceExtensionNames.size()),
-      instanceExtensionNames.data());
-  vk::UniqueInstance instance = vk::createInstanceUnique(instanceCreateInfo);
-
-  pfnVkCreateDebugReportCallbackEXT =
-      reinterpret_cast<PFN_vkCreateDebugReportCallbackEXT>(
-          instance->getProcAddr("vkCreateDebugReportCallbackEXT"));
-  ASSERT_PANIC(pfnVkCreateDebugReportCallbackEXT);
-
-  pfnVkDestroyDebugReportCallbackEXT =
-      reinterpret_cast<PFN_vkDestroyDebugReportCallbackEXT>(
-          instance->getProcAddr("vkDestroyDebugReportCallbackEXT"));
-  ASSERT_PANIC(pfnVkDestroyDebugReportCallbackEXT);
-
-  vk::UniqueDebugReportCallbackEXT debugReportCallback =
-      instance->createDebugReportCallbackEXTUnique(
-          vk::DebugReportCallbackCreateInfoEXT(
-              vk::DebugReportFlagBitsEXT::eError |
-                  vk::DebugReportFlagBitsEXT::eWarning,
-              dbgFunc));
-
-  ASSERT_PANIC(instance);
-  vk::PhysicalDevice physicalDevice =
-      instance->enumeratePhysicalDevices().front();
-  std::vector<vk::QueueFamilyProperties> queue_family_properties =
-      physicalDevice.getQueueFamilyProperties();
-  size_t compute_queue_id = std::distance(
-      queue_family_properties.begin(),
-      std::find_if(queue_family_properties.begin(),
-                   queue_family_properties.end(),
-                   [](vk::QueueFamilyProperties const &qfp) {
-                     return qfp.queueFlags & vk::QueueFlagBits::eCompute;
-                   }));
-  ASSERT_PANIC(compute_queue_id < queue_family_properties.size());
-  float queuePriority = 0.0f;
-  vk::DeviceQueueCreateInfo deviceQueueCreateInfo(
-      vk::DeviceQueueCreateFlags(), static_cast<uint32_t>(compute_queue_id), 1,
-      &queuePriority);
-  vk::UniqueDevice device = physicalDevice.createDeviceUnique(
-      vk::DeviceCreateInfo(vk::DeviceCreateFlags(), 1, &deviceQueueCreateInfo));
-  ASSERT_PANIC(device);
-  // auto descset_pool =
-  //     device->createDescriptorPoolUnique(vk::DescriptorPoolCreateInfo(
-  //         vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 1, 1));
-  vk::DescriptorPoolSize aPoolSizes[] = {
-      {vk::DescriptorType::eSampler, 1000},
-      {vk::DescriptorType::eCombinedImageSampler, 1000},
-      {vk::DescriptorType::eSampledImage, 1000},
-      {vk::DescriptorType::eStorageImage, 1000},
-      {vk::DescriptorType::eUniformTexelBuffer, 1000},
-      {vk::DescriptorType::eStorageTexelBuffer, 1000},
-      {vk::DescriptorType::eCombinedImageSampler, 1000},
-      {vk::DescriptorType::eStorageBuffer, 1000},
-      {vk::DescriptorType::eUniformBufferDynamic, 1000},
-      {vk::DescriptorType::eStorageBufferDynamic, 1000},
-      {vk::DescriptorType::eInputAttachment, 1000}};
-  auto descset_pool = device->createDescriptorPoolUnique(vk::DescriptorPoolCreateInfo(
-      vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 1000 * 11, 11,
-      aPoolSizes));
-  vk::DescriptorSet descSet;
-  //   layout (set = 0, binding = 0, rgba8) uniform writeonly image2D
-  //   resultImage;
-  // #extension GL_KHR_shader_subgroup_vote: enable
-  // #extension GL_KHR_shader_subgroup_shuffle: enable
-  struct UBO {
-    vec3 camera_pos;
-    float _pad_0;
-    vec3 camera_look;
-    float _pad_1;
-    vec3 camera_up;
-    float _pad_2;
-    vec3 camera_right;
-    float _pad_3;
-    float camera_fov;
-    float ug_size;
-    uint ug_bins_count;
-    float ug_bin_size;
-  };
-  // layout (set = 0, binding = 1, std140) uniform UBO
-  // {
-  //     vec3 camera_pos;
-  //     vec3 camera_look;
-  //     vec3 camera_up;
-  //     vec3 camera_right;
-  //     float camera_fov;
-  //     float ug_size;
-  //     uint ug_bins_count;
-  //     float ug_bin_size;
-  // } g_ubo;
-  // layout(set = 0, binding = 2) buffer Bins {
-  //     uint data[];
-  // } g_bins;
-  // layout(set = 0, binding = 3) buffer Particles {
-  //     float data[];
-  // } g_particles;
-  // vk::DescriptorSetLayoutBinding descset_bindings[] = {
-  //     {0, vk::DescriptorType::eStorageImage, 1,
-  //     vk::ShaderStageFlagBits::eAll}, {1, vk::DescriptorType::eUniformBuffer,
-  //     1, vk::ShaderStageFlagBits::eAll}, {2,
-  //     vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eAll},
-  //     {3, vk::DescriptorType::eStorageBuffer, 1,
-  //     vk::ShaderStageFlagBits::eAll},
-  // };
+  auto device_wrapper = init_device();
+  auto &device = device_wrapper.device;
   vk::PipelineShaderStageCreateInfo shaderStage;
   shaderStage.stage = vk::ShaderStageFlagBits::eCompute;
   auto module_pair =
@@ -320,27 +123,92 @@ TEST(graphics, vulkan_compute_init) {
             .setBindingCount(set_bindings.size())));
     raw_set_layouts.push_back(set_layouts.back().get());
   }
-  std::vector<vk::UniqueDescriptorSet> desc_sets = device->allocateDescriptorSetsUnique(
-        vk::DescriptorSetAllocateInfo()
-            .setPSetLayouts(&raw_set_layouts[0])
-            .setDescriptorPool(descset_pool.get())
-            .setDescriptorSetCount(raw_set_layouts.size()));
-  // auto descLayout =
-  //     device->createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo(
-  //         vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR, 1,
-  //         &vk::DescriptorSetLayoutBinding(
-  //             0u, vk::DescriptorType::eUniformBuffer, 1,
-  //             vk::ShaderStageFlagBits::eAllGraphics, nullptr)));
+  std::vector<vk::UniqueDescriptorSet> desc_sets =
+      device->allocateDescriptorSetsUnique(
+          vk::DescriptorSetAllocateInfo()
+              .setPSetLayouts(&raw_set_layouts[0])
+              .setDescriptorPool(device_wrapper.descset_pool.get())
+              .setDescriptorSetCount(raw_set_layouts.size()));
   vk::UniquePipelineLayout pipeline_layout = device->createPipelineLayoutUnique(
       vk::PipelineLayoutCreateInfo()
           .setPSetLayouts(&raw_set_layouts[0])
           .setSetLayoutCount(raw_set_layouts.size()));
   vk::UniquePipeline compute_pipeline = device->createComputePipelineUnique(
-      vk::PipelineCache(),
-      vk::ComputePipelineCreateInfo()
-          .setStage(shaderStage)
-          .setLayout(pipeline_layout.get()));
+      vk::PipelineCache(), vk::ComputePipelineCreateInfo()
+                               .setStage(shaderStage)
+                               .setLayout(pipeline_layout.get()));
   ASSERT_PANIC(compute_pipeline);
+  Alloc_State alloc_state =
+      Alloc_State::create(device.get(), device_wrapper.physical_device);
+  auto uniform_buffer = alloc_state.allocate_buffer(
+      vk::BufferCreateInfo().setSize(1 << 16).setUsage(
+          vk::BufferUsageFlagBits::eUniformBuffer),
+      VMA_MEMORY_USAGE_GPU_ONLY);
+  {
+    auto uniform_buffer_1 = std::move(uniform_buffer);
+    ASSERT_PANIC(uniform_buffer_1.buffer);
+    ASSERT_PANIC(!uniform_buffer.buffer);
+    uniform_buffer = std::move(uniform_buffer_1);
+    ASSERT_PANIC(!uniform_buffer_1.buffer);
+    ASSERT_PANIC(uniform_buffer.buffer);
+  }
+}
+
+TEST(graphics, vulkan_compute_simple) {
+  auto device_wrapper = init_device();
+  auto &device = device_wrapper.device;
+
+  vk::PipelineShaderStageCreateInfo shaderStage;
+  shaderStage.stage = vk::ShaderStageFlagBits::eCompute;
+  auto module_pair =
+      create_shader_module(device.get(), "../shaders/simple_mul16.comp.glsl",
+                           vk::ShaderStageFlagBits::eCompute);
+  shaderStage.module = module_pair.first.get();
+  shaderStage.pName = "main";
+  std::vector<vk::UniqueDescriptorSetLayout> set_layouts;
+  std::vector<vk::DescriptorSetLayout> raw_set_layouts;
+  ASSERT_PANIC(shaderStage.module);
+  for (auto &set_bindings : module_pair.second) {
+    set_layouts.push_back(device->createDescriptorSetLayoutUnique(
+        vk::DescriptorSetLayoutCreateInfo()
+            .setPBindings(&set_bindings[0])
+            .setBindingCount(set_bindings.size())));
+    raw_set_layouts.push_back(set_layouts.back().get());
+  }
+  std::vector<vk::UniqueDescriptorSet> desc_sets =
+      device->allocateDescriptorSetsUnique(
+          vk::DescriptorSetAllocateInfo()
+              .setPSetLayouts(&raw_set_layouts[0])
+              .setDescriptorPool(device_wrapper.descset_pool.get())
+              .setDescriptorSetCount(raw_set_layouts.size()));
+  vk::UniquePipelineLayout pipeline_layout = device->createPipelineLayoutUnique(
+      vk::PipelineLayoutCreateInfo()
+          .setPSetLayouts(&raw_set_layouts[0])
+          .setSetLayoutCount(raw_set_layouts.size()));
+  vk::UniquePipeline compute_pipeline = device->createComputePipelineUnique(
+      vk::PipelineCache(), vk::ComputePipelineCreateInfo()
+                               .setStage(shaderStage)
+                               .setLayout(pipeline_layout.get()));
+  ASSERT_PANIC(compute_pipeline);
+  Alloc_State alloc_state =
+      Alloc_State::create(device.get(), device_wrapper.physical_device);
+  size_t N = 1 << 16;
+  auto storage_buffer =
+      alloc_state.allocate_buffer(vk::BufferCreateInfo().setSize(N * sizeof(uint32_t)).setUsage(
+                                      vk::BufferUsageFlagBits::eStorageBuffer),
+                                  VMA_MEMORY_USAGE_GPU_ONLY);
+  auto staging_buffer =
+      alloc_state.allocate_buffer(vk::BufferCreateInfo().setSize(N * sizeof(uint32_t)).setUsage(
+                                      vk::BufferUsageFlagBits::eTransferSrc |
+                                      vk::BufferUsageFlagBits::eTransferDst),
+                                  VMA_MEMORY_USAGE_CPU_TO_GPU);
+  void *data = staging_buffer.map();
+  uint32_t *typed_data = (uint32_t*)data;
+  for (uint32_t i = 0; i < N; i++) {
+    typed_data[i] = i;
+  }
+  staging_buffer.unmap();
+  
 }
 
 int main(int argc, char **argv) {
