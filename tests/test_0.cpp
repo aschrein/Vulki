@@ -6,8 +6,8 @@
 #define GLFW_INCLUDE_VULKAN
 
 #include <GLFW/glfw3.h>
-#include <vulkan/vulkan.hpp>
 #include <glm/vec3.hpp>
+#include <vulkan/vulkan.hpp>
 using namespace glm;
 
 TEST(spirv_test, simple) {
@@ -256,7 +256,7 @@ TEST(graphics, vulkan_compute_init) {
       {vk::DescriptorType::eUniformBufferDynamic, 1000},
       {vk::DescriptorType::eStorageBufferDynamic, 1000},
       {vk::DescriptorType::eInputAttachment, 1000}};
-  auto descset_pool = device->createDescriptorPool(vk::DescriptorPoolCreateInfo(
+  auto descset_pool = device->createDescriptorPoolUnique(vk::DescriptorPoolCreateInfo(
       vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 1000 * 11, 11,
       aPoolSizes));
   vk::DescriptorSet descSet;
@@ -295,37 +295,50 @@ TEST(graphics, vulkan_compute_init) {
   // layout(set = 0, binding = 3) buffer Particles {
   //     float data[];
   // } g_particles;
-  vk::DescriptorSetLayoutBinding descset_bindings[] = {
-      {0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eAll},
-      {1, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eAll},
-      {2, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eAll},
-      {3, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eAll},
-  };
-  vk::UniqueDescriptorSetLayout descset_layout =
-      device->createDescriptorSetLayoutUnique(
-          vk::DescriptorSetLayoutCreateInfo()
-              .setPBindings(descset_bindings)
-              .setBindingCount(ARRAY_SIZE(descset_bindings)));
-  device->allocateDescriptorSets(&vk::DescriptorSetAllocateInfo()
-                                      .setPSetLayouts(&descset_layout.get())
-                                      .setDescriptorPool(descset_pool)
-                                      .setDescriptorSetCount(1),
-                                 &descSet);
+  // vk::DescriptorSetLayoutBinding descset_bindings[] = {
+  //     {0, vk::DescriptorType::eStorageImage, 1,
+  //     vk::ShaderStageFlagBits::eAll}, {1, vk::DescriptorType::eUniformBuffer,
+  //     1, vk::ShaderStageFlagBits::eAll}, {2,
+  //     vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eAll},
+  //     {3, vk::DescriptorType::eStorageBuffer, 1,
+  //     vk::ShaderStageFlagBits::eAll},
+  // };
+  vk::PipelineShaderStageCreateInfo shaderStage;
+  shaderStage.stage = vk::ShaderStageFlagBits::eCompute;
+  auto module_pair =
+      create_shader_module(device.get(), "../shaders/raymarch.comp.glsl",
+                           vk::ShaderStageFlagBits::eCompute);
+  shaderStage.module = module_pair.first.get();
+  shaderStage.pName = "main";
+  std::vector<vk::UniqueDescriptorSetLayout> set_layouts;
+  std::vector<vk::DescriptorSetLayout> raw_set_layouts;
+  ASSERT_PANIC(shaderStage.module);
+  for (auto &set_bindings : module_pair.second) {
+    set_layouts.push_back(device->createDescriptorSetLayoutUnique(
+        vk::DescriptorSetLayoutCreateInfo()
+            .setPBindings(&set_bindings[0])
+            .setBindingCount(set_bindings.size())));
+    raw_set_layouts.push_back(set_layouts.back().get());
+  }
+  std::vector<vk::UniqueDescriptorSet> desc_sets = device->allocateDescriptorSetsUnique(
+        vk::DescriptorSetAllocateInfo()
+            .setPSetLayouts(&raw_set_layouts[0])
+            .setDescriptorPool(descset_pool.get())
+            .setDescriptorSetCount(raw_set_layouts.size()));
   // auto descLayout =
   //     device->createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo(
   //         vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR, 1,
   //         &vk::DescriptorSetLayoutBinding(
   //             0u, vk::DescriptorType::eUniformBuffer, 1,
   //             vk::ShaderStageFlagBits::eAllGraphics, nullptr)));
-  vk::UniquePipelineLayout pipeline_layout =
-      device->createPipelineLayoutUnique(vk::PipelineLayoutCreateInfo()
-                                             .setPSetLayouts(&descset_layout.get())
-                                             .setSetLayoutCount(1));
+  vk::UniquePipelineLayout pipeline_layout = device->createPipelineLayoutUnique(
+      vk::PipelineLayoutCreateInfo()
+          .setPSetLayouts(&raw_set_layouts[0])
+          .setSetLayoutCount(raw_set_layouts.size()));
   vk::UniquePipeline compute_pipeline = device->createComputePipelineUnique(
       vk::PipelineCache(),
       vk::ComputePipelineCreateInfo()
-          .setStage(load_shader(device.get(), "../shaders/raymarch.comp.glsl",
-                                vk::ShaderStageFlagBits::eCompute))
+          .setStage(shaderStage)
           .setLayout(pipeline_layout.get()));
   ASSERT_PANIC(compute_pipeline);
 }

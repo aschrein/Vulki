@@ -28,7 +28,7 @@ set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
 set(SPIRV_CROSS_SHARED ON)
 add_subdirectory(3rdparty/SPIRV-Cross)
 file(GLOB SOURCE src/*.cpp)
-file(GLOB 3RD_SOURCE 3rdparty/SPIRV-Reflect/spirv_reflect.c)
+# file(GLOB 3RD_SOURCE 3rdparty/SPIRV-Reflect/spirv_reflect.c)
 
 add_executable(GRAPHICS_EXPERIMENTS ${SOURCE} ${3RD_SOURCE})
 target_include_directories(GRAPHICS_EXPERIMENTS PRIVATE ${Vulkan_INCLUDE_DIRS})

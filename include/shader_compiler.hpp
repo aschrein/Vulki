@@ -1,11 +1,11 @@
 #pragma once
+#include <SPIRV-Cross/spirv_cross.hpp>
 #include <fstream>
 #include <iostream>
 #include <shaderc/shaderc.hpp>
 #include <string>
 #include <vector>
 #include <vulkan/vulkan.hpp>
-#include <SPIRV-Cross/spirv_cross.hpp>
 // Returns GLSL shader source text after preprocessing.
 static std::string preprocess_shader(const std::string &source_name,
                                      shaderc_shader_kind kind,
@@ -81,9 +81,10 @@ static std::vector<uint32_t> compile_file(const std::string &source_name,
   return {module.cbegin(), module.cend()};
 }
 int parse_descriptors(std::vector<uint32_t> const &spirv);
-vk::ShaderModule create_shader_module(vk::Device &device,
-                                      const std::string &source_name,
-                                      vk::ShaderStageFlagBits stage) {
+std::pair<vk::UniqueShaderModule,
+          std::vector<std::vector<vk::DescriptorSetLayoutBinding>>>
+create_shader_module(vk::Device &device, const std::string &source_name,
+                     vk::ShaderStageFlagBits stage) {
   std::ifstream is(source_name,
                    std::ios::binary | std::ios::in | std::ios::ate);
 
@@ -115,15 +116,44 @@ vk::ShaderModule create_shader_module(vk::Device &device,
   }
   auto shader_code = compile_file(source_name, kind, shader_text);
   // parse_descriptors(shader_code);
+  std::vector<std::vector<vk::DescriptorSetLayoutBinding>> descbinds;
   {
     spirv_cross::Compiler comp(shader_code);
     spirv_cross::ShaderResources res = comp.get_shader_resources();
-    for (auto &item : res.storage_buffers) {
+
+    auto printResource = [&](spirv_cross::Resource &item) {
       std::cout << item.name << "\n";
-      std::cout << comp.get_decoration(item.type_id, spv::Decoration::DecorationBinding) << "\n";
-      std::cout << comp.get_decoration(item.id, spv::Decoration::DecorationBinding) << "\n";
+      std::cout << item.type_id << "\n";
+      std::cout << comp.get_decoration(item.id,
+                                       spv::Decoration::DecorationBinding)
+                << "\n";
+    };
+    auto pushResource = [&](vk::DescriptorType type,
+                            spirv_cross::Resource &item) {
+      auto set_id = comp.get_decoration(
+          item.id, spv::Decoration::DecorationDescriptorSet);
+      auto bind_id =
+          comp.get_decoration(item.id, spv::Decoration::DecorationBinding);
+      if (set_id + 1 > descbinds.size()) {
+        descbinds.resize(set_id + 1);
+      }
+      // if (bind_id + 1 > descbinds[set_id].size()) {
+      //   descbinds[set_id].resize(set_id + 1);
+      // }
+      descbinds[set_id].emplace_back(bind_id, type, 1, stage);
+    };
+    for (auto &item : res.storage_buffers) {
+      pushResource(vk::DescriptorType::eStorageBuffer, item);
     }
-    
+    for (auto &item : res.sampled_images) {
+      pushResource(vk::DescriptorType::eSampledImage, item);
+    }
+    for (auto &item : res.storage_images) {
+      pushResource(vk::DescriptorType::eStorageImage, item);
+    }
+    for (auto &item : res.uniform_buffers) {
+      pushResource(vk::DescriptorType::eUniformBuffer, item);
+    }
   }
   vk::ShaderModuleCreateInfo moduleCreateInfo;
   moduleCreateInfo.codeSize = shader_code.size() * 4;
@@ -132,7 +162,7 @@ vk::ShaderModule create_shader_module(vk::Device &device,
 
   ;
 
-  return device.createShaderModule(moduleCreateInfo);
+  return {device.createShaderModuleUnique(moduleCreateInfo), descbinds};
 }
 
 VkPipelineShaderStageCreateInfo load_shader(vk::Device &device,
@@ -140,7 +170,8 @@ VkPipelineShaderStageCreateInfo load_shader(vk::Device &device,
                                             vk::ShaderStageFlagBits stage) {
   vk::PipelineShaderStageCreateInfo shaderStage;
   shaderStage.stage = stage;
-  shaderStage.module = create_shader_module(device, source_name, stage);
+  auto module_pair = create_shader_module(device, source_name, stage);
+  shaderStage.module = module_pair.first.get();
   shaderStage.pName = "main";
   ASSERT_PANIC(shaderStage.module);
   return shaderStage;
