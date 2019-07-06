@@ -80,7 +80,12 @@ void Device_Wrapper::update_swap_chain() {
       this->physical_device.getSurfaceFormatsKHR(this->surface);
   auto surface_present_modes =
       this->physical_device.getSurfacePresentModesKHR(this->surface);
+  this->cur_backbuffer_height = caps.currentExtent.height;
+  this->cur_backbuffer_width = caps.currentExtent.width;
   this->swapchain_image_views.clear();
+  this->sema_image_acquired.clear();
+  this->sema_image_complete.clear();
+  this->swap_chain_framebuffers.clear();
   this->swap_chain = this->device->createSwapchainKHRUnique(
       vk::SwapchainCreateInfoKHR()
           .setImageFormat(vk::Format::eB8G8R8A8Unorm)
@@ -100,8 +105,48 @@ void Device_Wrapper::update_swap_chain() {
   ASSERT_PANIC(this->swap_chain);
   this->swap_chain_images =
       this->device->getSwapchainImagesKHR(swap_chain.get());
+  {
 
-  for (auto &image : this->swap_chain_images)
+    VkAttachmentDescription attachment = {};
+    attachment.format = VkFormat(vk::Format::eB8G8R8A8Unorm);
+    attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    VkAttachmentReference color_attachment = {};
+    color_attachment.attachment = 0;
+    color_attachment.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    VkSubpassDescription subpass = {};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &color_attachment;
+    VkSubpassDependency dependency = {};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcAccessMask = 0;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    VkRenderPassCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    info.attachmentCount = 1;
+    info.pAttachments = &attachment;
+    info.subpassCount = 1;
+    info.pSubpasses = &subpass;
+    info.dependencyCount = 1;
+    info.pDependencies = &dependency;
+    this->render_pass =
+        device->createRenderPassUnique(vk::RenderPassCreateInfo(info));
+  }
+  for (auto &image : this->swap_chain_images) {
+    this->sema_image_acquired.emplace_back(
+        this->device->createSemaphoreUnique(vk::SemaphoreCreateInfo()));
+    this->sema_image_complete.emplace_back(
+        this->device->createSemaphoreUnique(vk::SemaphoreCreateInfo()));
+
     this->swapchain_image_views.emplace_back(
         this->device->createImageViewUnique(vk::ImageViewCreateInfo(
             vk::ImageViewCreateFlags(), image, vk::ImageViewType::e2D,
@@ -111,6 +156,16 @@ void Device_Wrapper::update_swap_chain() {
                 vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA),
             vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0,
                                       1))));
+    this->swap_chain_framebuffers.emplace_back(
+        this->device->createFramebufferUnique(
+            vk::FramebufferCreateInfo()
+                .setAttachmentCount(1)
+                .setHeight(caps.currentExtent.height)
+                .setWidth(caps.currentExtent.width)
+                .setLayers(1)
+                .setPAttachments(&this->swapchain_image_views.back().get())
+                .setRenderPass(this->render_pass.get())));
+  }
 }
 
 /*
@@ -154,7 +209,7 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
     if (!glfwInit())
       exit(EXIT_FAILURE);
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    // glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     out.window = glfwCreateWindow(512, 512, "Vulkan Window", NULL, NULL);
     ASSERT_PANIC(out.window);
 
