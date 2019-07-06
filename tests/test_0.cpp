@@ -22,11 +22,11 @@ TEST(spirv_test, simple) {
 
   { // Compiling
     auto assembly = compile_file_to_assembly(
-        "shader_src", shaderc_glsl_vertex_shader, kShaderSource);
+        "shader_src", shaderc_glsl_vertex_shader, kShaderSource, {});
     std::cout << "SPIR-V assembly:" << std::endl << assembly << std::endl;
 
     auto spirv =
-        compile_file("shader_src", shaderc_glsl_vertex_shader, kShaderSource);
+        compile_file("shader_src", shaderc_glsl_vertex_shader, kShaderSource, {});
     std::cout << "Compiled to a binary module with " << spirv.size()
               << " words." << std::endl;
   }
@@ -34,12 +34,12 @@ TEST(spirv_test, simple) {
   { // Compiling with optimizing
     auto assembly =
         compile_file_to_assembly("shader_src", shaderc_glsl_vertex_shader,
-                                 kShaderSource, /* optimize = */ true);
+                                 kShaderSource, {}, /* optimize = */ true);
     std::cout << "Optimized SPIR-V assembly:" << std::endl
               << assembly << std::endl;
 
     auto spirv = compile_file("shader_src", shaderc_glsl_vertex_shader,
-                              kShaderSource, /* optimize = */ true);
+                              kShaderSource, {}, /* optimize = */ true);
     std::cout << "Compiled to an optimized binary module with " << spirv.size()
               << " words." << std::endl;
   }
@@ -49,7 +49,7 @@ TEST(spirv_test, simple) {
         "#version 310 es\nint main() { int main_should_be_void; }\n";
 
     std::cout << std::endl << "Compiling a bad shader:" << std::endl;
-    compile_file("bad_src", shaderc_glsl_vertex_shader, kBadShaderSource);
+    compile_file("bad_src", shaderc_glsl_vertex_shader, kBadShaderSource, {});
   }
 
   { // Compile using the C API.
@@ -106,38 +106,8 @@ TEST(graphics, vulkan_glfw) {
 TEST(graphics, vulkan_compute_init) {
   auto device_wrapper = init_device();
   auto &device = device_wrapper.device;
-  vk::PipelineShaderStageCreateInfo shaderStage;
-  shaderStage.stage = vk::ShaderStageFlagBits::eCompute;
-  auto module_pair =
-      create_shader_module(device.get(), "../shaders/raymarch.comp.glsl",
-                           vk::ShaderStageFlagBits::eCompute);
-  shaderStage.module = module_pair.first.get();
-  shaderStage.pName = "main";
-  std::vector<vk::UniqueDescriptorSetLayout> set_layouts;
-  std::vector<vk::DescriptorSetLayout> raw_set_layouts;
-  ASSERT_PANIC(shaderStage.module);
-  for (auto &set_bindings : module_pair.second) {
-    set_layouts.push_back(device->createDescriptorSetLayoutUnique(
-        vk::DescriptorSetLayoutCreateInfo()
-            .setPBindings(&set_bindings[0])
-            .setBindingCount(set_bindings.size())));
-    raw_set_layouts.push_back(set_layouts.back().get());
-  }
-  std::vector<vk::UniqueDescriptorSet> desc_sets =
-      device->allocateDescriptorSetsUnique(
-          vk::DescriptorSetAllocateInfo()
-              .setPSetLayouts(&raw_set_layouts[0])
-              .setDescriptorPool(device_wrapper.descset_pool.get())
-              .setDescriptorSetCount(raw_set_layouts.size()));
-  vk::UniquePipelineLayout pipeline_layout = device->createPipelineLayoutUnique(
-      vk::PipelineLayoutCreateInfo()
-          .setPSetLayouts(&raw_set_layouts[0])
-          .setSetLayoutCount(raw_set_layouts.size()));
-  vk::UniquePipeline compute_pipeline = device->createComputePipelineUnique(
-      vk::PipelineCache(), vk::ComputePipelineCreateInfo()
-                               .setStage(shaderStage)
-                               .setLayout(pipeline_layout.get()));
-  ASSERT_PANIC(compute_pipeline);
+  auto compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
+      device_wrapper, "../shaders/raymarch.comp.glsl", {});
   Alloc_State alloc_state =
       Alloc_State::create(device.get(), device_wrapper.physical_device);
   auto uniform_buffer = alloc_state.allocate_buffer(
@@ -157,45 +127,9 @@ TEST(graphics, vulkan_compute_init) {
 TEST(graphics, vulkan_compute_simple) {
   auto device_wrapper = init_device();
   auto &device = device_wrapper.device;
+  auto compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
+      device_wrapper, "../shaders/tests/simple_mul16.comp.glsl", {{"GROUP_SIZE", "64"}});
 
-  vk::PipelineShaderStageCreateInfo shaderStage;
-  shaderStage.stage = vk::ShaderStageFlagBits::eCompute;
-  auto module_pair =
-      create_shader_module(device.get(), "../shaders/simple_mul16.comp.glsl",
-                           vk::ShaderStageFlagBits::eCompute);
-  shaderStage.module = module_pair.first.get();
-  shaderStage.pName = "main";
-  std::vector<vk::UniqueDescriptorSetLayout> set_layouts;
-  std::vector<vk::DescriptorSetLayout> raw_set_layouts;
-  ASSERT_PANIC(shaderStage.module);
-  for (auto &set_bindings : module_pair.second) {
-    set_layouts.push_back(device->createDescriptorSetLayoutUnique(
-        vk::DescriptorSetLayoutCreateInfo()
-            .setPBindings(&set_bindings[0])
-            .setBindingCount(set_bindings.size())));
-    raw_set_layouts.push_back(set_layouts.back().get());
-  }
-  std::vector<vk::UniqueDescriptorSet> desc_sets =
-      device->allocateDescriptorSetsUnique(
-          vk::DescriptorSetAllocateInfo()
-              .setPSetLayouts(&raw_set_layouts[0])
-              .setDescriptorPool(device_wrapper.descset_pool.get())
-              .setDescriptorSetCount(raw_set_layouts.size()));
-  std::vector<vk::DescriptorSet> raw_desc_sets;
-  std::vector<uint32_t> raw_desc_sets_offsets;
-  for (auto &uds : desc_sets) {
-    raw_desc_sets.push_back(uds.get());
-    raw_desc_sets_offsets.push_back(0);
-  }
-  vk::UniquePipelineLayout pipeline_layout = device->createPipelineLayoutUnique(
-      vk::PipelineLayoutCreateInfo()
-          .setPSetLayouts(&raw_set_layouts[0])
-          .setSetLayoutCount(raw_set_layouts.size()));
-  vk::UniquePipeline compute_pipeline = device->createComputePipelineUnique(
-      vk::PipelineCache(), vk::ComputePipelineCreateInfo()
-                               .setStage(shaderStage)
-                               .setLayout(pipeline_layout.get()));
-  ASSERT_PANIC(compute_pipeline);
   Alloc_State alloc_state =
       Alloc_State::create(device.get(), device_wrapper.physical_device);
   size_t N = 1 << 16;
@@ -238,21 +172,11 @@ TEST(graphics, vulkan_compute_simple) {
          device->waitForFences(transfer_fence.get(), VK_TRUE, 0xffffffffu))
     ;
   device->resetFences({transfer_fence.get()});
-  device->updateDescriptorSets(
-      {vk::WriteDescriptorSet()
-           .setDstSet(desc_sets[0].get())
-           .setDstBinding(0)
-           .setDescriptorCount(1)
-           .setDescriptorType(vk::DescriptorType::eStorageBuffer)
-           .setPBufferInfo(&vk::DescriptorBufferInfo()
-                                .setBuffer(storage_buffer.buffer)
-                                .setRange(N * sizeof(uint32_t)))},
-      {});
+  compute_pipeline_wrapped.update_descriptor(
+      device.get(), "Data", storage_buffer.buffer, 0, N * sizeof(uint32_t));
   cmd.reset(vk::CommandBufferResetFlagBits::eReleaseResources);
   cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
-  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pipeline_layout.get(),
-                         0, raw_desc_sets, {});
-  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, compute_pipeline.get());
+  compute_pipeline_wrapped.bind_pipeline(device.get(), cmd);
   cmd.dispatch(1, 1, 1);
   cmd.copyBuffer(storage_buffer.buffer, staging_buffer.buffer,
                  {vk::BufferCopy(0, 0, N * sizeof(uint32_t))});
@@ -270,7 +194,8 @@ TEST(graphics, vulkan_compute_simple) {
     void *data = staging_buffer.map();
     uint32_t *typed_data = (uint32_t *)data;
     for (uint32_t i = 0; i < 64; i++) {
-      std::cout << typed_data[i] << " ";
+      ASSERT_PANIC(typed_data[i] == i * 12);
+      // std::cout << typed_data[i] << " ";
     }
     staging_buffer.unmap();
   }

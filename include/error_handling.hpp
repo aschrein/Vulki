@@ -6,7 +6,7 @@
 #include <string.h>
 
 static void panic_impl(char const *msg, int line) {
-  // std::cerr << "current wd:" << std::filesystem::current_path() << "\n";
+  std::cerr << "current wd:" << std::filesystem::current_path() << "\n";
   std::cerr << "panic:" << msg << " at line " << line << "\n";
   std::exit(1);
 }
