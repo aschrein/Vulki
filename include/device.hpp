@@ -12,7 +12,10 @@ struct Device_Wrapper {
   vk::PhysicalDevice physical_device;
   vk::UniqueDevice device;
   vk::UniqueDescriptorPool descset_pool;
-  size_t compute_queue_id;
+
+  vk::UniqueCommandPool graphcis_cmd_pool;
+  std::vector<vk::UniqueCommandBuffer> graphics_cmds;
+  vk::Queue graphics_queue;
   vk::UniqueDebugReportCallbackEXT debugReportCallback;
 };
 

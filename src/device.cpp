@@ -60,7 +60,6 @@ VKAPI_ATTR VkBool32 VKAPI_CALL dbgFunc(VkDebugReportFlagsEXT flags,
 static char const *AppName = "CreateDebugReportCallback";
 static char const *EngineName = "Vulkan.hpp";
 
-
 bool checkLayers(std::vector<char const *> const &layers,
                  std::vector<vk::LayerProperties> const &properties) {
   // return true if all layers are listed in the properties
@@ -74,23 +73,23 @@ bool checkLayers(std::vector<char const *> const &layers,
 }
 
 /*
-	VK_LAYER_LUNARG_monitor
-	VK_LAYER_LUNARG_screenshot
-	VK_LAYER_GOOGLE_threading
-	VK_LAYER_GOOGLE_unique_objects
-	VK_LAYER_LUNARG_device_simulation
-	VK_LAYER_LUNARG_core_validation
-	VK_LAYER_LUNARG_vktrace
-	VK_LAYER_LUNARG_assistant_layer
-	VK_LAYER_LUNARG_api_dump
-	VK_LAYER_LUNARG_standard_validation
-	VK_LAYER_LUNARG_parameter_validation
-	VK_LAYER_LUNARG_object_tracker
+        VK_LAYER_LUNARG_monitor
+        VK_LAYER_LUNARG_screenshot
+        VK_LAYER_GOOGLE_threading
+        VK_LAYER_GOOGLE_unique_objects
+        VK_LAYER_LUNARG_device_simulation
+        VK_LAYER_LUNARG_core_validation
+        VK_LAYER_LUNARG_vktrace
+        VK_LAYER_LUNARG_assistant_layer
+        VK_LAYER_LUNARG_api_dump
+        VK_LAYER_LUNARG_standard_validation
+        VK_LAYER_LUNARG_parameter_validation
+        VK_LAYER_LUNARG_object_tracker
 */
 
 extern "C" Device_Wrapper init_device() {
   Device_Wrapper out{};
-    std::vector<vk::LayerProperties> instanceLayerProperties =
+  std::vector<vk::LayerProperties> instanceLayerProperties =
       vk::enumerateInstanceLayerProperties();
 
   std::vector<char const *> instanceLayerNames;
@@ -131,34 +130,35 @@ extern "C" Device_Wrapper init_device() {
           out.instance->getProcAddr("vkDestroyDebugReportCallbackEXT"));
   ASSERT_PANIC(pfnVkDestroyDebugReportCallbackEXT);
 
-  out.debugReportCallback =
-      out.instance->createDebugReportCallbackEXTUnique(
-          vk::DebugReportCallbackCreateInfoEXT(
-              vk::DebugReportFlagBitsEXT::eError |
-                  vk::DebugReportFlagBitsEXT::eWarning,
-              dbgFunc));
+  out.debugReportCallback = out.instance->createDebugReportCallbackEXTUnique(
+      vk::DebugReportCallbackCreateInfoEXT(
+          vk::DebugReportFlagBitsEXT::eError |
+              vk::DebugReportFlagBitsEXT::eWarning,
+          dbgFunc));
 
   ASSERT_PANIC(out.instance);
   vk::PhysicalDevice physicalDevice =
       out.instance->enumeratePhysicalDevices().front();
   std::vector<vk::QueueFamilyProperties> queue_family_properties =
       physicalDevice.getQueueFamilyProperties();
-  out.compute_queue_id = std::distance(
+  size_t graphics_queue_id = std::distance(
       queue_family_properties.begin(),
       std::find_if(queue_family_properties.begin(),
                    queue_family_properties.end(),
                    [](vk::QueueFamilyProperties const &qfp) {
-                     return qfp.queueFlags & vk::QueueFlagBits::eCompute;
+                     return qfp.queueFlags & vk::QueueFlagBits::eGraphics;
                    }));
-  ASSERT_PANIC(out.compute_queue_id < queue_family_properties.size());
+  ASSERT_PANIC(graphics_queue_id < queue_family_properties.size());
   float queuePriority = 0.0f;
-  vk::DeviceQueueCreateInfo deviceQueueCreateInfo(
-      vk::DeviceQueueCreateFlags(), static_cast<uint32_t>(out.compute_queue_id), 1,
-      &queuePriority);
+  vk::DeviceQueueCreateInfo deviceQueueCreateInfo[] =
 
-  
+      {
+          {vk::DeviceQueueCreateFlags(),
+           static_cast<uint32_t>(graphics_queue_id), 1, &queuePriority},
+      };
+
   out.device = std::move(physicalDevice.createDeviceUnique(
-      vk::DeviceCreateInfo(vk::DeviceCreateFlags(), 1, &deviceQueueCreateInfo)));
+      vk::DeviceCreateInfo(vk::DeviceCreateFlags(), 1, deviceQueueCreateInfo)));
   ASSERT_PANIC(out.device);
   out.physical_device = physicalDevice;
   vk::DescriptorPoolSize aPoolSizes[] = {
@@ -177,5 +177,15 @@ extern "C" Device_Wrapper init_device() {
       out.device->createDescriptorPoolUnique(vk::DescriptorPoolCreateInfo(
           vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 1000 * 11, 11,
           aPoolSizes));
+
+  out.graphcis_cmd_pool =
+      out.device->createCommandPoolUnique(vk::CommandPoolCreateInfo(
+          vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+          graphics_queue_id));
+  out.graphics_cmds = std::move(
+      out.device->allocateCommandBuffersUnique(vk::CommandBufferAllocateInfo(
+          out.graphcis_cmd_pool.get(), vk::CommandBufferLevel::ePrimary, 6)));
+  out.graphics_queue = out.device->getQueue(graphics_queue_id, 0);
+
   return out;
 }

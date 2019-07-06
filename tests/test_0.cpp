@@ -181,6 +181,12 @@ TEST(graphics, vulkan_compute_simple) {
               .setPSetLayouts(&raw_set_layouts[0])
               .setDescriptorPool(device_wrapper.descset_pool.get())
               .setDescriptorSetCount(raw_set_layouts.size()));
+  std::vector<vk::DescriptorSet> raw_desc_sets;
+  std::vector<uint32_t> raw_desc_sets_offsets;
+  for (auto &uds : desc_sets) {
+    raw_desc_sets.push_back(uds.get());
+    raw_desc_sets_offsets.push_back(0);
+  }
   vk::UniquePipelineLayout pipeline_layout = device->createPipelineLayoutUnique(
       vk::PipelineLayoutCreateInfo()
           .setPSetLayouts(&raw_set_layouts[0])
@@ -193,22 +199,81 @@ TEST(graphics, vulkan_compute_simple) {
   Alloc_State alloc_state =
       Alloc_State::create(device.get(), device_wrapper.physical_device);
   size_t N = 1 << 16;
-  auto storage_buffer =
-      alloc_state.allocate_buffer(vk::BufferCreateInfo().setSize(N * sizeof(uint32_t)).setUsage(
-                                      vk::BufferUsageFlagBits::eStorageBuffer),
-                                  VMA_MEMORY_USAGE_GPU_ONLY);
-  auto staging_buffer =
-      alloc_state.allocate_buffer(vk::BufferCreateInfo().setSize(N * sizeof(uint32_t)).setUsage(
-                                      vk::BufferUsageFlagBits::eTransferSrc |
-                                      vk::BufferUsageFlagBits::eTransferDst),
-                                  VMA_MEMORY_USAGE_CPU_TO_GPU);
-  void *data = staging_buffer.map();
-  uint32_t *typed_data = (uint32_t*)data;
-  for (uint32_t i = 0; i < N; i++) {
-    typed_data[i] = i;
+  auto storage_buffer = alloc_state.allocate_buffer(
+      vk::BufferCreateInfo()
+          .setSize(N * sizeof(uint32_t))
+          .setUsage(vk::BufferUsageFlagBits::eStorageBuffer |
+                    vk::BufferUsageFlagBits::eTransferDst |
+                    vk::BufferUsageFlagBits::eTransferSrc),
+      VMA_MEMORY_USAGE_GPU_ONLY);
+  auto staging_buffer = alloc_state.allocate_buffer(
+      vk::BufferCreateInfo()
+          .setSize(N * sizeof(uint32_t))
+          .setUsage(vk::BufferUsageFlagBits::eTransferSrc |
+                    vk::BufferUsageFlagBits::eTransferDst),
+      VMA_MEMORY_USAGE_CPU_TO_GPU);
+  {
+    void *data = staging_buffer.map();
+    uint32_t *typed_data = (uint32_t *)data;
+    for (uint32_t i = 0; i < N; i++) {
+      typed_data[i] = i;
+    }
+    staging_buffer.unmap();
   }
-  staging_buffer.unmap();
-  
+  auto &cmd = device_wrapper.graphics_cmds[0].get();
+  cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
+  cmd.copyBuffer(staging_buffer.buffer, storage_buffer.buffer,
+                 {vk::BufferCopy(0, 0, N * sizeof(uint32_t))});
+  cmd.end();
+  vk::UniqueFence transfer_fence =
+      device->createFenceUnique(vk::FenceCreateInfo());
+
+  device_wrapper.graphics_queue.submit(
+      vk::SubmitInfo(
+          0, nullptr,
+          &vk::PipelineStageFlags(vk::PipelineStageFlagBits::eAllCommands), 1,
+          &cmd),
+      transfer_fence.get());
+  while (vk::Result::eTimeout ==
+         device->waitForFences(transfer_fence.get(), VK_TRUE, 0xffffffffu))
+    ;
+  device->resetFences({transfer_fence.get()});
+  device->updateDescriptorSets(
+      {vk::WriteDescriptorSet()
+           .setDstSet(desc_sets[0].get())
+           .setDstBinding(0)
+           .setDescriptorCount(1)
+           .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+           .setPBufferInfo(&vk::DescriptorBufferInfo()
+                                .setBuffer(storage_buffer.buffer)
+                                .setRange(N * sizeof(uint32_t)))},
+      {});
+  cmd.reset(vk::CommandBufferResetFlagBits::eReleaseResources);
+  cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pipeline_layout.get(),
+                         0, raw_desc_sets, {});
+  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, compute_pipeline.get());
+  cmd.dispatch(1, 1, 1);
+  cmd.copyBuffer(storage_buffer.buffer, staging_buffer.buffer,
+                 {vk::BufferCopy(0, 0, N * sizeof(uint32_t))});
+  cmd.end();
+  device_wrapper.graphics_queue.submit(
+      vk::SubmitInfo(
+          0, nullptr,
+          &vk::PipelineStageFlags(vk::PipelineStageFlagBits::eAllCommands), 1,
+          &cmd),
+      transfer_fence.get());
+  while (vk::Result::eTimeout ==
+         device->waitForFences(transfer_fence.get(), VK_TRUE, 0xffffffffu))
+    ;
+  {
+    void *data = staging_buffer.map();
+    uint32_t *typed_data = (uint32_t *)data;
+    for (uint32_t i = 0; i < 64; i++) {
+      std::cout << typed_data[i] << " ";
+    }
+    staging_buffer.unmap();
+  }
 }
 
 int main(int argc, char **argv) {
