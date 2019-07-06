@@ -25,8 +25,8 @@ TEST(spirv_test, simple) {
         "shader_src", shaderc_glsl_vertex_shader, kShaderSource, {});
     std::cout << "SPIR-V assembly:" << std::endl << assembly << std::endl;
 
-    auto spirv =
-        compile_file("shader_src", shaderc_glsl_vertex_shader, kShaderSource, {});
+    auto spirv = compile_file("shader_src", shaderc_glsl_vertex_shader,
+                              kShaderSource, {});
     std::cout << "Compiled to a binary module with " << spirv.size()
               << " words." << std::endl;
   }
@@ -128,7 +128,8 @@ TEST(graphics, vulkan_compute_simple) {
   auto device_wrapper = init_device();
   auto &device = device_wrapper.device;
   auto compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
-      device_wrapper, "../shaders/tests/simple_mul16.comp.glsl", {{"GROUP_SIZE", "64"}});
+      device_wrapper, "../shaders/tests/simple_mul16.comp.glsl",
+      {{"GROUP_SIZE", "64"}});
 
   Alloc_State alloc_state =
       Alloc_State::create(device.get(), device_wrapper.physical_device);
@@ -199,6 +200,16 @@ TEST(graphics, vulkan_compute_simple) {
     }
     staging_buffer.unmap();
   }
+}
+
+TEST(graphics, vulkan_graphics_simple) {
+  auto device_wrapper = init_device(true);
+  auto &device = device_wrapper.device;
+  
+  auto compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
+      device_wrapper, "../shaders/tests/simple_mul16.comp.glsl",
+      {{"GROUP_SIZE", "64"}});
+  glfwTerminate();
 }
 
 int main(int argc, char **argv) {

@@ -154,6 +154,8 @@ Shader_Parsed create_shader_module(
       //   descbinds[set_id].resize(set_id + 1);
       // }
       out.binding_table[set_id].emplace_back(bind_id, type, 1, stage);
+      ASSERT_PANIC(out.resource_slots.find(item.name) ==
+                   out.resource_slots.end());
       out.resource_slots[item.name] = {set_id, bind_id};
     };
     for (auto &item : res.storage_buffers) {
@@ -228,6 +230,106 @@ struct Pipeline_Wrapper {
     ASSERT_PANIC(out.pipeline);
     out.bind_point = vk::PipelineBindPoint::eCompute;
     return out;
+  }
+  static Pipeline_Wrapper create_graphics(
+      Device_Wrapper &device_wrapper,
+      std::string const &vs_source_name,
+      std::string const &ps_source_name,
+      std::vector<std::pair<std::string, std::string>> const &defines) {
+    // auto &device = device_wrapper.device.get();
+    // Pipeline_Wrapper out;
+
+    // vk::PipelineShaderStageCreateInfo vs_shader_stage;
+    // vs_shader_stage.stage = vk::ShaderStageFlagBits::eCompute;
+    // auto module_pair = create_shader_module(
+    //     device, vs_source_name, vk::ShaderStageFlagBits::eVertex, defines);
+    // vs_shader_stage.module = module_pair.shader_module.get();
+    // vs_shader_stage.pName = "main";
+
+    // out.resource_slots = module_pair.resource_slots;
+    // out.shader_modules.push_back(std::move(module_pair.shader_module));
+
+    // ASSERT_PANIC(vs_shader_stage.module);
+
+    // vk::PipelineShaderStageCreateInfo ps_shader_stage;
+    // ps_shader_stage.stage = vk::ShaderStageFlagBits::eCompute;
+    // auto module_pair = create_shader_module(
+    //     device, ps_source_name, vk::ShaderStageFlagBits::eFragment, defines);
+    // ps_shader_stage.module = module_pair.shader_module.get();
+    // ps_shader_stage.pName = "main";
+
+    // out.resource_slots = module_pair.resource_slots;
+    // out.shader_modules.push_back(std::move(module_pair.shader_module));
+
+    // ASSERT_PANIC(ps_shader_stage.module);
+
+    // for (auto &set_bindings : module_pair.binding_table) {
+    //   out.set_layouts.push_back(device.createDescriptorSetLayoutUnique(
+    //       vk::DescriptorSetLayoutCreateInfo()
+    //           .setPBindings(&set_bindings[0])
+    //           .setBindingCount(set_bindings.size())));
+    // }
+    // auto raw_set_layouts = out.get_raw_descset_layouts();
+    // out.desc_sets = device.allocateDescriptorSetsUnique(
+    //     vk::DescriptorSetAllocateInfo()
+    //         .setPSetLayouts(&raw_set_layouts[0])
+    //         .setDescriptorPool(device_wrapper.descset_pool.get())
+    //         .setDescriptorSetCount(raw_set_layouts.size()));
+
+    // out.pipeline_layout = device.createPipelineLayoutUnique(
+    //     vk::PipelineLayoutCreateInfo()
+    //         .setPSetLayouts(&raw_set_layouts[0])
+    //         .setSetLayoutCount(raw_set_layouts.size()));
+    // out.pipeline =device.createGraphicsPipeline(
+  //       vk::PipelineCache(),
+  //       vk::GraphicsPipelineCreateInfo(
+  //           vk::PipelineCreateFlagBits::eAllowDerivatives, 2u,
+  //           vk::PipelineShaderStageCreateInfo(
+  //               vk::PipelineShaderStageCreateFlagBits(), ),
+  //           &vk::PipelineVertexInputStateCreateInfo(
+  //               vk::PipelineVertexInputStateCreateFlagBits(), 1,
+  //               &vk::VertexInputBindingDescription(0, 12,
+  //                                                  vk::VertexInputRate::eVertex),
+  //               1,
+  //               &vk::VertexInputAttributeDescription(
+  //                   0, 0, vk::Format::eR32G32B32Sfloat, 0)),
+  //           &vk::PipelineInputAssemblyStateCreateInfo(
+  //               vk::PipelineInputAssemblyStateCreateFlagBits(),
+  //               vk::PrimitiveTopology::eTriangleList, false),
+  //           nullptr,
+  //           &vk::PipelineViewportStateCreateInfo(
+  //               vk::PipelineViewportStateCreateFlagBits(), 1,
+  //               &vk::Viewport(-1.0f, -1.0f, 1.0f, 1.0f), 1,
+  //               &vk::Rect2D({0, 0}, {512, 512})),
+  //           &vk::PipelineRasterizationStateCreateInfo(
+  //               vk::PipelineRasterizationStateCreateFlagBits(), false, false,
+  //               vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone,
+  //               vk::FrontFace::eClockwise, false, 0.0f, 0.0f, 1.0f, 1.0f),
+  //           &vk::PipelineMultisampleStateCreateInfo(
+  //               vk::PipelineMultisampleStateCreateFlagBits(),
+  //               vk::SampleCountFlagBits::e1, false, 0.0f, nullptr, false,
+  //               false),
+  //           &vk::PipelineDepthStencilStateCreateInfo(
+  //               vk::PipelineDepthStencilStateCreateFlagBits(), false, false,
+  //               vk::CompareOp::eAlways, false, false, vk::StencilOpState(),
+  //               vk::StencilOpState(), 0.0f, 1.0f),
+  //           &vk::PipelineColorBlendStateCreateInfo(
+  //               vk::PipelineColorBlendStateCreateFlagBits(), false,
+  //               vk::LogicOp::eCopy, 1u,
+  //               &vk::PipelineColorBlendAttachmentState(
+  //                   false, vk::BlendFactor::eOne, vk::BlendFactor::eZero,
+  //                   vk::BlendOp::eAdd, vk::BlendFactor::eOne,
+  //                   vk::BlendFactor::eOne, vk::BlendOp::eAdd,
+  //                   vk::ColorComponentFlagBits::eR |
+  //                       vk::ColorComponentFlagBits::eG |
+  //                       vk::ColorComponentFlagBits::eB |
+  //                       vk::ColorComponentFlagBits::eA)),
+  //           &vk::PipelineDynamicStateCreateInfo(
+  //               vk::PipelineDynamicStateCreateFlagBits(), 0, nullptr),
+  //           layout, pass));
+    // ASSERT_PANIC(out.pipeline);
+    // out.bind_point = vk::PipelineBindPoint::eCompute;
+    // return out;
   }
   std::vector<vk::DescriptorSet> get_raw_descsets() {
     std::vector<vk::DescriptorSet> raw_desc_sets;
