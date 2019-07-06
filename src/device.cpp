@@ -105,7 +105,7 @@ void Device_Wrapper::update_swap_chain() {
   ASSERT_PANIC(this->swap_chain);
   this->swap_chain_images =
       this->device->getSwapchainImagesKHR(swap_chain.get());
-  {
+  if (!this->render_pass) {
 
     VkAttachmentDescription attachment = {};
     attachment.format = VkFormat(vk::Format::eB8G8R8A8Unorm);
@@ -286,8 +286,9 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
           {vk::DeviceQueueCreateFlags(),
            static_cast<uint32_t>(graphics_queue_id), 1, &queuePriority},
       };
-  const std::vector<const char *> deviceExtensions = {
-      VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+  const std::vector<const char *> deviceExtensions;
+  if (init_glfw)
+    deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   out.device = std::move(out.physical_device.createDeviceUnique(
       vk::DeviceCreateInfo(vk::DeviceCreateFlags(), 1, deviceQueueCreateInfo)
           .setPpEnabledLayerNames(&instanceLayerNames[0])

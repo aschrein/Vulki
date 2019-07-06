@@ -233,7 +233,7 @@ TEST(graphics, vulkan_graphics_simple) {
   init_info.MinImageCount = device_wrapper.swap_chain_images.size();
   init_info.ImageCount = device_wrapper.swap_chain_images.size();
   init_info.CheckVkResultFn = nullptr;
-  
+
   ImGui_ImplVulkan_Init(&init_info, device_wrapper.get_cur_render_pass());
   {
     auto &cmd = device_wrapper.acquire_next();
@@ -244,6 +244,13 @@ TEST(graphics, vulkan_graphics_simple) {
   }
 
   while (!glfwWindowShouldClose(device_wrapper.window)) {
+    int new_window_width, new_window_height;
+    glfwGetWindowSize(device_wrapper.window, &new_window_width,
+                      &new_window_height);
+    if (new_window_height != device_wrapper.cur_backbuffer_height ||
+        new_window_width != device_wrapper.cur_backbuffer_width) {
+      device_wrapper.update_swap_chain();
+    }
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
@@ -252,7 +259,7 @@ TEST(graphics, vulkan_graphics_simple) {
 
     double xpos, ypos;
     glfwGetCursorPos(device_wrapper.window, &xpos, &ypos);
-    if (glfwGetMouseButton(device_wrapper.window, 2))
+    if (glfwGetMouseButton(device_wrapper.window, 1))
       break;
     ImGui::Render();
     auto &cmd = device_wrapper.acquire_next();
@@ -267,7 +274,7 @@ TEST(graphics, vulkan_graphics_simple) {
   ImGui_ImplVulkan_Shutdown();
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();
-  
+
   glfwTerminate();
 }
 
