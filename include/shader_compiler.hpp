@@ -88,10 +88,16 @@ compile_file(const std::string &source_name, shaderc_shader_kind kind,
 }
 int parse_descriptors(std::vector<uint32_t> const &spirv);
 
+struct Shader_Descriptor {
+  uint32_t set;
+  vk::DescriptorSetLayoutBinding layout;
+};
+
 struct Shader_Parsed {
   vk::UniqueShaderModule shader_module;
-  std::vector<std::vector<vk::DescriptorSetLayoutBinding>> binding_table;
-  std::unordered_map<std::string, std::pair<uint32_t, uint32_t>> resource_slots;
+  std::unordered_map<std::string, Shader_Descriptor> resource_slots;
+  std::unordered_map<std::string, uint32_t> input_slots;
+  std::unordered_map<std::string, uint32_t> output_slots;
 };
 
 Shader_Parsed create_shader_module(
@@ -114,6 +120,14 @@ Shader_Parsed create_shader_module(
   switch (stage) {
   case vk::ShaderStageFlagBits::eCompute: {
     kind = shaderc_shader_kind::shaderc_compute_shader;
+    break;
+  }
+  case vk::ShaderStageFlagBits::eVertex: {
+    kind = shaderc_shader_kind::shaderc_vertex_shader;
+    break;
+  }
+  case vk::ShaderStageFlagBits::eFragment: {
+    kind = shaderc_shader_kind::shaderc_fragment_shader;
     break;
   }
   default: {
@@ -147,16 +161,9 @@ Shader_Parsed create_shader_module(
           item.id, spv::Decoration::DecorationDescriptorSet);
       auto bind_id =
           comp.get_decoration(item.id, spv::Decoration::DecorationBinding);
-      if (set_id + 1 > out.binding_table.size()) {
-        out.binding_table.resize(set_id + 1);
-      }
-      // if (bind_id + 1 > descbinds[set_id].size()) {
-      //   descbinds[set_id].resize(set_id + 1);
-      // }
-      out.binding_table[set_id].emplace_back(bind_id, type, 1, stage);
       ASSERT_PANIC(out.resource_slots.find(item.name) ==
                    out.resource_slots.end());
-      out.resource_slots[item.name] = {set_id, bind_id};
+      out.resource_slots[item.name] = {set_id, {bind_id, type, 1, stage}};
     };
     for (auto &item : res.storage_buffers) {
       pushResource(vk::DescriptorType::eStorageBuffer, item);
@@ -170,6 +177,17 @@ Shader_Parsed create_shader_module(
     for (auto &item : res.uniform_buffers) {
       pushResource(vk::DescriptorType::eUniformBuffer, item);
     }
+
+    for (auto &item : res.stage_inputs) {
+      auto location =
+          comp.get_decoration(item.id, spv::Decoration::DecorationLocation);
+      out.input_slots[item.name] = location;
+    }
+    for (auto &item : res.stage_outputs) {
+      auto location =
+          comp.get_decoration(item.id, spv::Decoration::DecorationLocation);
+      out.output_slots[item.name] = location;
+    }
   }
   vk::ShaderModuleCreateInfo moduleCreateInfo;
   moduleCreateInfo.codeSize = shader_code.size() * 4;
@@ -182,6 +200,12 @@ Shader_Parsed create_shader_module(
   return out;
 }
 
+struct Vertex_Input {
+  uint32_t binding;
+  uint32_t offset;
+  vk::Format format;
+};
+
 struct Pipeline_Wrapper {
   std::vector<vk::UniqueShaderModule> shader_modules;
   std::vector<vk::UniqueDescriptorSetLayout> set_layouts;
@@ -189,7 +213,29 @@ struct Pipeline_Wrapper {
   vk::UniquePipelineLayout pipeline_layout;
   vk::UniquePipeline pipeline;
   vk::PipelineBindPoint bind_point;
-  std::unordered_map<std::string, std::pair<uint32_t, uint32_t>> resource_slots;
+  std::unordered_map<std::string, Shader_Descriptor> resource_slots;
+
+  void merge_resource_slots(
+      std::unordered_map<std::string, Shader_Descriptor> const &slots) {
+    // @TODO: Check for duplicates
+    for (auto &slot : slots) {
+      this->resource_slots[slot.first] = slot.second;
+    }
+  }
+  std::vector<std::vector<vk::DescriptorSetLayoutBinding>> collect_sets() {
+    std::vector<std::vector<vk::DescriptorSetLayoutBinding>> out;
+    for (auto &set_bindings : resource_slots) {
+      if (set_bindings.second.set + 1 > out.size())
+        out.resize(set_bindings.second.set + 1);
+      if (set_bindings.second.layout.binding + 1 >
+          out[set_bindings.second.set].size())
+        out[set_bindings.second.set].resize(set_bindings.second.layout.binding +
+                                            1);
+      out[set_bindings.second.set][set_bindings.second.layout.binding] =
+          set_bindings.second.layout;
+    }
+    return out;
+  }
 
   static Pipeline_Wrapper create_compute(
       Device_Wrapper &device_wrapper, std::string const &source_name,
@@ -202,15 +248,16 @@ struct Pipeline_Wrapper {
         device, source_name, vk::ShaderStageFlagBits::eCompute, defines);
     shaderStage.module = module_pair.shader_module.get();
     shaderStage.pName = "main";
-    out.resource_slots = module_pair.resource_slots;
+    out.merge_resource_slots(module_pair.resource_slots);
     out.shader_modules.push_back(std::move(module_pair.shader_module));
 
     ASSERT_PANIC(shaderStage.module);
-    for (auto &set_bindings : module_pair.binding_table) {
+    auto set_bindings = out.collect_sets();
+    for (auto &set_binding : set_bindings) {
       out.set_layouts.push_back(device.createDescriptorSetLayoutUnique(
           vk::DescriptorSetLayoutCreateInfo()
-              .setPBindings(&set_bindings[0])
-              .setBindingCount(set_bindings.size())));
+              .setPBindings(&set_binding[0])
+              .setBindingCount(set_binding.size())));
     }
     auto raw_set_layouts = out.get_raw_descset_layouts();
     out.desc_sets = device.allocateDescriptorSetsUnique(
@@ -232,104 +279,143 @@ struct Pipeline_Wrapper {
     return out;
   }
   static Pipeline_Wrapper create_graphics(
-      Device_Wrapper &device_wrapper,
-      std::string const &vs_source_name,
+      Device_Wrapper &device_wrapper, std::string const &vs_source_name,
       std::string const &ps_source_name,
+      vk::GraphicsPipelineCreateInfo pipeline_create_template,
+      std::unordered_map<std::string, Vertex_Input> vertex_inputs,
+      std::vector<vk::VertexInputBindingDescription> vertex_bind_desc,
       std::vector<std::pair<std::string, std::string>> const &defines) {
-    // auto &device = device_wrapper.device.get();
-    // Pipeline_Wrapper out;
+    auto &device = device_wrapper.device.get();
+    Pipeline_Wrapper out;
 
-    // vk::PipelineShaderStageCreateInfo vs_shader_stage;
-    // vs_shader_stage.stage = vk::ShaderStageFlagBits::eCompute;
-    // auto module_pair = create_shader_module(
-    //     device, vs_source_name, vk::ShaderStageFlagBits::eVertex, defines);
-    // vs_shader_stage.module = module_pair.shader_module.get();
-    // vs_shader_stage.pName = "main";
+    // std::vector<vk::VertexInputBindingDescription> vertex_bind_desc;
+    std::vector<vk::VertexInputAttributeDescription> vertex_attr_desc;
+    std::vector<vk::PipelineShaderStageCreateInfo> stages;
+    {
+      vk::PipelineShaderStageCreateInfo vs_shader_stage;
+      vs_shader_stage.stage = vk::ShaderStageFlagBits::eVertex;
+      auto vs_module_pair = create_shader_module(
+          device, vs_source_name, vk::ShaderStageFlagBits::eVertex, defines);
+      vs_shader_stage.module = vs_module_pair.shader_module.get();
+      vs_shader_stage.pName = "main";
+      ASSERT_PANIC(vs_shader_stage.module);
+      out.merge_resource_slots(vs_module_pair.resource_slots);
+      out.shader_modules.push_back(std::move(vs_module_pair.shader_module));
+      for (auto &input : vertex_inputs) {
+        ASSERT_PANIC(vs_module_pair.input_slots.find(input.first) !=
+                     vs_module_pair.input_slots.end());
+        auto location = vs_module_pair.input_slots[input.first];
+        // vertex_bind_desc.push_back(vk::VertexInputBindingDescription(
+        //     binding, input.second.stride, input.second.rate));
+        vertex_attr_desc.push_back(vk::VertexInputAttributeDescription(
+            location, input.second.binding, input.second.format,
+            // vk::Format::eR32G32B32Sfloat,
+            input.second.offset));
+      }
+      stages.push_back(vs_shader_stage);
+    }
 
-    // out.resource_slots = module_pair.resource_slots;
-    // out.shader_modules.push_back(std::move(module_pair.shader_module));
+    {
+      vk::PipelineShaderStageCreateInfo ps_shader_stage;
+      ps_shader_stage.stage = vk::ShaderStageFlagBits::eFragment;
+      auto ps_module_pair = create_shader_module(
+          device, ps_source_name, vk::ShaderStageFlagBits::eFragment, defines);
+      ps_shader_stage.module = ps_module_pair.shader_module.get();
+      ps_shader_stage.pName = "main";
+      ASSERT_PANIC(ps_shader_stage.module);
+      out.merge_resource_slots(ps_module_pair.resource_slots);
+      out.shader_modules.push_back(std::move(ps_module_pair.shader_module));
+      stages.push_back(ps_shader_stage);
+    }
 
-    // ASSERT_PANIC(vs_shader_stage.module);
+    auto set_bindings = out.collect_sets();
+    for (auto &set_binding : set_bindings) {
+      out.set_layouts.push_back(device.createDescriptorSetLayoutUnique(
+          vk::DescriptorSetLayoutCreateInfo()
+              .setPBindings(&set_binding[0])
+              .setBindingCount(set_binding.size())));
+    }
+    auto raw_set_layouts = out.get_raw_descset_layouts();
+    if (raw_set_layouts.size()) {
 
-    // vk::PipelineShaderStageCreateInfo ps_shader_stage;
-    // ps_shader_stage.stage = vk::ShaderStageFlagBits::eCompute;
-    // auto module_pair = create_shader_module(
-    //     device, ps_source_name, vk::ShaderStageFlagBits::eFragment, defines);
-    // ps_shader_stage.module = module_pair.shader_module.get();
-    // ps_shader_stage.pName = "main";
+      out.desc_sets = device.allocateDescriptorSetsUnique(
+          vk::DescriptorSetAllocateInfo()
+              .setPSetLayouts(&raw_set_layouts[0])
+              .setDescriptorPool(device_wrapper.descset_pool.get())
+              .setDescriptorSetCount(raw_set_layouts.size()));
+    }
+    out.pipeline_layout = device.createPipelineLayoutUnique(
+        vk::PipelineLayoutCreateInfo()
+            .setPSetLayouts(&raw_set_layouts[0])
+            .setSetLayoutCount(raw_set_layouts.size()));
 
-    // out.resource_slots = module_pair.resource_slots;
-    // out.shader_modules.push_back(std::move(module_pair.shader_module));
+    out.pipeline = device.createGraphicsPipelineUnique(
+        vk::PipelineCache(),
+        pipeline_create_template
+            .setLayout(out.pipeline_layout.get())
 
-    // ASSERT_PANIC(ps_shader_stage.module);
+            // .setPMultisampleState()
+            // .setPRasterizationState()
+            .setPStages(&stages[0])
+            .setStageCount(stages.size())
+            // .setPTessellationState()
+            .setPVertexInputState(
+                &vk::PipelineVertexInputStateCreateInfo()
+                     .setPVertexAttributeDescriptions(&vertex_attr_desc[0])
+                     .setVertexAttributeDescriptionCount(
+                         vertex_attr_desc.size())
+                     .setPVertexBindingDescriptions(&vertex_bind_desc[0])
+                     .setVertexBindingDescriptionCount(vertex_bind_desc.size()))
 
-    // for (auto &set_bindings : module_pair.binding_table) {
-    //   out.set_layouts.push_back(device.createDescriptorSetLayoutUnique(
-    //       vk::DescriptorSetLayoutCreateInfo()
-    //           .setPBindings(&set_bindings[0])
-    //           .setBindingCount(set_bindings.size())));
-    // }
-    // auto raw_set_layouts = out.get_raw_descset_layouts();
-    // out.desc_sets = device.allocateDescriptorSetsUnique(
-    //     vk::DescriptorSetAllocateInfo()
-    //         .setPSetLayouts(&raw_set_layouts[0])
-    //         .setDescriptorPool(device_wrapper.descset_pool.get())
-    //         .setDescriptorSetCount(raw_set_layouts.size()));
+    );
 
-    // out.pipeline_layout = device.createPipelineLayoutUnique(
-    //     vk::PipelineLayoutCreateInfo()
-    //         .setPSetLayouts(&raw_set_layouts[0])
-    //         .setSetLayoutCount(raw_set_layouts.size()));
-    // out.pipeline =device.createGraphicsPipeline(
-  //       vk::PipelineCache(),
-  //       vk::GraphicsPipelineCreateInfo(
-  //           vk::PipelineCreateFlagBits::eAllowDerivatives, 2u,
-  //           vk::PipelineShaderStageCreateInfo(
-  //               vk::PipelineShaderStageCreateFlagBits(), ),
-  //           &vk::PipelineVertexInputStateCreateInfo(
-  //               vk::PipelineVertexInputStateCreateFlagBits(), 1,
-  //               &vk::VertexInputBindingDescription(0, 12,
-  //                                                  vk::VertexInputRate::eVertex),
-  //               1,
-  //               &vk::VertexInputAttributeDescription(
-  //                   0, 0, vk::Format::eR32G32B32Sfloat, 0)),
-  //           &vk::PipelineInputAssemblyStateCreateInfo(
-  //               vk::PipelineInputAssemblyStateCreateFlagBits(),
-  //               vk::PrimitiveTopology::eTriangleList, false),
-  //           nullptr,
-  //           &vk::PipelineViewportStateCreateInfo(
-  //               vk::PipelineViewportStateCreateFlagBits(), 1,
-  //               &vk::Viewport(-1.0f, -1.0f, 1.0f, 1.0f), 1,
-  //               &vk::Rect2D({0, 0}, {512, 512})),
-  //           &vk::PipelineRasterizationStateCreateInfo(
-  //               vk::PipelineRasterizationStateCreateFlagBits(), false, false,
-  //               vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone,
-  //               vk::FrontFace::eClockwise, false, 0.0f, 0.0f, 1.0f, 1.0f),
-  //           &vk::PipelineMultisampleStateCreateInfo(
-  //               vk::PipelineMultisampleStateCreateFlagBits(),
-  //               vk::SampleCountFlagBits::e1, false, 0.0f, nullptr, false,
-  //               false),
-  //           &vk::PipelineDepthStencilStateCreateInfo(
-  //               vk::PipelineDepthStencilStateCreateFlagBits(), false, false,
-  //               vk::CompareOp::eAlways, false, false, vk::StencilOpState(),
-  //               vk::StencilOpState(), 0.0f, 1.0f),
-  //           &vk::PipelineColorBlendStateCreateInfo(
-  //               vk::PipelineColorBlendStateCreateFlagBits(), false,
-  //               vk::LogicOp::eCopy, 1u,
-  //               &vk::PipelineColorBlendAttachmentState(
-  //                   false, vk::BlendFactor::eOne, vk::BlendFactor::eZero,
-  //                   vk::BlendOp::eAdd, vk::BlendFactor::eOne,
-  //                   vk::BlendFactor::eOne, vk::BlendOp::eAdd,
-  //                   vk::ColorComponentFlagBits::eR |
-  //                       vk::ColorComponentFlagBits::eG |
-  //                       vk::ColorComponentFlagBits::eB |
-  //                       vk::ColorComponentFlagBits::eA)),
-  //           &vk::PipelineDynamicStateCreateInfo(
-  //               vk::PipelineDynamicStateCreateFlagBits(), 0, nullptr),
-  //           layout, pass));
-    // ASSERT_PANIC(out.pipeline);
-    // out.bind_point = vk::PipelineBindPoint::eCompute;
-    // return out;
+    // vk::PipelineCreateFlagBits::eAllowDerivatives, 2u,
+    // vk::PipelineShaderStageCreateInfo(
+    //     vk::PipelineShaderStageCreateFlagBits(), ),
+    // &vk::PipelineVertexInputStateCreateInfo(
+    //     vk::PipelineVertexInputStateCreateFlagBits(), 1,
+    //     &vk::VertexInputBindingDescription(
+    //         0, 12, vk::VertexInputRate::eVertex),
+    //     1,
+    //     &vk::VertexInputAttributeDescription(
+    //         0, 0, vk::Format::eR32G32B32Sfloat, 0)),
+    // &vk::PipelineInputAssemblyStateCreateInfo(
+    //     vk::PipelineInputAssemblyStateCreateFlagBits(),
+    //     vk::PrimitiveTopology::eTriangleList, false),
+    // nullptr,
+    // &vk::PipelineViewportStateCreateInfo(
+    //     vk::PipelineViewportStateCreateFlagBits(), 1,
+    //     &vk::Viewport(-1.0f, -1.0f, 1.0f, 1.0f), 1,
+    //     &vk::Rect2D({0, 0}, {512, 512})),
+    // &vk::PipelineRasterizationStateCreateInfo(
+    //     vk::PipelineRasterizationStateCreateFlagBits(), false, false,
+    //     vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone,
+    //     vk::FrontFace::eClockwise, false, 0.0f, 0.0f, 1.0f, 1.0f),
+    // &vk::PipelineMultisampleStateCreateInfo(
+    //     vk::PipelineMultisampleStateCreateFlagBits(),
+    //     vk::SampleCountFlagBits::e1, false, 0.0f, nullptr, false,
+    //     false),
+    // &vk::PipelineDepthStencilStateCreateInfo(
+    //     vk::PipelineDepthStencilStateCreateFlagBits(), false, false,
+    //     vk::CompareOp::eAlways, false, false, vk::StencilOpState(),
+    //     vk::StencilOpState(), 0.0f, 1.0f),
+    // &vk::PipelineColorBlendStateCreateInfo(
+    //     vk::PipelineColorBlendStateCreateFlagBits(), false,
+    //     vk::LogicOp::eCopy, 1u,
+    //     &vk::PipelineColorBlendAttachmentState(
+    //         false, vk::BlendFactor::eOne, vk::BlendFactor::eZero,
+    //         vk::BlendOp::eAdd, vk::BlendFactor::eOne,
+    //         vk::BlendFactor::eOne, vk::BlendOp::eAdd,
+    //         vk::ColorComponentFlagBits::eR |
+    //             vk::ColorComponentFlagBits::eG |
+    //             vk::ColorComponentFlagBits::eB |
+    //             vk::ColorComponentFlagBits::eA)),
+    // &vk::PipelineDynamicStateCreateInfo(
+    //     vk::PipelineDynamicStateCreateFlagBits(), 0, nullptr),
+    // layout, pass));
+    ASSERT_PANIC(out.pipeline);
+    out.bind_point = vk::PipelineBindPoint::eGraphics;
+    return out;
   }
   std::vector<vk::DescriptorSet> get_raw_descsets() {
     std::vector<vk::DescriptorSet> raw_desc_sets;
@@ -354,8 +440,8 @@ struct Pipeline_Wrapper {
 
     device.updateDescriptorSets(
         {vk::WriteDescriptorSet()
-             .setDstSet(desc_sets[slot.first].get())
-             .setDstBinding(slot.second)
+             .setDstSet(desc_sets[slot.set].get())
+             .setDstBinding(slot.layout.binding)
              .setDescriptorCount(1)
              .setDescriptorType(vk::DescriptorType::eStorageBuffer)
              .setPBufferInfo(&vk::DescriptorBufferInfo()
@@ -366,7 +452,9 @@ struct Pipeline_Wrapper {
   }
   void bind_pipeline(vk::Device &device, vk::CommandBuffer &cmd) {
     cmd.bindPipeline(this->bind_point, this->pipeline.get());
-    cmd.bindDescriptorSets(this->bind_point, this->pipeline_layout.get(), 0,
-                           get_raw_descsets(), {});
+    auto raw_descsets = get_raw_descsets();
+    if (raw_descsets.size())
+      cmd.bindDescriptorSets(this->bind_point, this->pipeline_layout.get(), 0,
+                             raw_descsets, {});
   }
 };

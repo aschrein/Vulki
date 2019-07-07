@@ -279,7 +279,6 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
   ASSERT_PANIC(graphics_queue_id < queue_family_properties.size());
   out.graphics_queue_family_id = graphics_queue_id;
   if (init_glfw) {
-
     ASSERT_PANIC(glfwGetPhysicalDevicePresentationSupport(
         out.instance.get(), out.physical_device, out.graphics_queue_family_id));
   }
@@ -326,13 +325,16 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
       out.device->allocateCommandBuffersUnique(vk::CommandBufferAllocateInfo(
           out.graphcis_cmd_pool.get(), vk::CommandBufferLevel::ePrimary, 6)));
   out.graphics_queue = out.device->getQueue(graphics_queue_id, 0);
+  out.alloc_state = Alloc_State::create(out.device.get(), out.physical_device);
+
+  if (init_glfw)
+    out.update_swap_chain();
 
   return out;
 }
 
 void Device_Wrapper::window_loop() {
 
-  this->update_swap_chain();
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
   ImGuiIO &io = ImGui::GetIO();
@@ -369,8 +371,8 @@ void Device_Wrapper::window_loop() {
       this->update_swap_chain();
     }
     auto &cmd = this->acquire_next();
-    if (this->on_tick)
-      this->on_tick();
+    if (this->pre_tick)
+      this->pre_tick(cmd);
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
@@ -402,7 +404,10 @@ void Device_Wrapper::window_loop() {
                 {cur_backbuffer_width, cur_backbuffer_height})),
         vk::SubpassContents::eInline);
 
+    if (this->on_tick)
+      this->on_tick(cmd);
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+
     cmd.endRenderPass();
     this->submit_cur_cmd();
     this->present();

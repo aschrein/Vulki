@@ -5,9 +5,16 @@
 #include <iostream>
 #include <string.h>
 
+#ifdef __GNUC__
+#include <signal.h>
+#endif
+
 static void panic_impl(char const *msg, int line) {
   std::cerr << "current wd:" << std::filesystem::current_path() << "\n";
   std::cerr << "panic:" << msg << " at line " << line << "\n";
+#ifdef __GNUC__
+  raise(SIGTRAP);
+#endif
   std::exit(1);
 }
 
@@ -24,15 +31,13 @@ static void error_callback(int error, const char *description) {
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
 // memset{0} - is a valid state
-#define RAW_MOVABLE(CLASS)\
-CLASS() = default;\
-CLASS(CLASS const &) = delete;\
-CLASS(CLASS &&that) {\
-*this = std::move(that);\
-}\
-CLASS &operator=(CLASS &&that) {\
-memcpy(this, &that, sizeof(CLASS));\
-memset(&that, 0, sizeof(CLASS));\
-return *this;\
-}\
-CLASS &operator=(CLASS const &) = delete;
+#define RAW_MOVABLE(CLASS)                                                     \
+  CLASS() = default;                                                           \
+  CLASS(CLASS const &) = delete;                                               \
+  CLASS(CLASS &&that) { *this = std::move(that); }                             \
+  CLASS &operator=(CLASS &&that) {                                             \
+    memcpy(this, &that, sizeof(CLASS));                                        \
+    new (&that) CLASS;                                                         \
+    return *this;                                                              \
+  }                                                                            \
+  CLASS &operator=(CLASS const &) = delete;
