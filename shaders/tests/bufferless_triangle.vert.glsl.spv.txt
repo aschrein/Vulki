@@ -1,0 +1,86 @@
+; SPIR-V
+; Version: 1.3
+; Generator: Google Shaderc over Glslang; 7
+; Bound: 52
+; Schema: 0
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Vertex %main "main" %gl_VertexIndex %tex_coords %_
+               OpSource GLSL 450
+               OpSourceExtension "GL_GOOGLE_cpp_style_line_directive"
+               OpSourceExtension "GL_GOOGLE_include_directive"
+               OpName %main "main"
+               OpName %x "x"
+               OpName %gl_VertexIndex "gl_VertexIndex"
+               OpName %y "y"
+               OpName %tex_coords "tex_coords"
+               OpName %gl_PerVertex "gl_PerVertex"
+               OpMemberName %gl_PerVertex 0 "gl_Position"
+               OpMemberName %gl_PerVertex 1 "gl_PointSize"
+               OpMemberName %gl_PerVertex 2 "gl_ClipDistance"
+               OpMemberName %gl_PerVertex 3 "gl_CullDistance"
+               OpName %_ ""
+               OpDecorate %gl_VertexIndex BuiltIn VertexIndex
+               OpDecorate %tex_coords Location 0
+               OpMemberDecorate %gl_PerVertex 0 BuiltIn Position
+               OpMemberDecorate %gl_PerVertex 1 BuiltIn PointSize
+               OpMemberDecorate %gl_PerVertex 2 BuiltIn ClipDistance
+               OpMemberDecorate %gl_PerVertex 3 BuiltIn CullDistance
+               OpDecorate %gl_PerVertex Block
+       %void = OpTypeVoid
+          %3 = OpTypeFunction %void
+      %float = OpTypeFloat 32
+%_ptr_Function_float = OpTypePointer Function %float
+   %float_n1 = OpConstant %float -1
+        %int = OpTypeInt 32 1
+%_ptr_Input_int = OpTypePointer Input %int
+%gl_VertexIndex = OpVariable %_ptr_Input_int Input
+      %int_1 = OpConstant %int 1
+      %int_2 = OpConstant %int 2
+    %v2float = OpTypeVector %float 2
+%_ptr_Output_v2float = OpTypePointer Output %v2float
+ %tex_coords = OpVariable %_ptr_Output_v2float Output
+  %float_0_5 = OpConstant %float 0.5
+    %v4float = OpTypeVector %float 4
+       %uint = OpTypeInt 32 0
+     %uint_1 = OpConstant %uint 1
+%_arr_float_uint_1 = OpTypeArray %float %uint_1
+%gl_PerVertex = OpTypeStruct %v4float %float %_arr_float_uint_1 %_arr_float_uint_1
+%_ptr_Output_gl_PerVertex = OpTypePointer Output %gl_PerVertex
+          %_ = OpVariable %_ptr_Output_gl_PerVertex Output
+      %int_0 = OpConstant %int 0
+    %float_0 = OpConstant %float 0
+    %float_1 = OpConstant %float 1
+%_ptr_Output_v4float = OpTypePointer Output %v4float
+       %main = OpFunction %void None %3
+          %5 = OpLabel
+          %x = OpVariable %_ptr_Function_float Function
+          %y = OpVariable %_ptr_Function_float Function
+         %13 = OpLoad %int %gl_VertexIndex
+         %15 = OpBitwiseAnd %int %13 %int_1
+         %17 = OpShiftLeftLogical %int %15 %int_2
+         %18 = OpConvertSToF %float %17
+         %19 = OpFAdd %float %float_n1 %18
+               OpStore %x %19
+         %21 = OpLoad %int %gl_VertexIndex
+         %22 = OpBitwiseAnd %int %21 %int_2
+         %23 = OpShiftLeftLogical %int %22 %int_1
+         %24 = OpConvertSToF %float %23
+         %25 = OpFAdd %float %float_n1 %24
+               OpStore %y %25
+         %29 = OpLoad %float %x
+         %31 = OpFMul %float %29 %float_0_5
+         %32 = OpFAdd %float %31 %float_0_5
+         %33 = OpLoad %float %y
+         %34 = OpFMul %float %33 %float_0_5
+         %35 = OpFAdd %float %34 %float_0_5
+         %36 = OpCompositeConstruct %v2float %32 %35
+               OpStore %tex_coords %36
+         %45 = OpLoad %float %x
+         %46 = OpLoad %float %y
+         %49 = OpCompositeConstruct %v4float %45 %46 %float_0 %float_1
+         %51 = OpAccessChain %_ptr_Output_v4float %_ %int_0
+               OpStore %51 %49
+               OpReturn
+               OpFunctionEnd

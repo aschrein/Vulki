@@ -42,8 +42,8 @@ static std::string compile_file_to_assembly(
   // Like -DMY_DEFINE=1
   for (auto const &define : defines)
     options.AddMacroDefinition(define.first, define.second);
-  // options.SetTargetEnvironment(shaderc_target_env_vulkan,
-  //                              shaderc_env_version_vulkan_1_1);
+  options.SetTargetEnvironment(shaderc_target_env_vulkan,
+                               shaderc_env_version_vulkan_1_1);
   if (optimize)
     options.SetOptimizationLevel(shaderc_optimization_level_size);
 
@@ -135,12 +135,12 @@ Shader_Parsed create_shader_module(
     break;
   }
   }
-  // {
-  //   auto shader_assembly =
-  //       compile_file_to_assembly(source_name, kind, shader_text, defines);
-  //   std::ofstream out("shader.spv.txt");
-  //   out << shader_assembly;
-  // }
+  {
+    auto shader_assembly =
+        compile_file_to_assembly(source_name, kind, shader_text, defines);
+    std::ofstream out(source_name + ".spv.txt");
+    out << shader_assembly;
+  }
   auto shader_code = compile_file(source_name, kind, shader_text, defines);
   // parse_descriptors(shader_code);
   Shader_Parsed out;
@@ -390,8 +390,10 @@ struct Pipeline_Wrapper {
     }
     return raw_set_layouts;
   }
-  void update_descriptor(vk::Device device, std::string const &name,
-                         vk::Buffer buffer, size_t origin, size_t size) {
+  void update_descriptor(
+      vk::Device device, std::string const &name, vk::Buffer buffer,
+      size_t origin, size_t size,
+      vk::DescriptorType type = vk::DescriptorType::eStorageBuffer) {
     ASSERT_PANIC(this->resource_slots.find(name) != this->resource_slots.end());
     auto slot = this->resource_slots[name];
 
@@ -400,7 +402,7 @@ struct Pipeline_Wrapper {
              .setDstSet(desc_sets[slot.set].get())
              .setDstBinding(slot.layout.binding)
              .setDescriptorCount(1)
-             .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+             .setDescriptorType(type)
              .setPBufferInfo(&vk::DescriptorBufferInfo()
                                   .setBuffer(buffer)
                                   .setRange(size)
@@ -438,10 +440,11 @@ struct Pipeline_Wrapper {
              .setDstBinding(slot.layout.binding)
              .setDescriptorCount(1)
              .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
-             .setPImageInfo(&vk::DescriptorImageInfo()
-                                 .setImageView(image_view)
-                                 .setImageLayout(vk::ImageLayout::eShaderReadOnlyOptimal)
-                                 .setSampler(sampler))},
+             .setPImageInfo(
+                 &vk::DescriptorImageInfo()
+                      .setImageView(image_view)
+                      .setImageLayout(vk::ImageLayout::eShaderReadOnlyOptimal)
+                      .setSampler(sampler))},
         {});
   }
   void bind_pipeline(vk::Device &device, vk::CommandBuffer &cmd) {
