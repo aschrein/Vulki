@@ -215,67 +215,13 @@ TEST(graphics, vulkan_graphics_simple) {
   auto compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
       device_wrapper, "../shaders/tests/simple_mul16.comp.glsl",
       {{"GROUP_SIZE", "64"}});
-  IMGUI_CHECKVERSION();
-  ImGui::CreateContext();
-  ImGuiIO &io = ImGui::GetIO();
-  (void)io;
-  ImGui::StyleColorsDark();
-  ImGui_ImplGlfw_InitForVulkan(device_wrapper.window, true);
-  ImGui_ImplVulkan_InitInfo init_info = {};
-  init_info.Instance = device_wrapper.instance.get();
-  init_info.PhysicalDevice = device_wrapper.physical_device;
-  init_info.Device = device_wrapper.device.get();
-  init_info.QueueFamily = device_wrapper.graphics_queue_family_id;
-  init_info.Queue = device_wrapper.graphics_queue;
-  init_info.PipelineCache = 0;
-  init_info.DescriptorPool = device_wrapper.descset_pool.get();
-  init_info.Allocator = 0;
-  init_info.MinImageCount = device_wrapper.swap_chain_images.size();
-  init_info.ImageCount = device_wrapper.swap_chain_images.size();
-  init_info.CheckVkResultFn = nullptr;
-
-  ImGui_ImplVulkan_Init(&init_info, device_wrapper.get_cur_render_pass());
-  {
-    auto &cmd = device_wrapper.acquire_next();
-    ImGui_ImplVulkan_CreateFontsTexture(cmd);
-    device_wrapper.submit_cur_cmd();
-    device_wrapper.flush();
-    ImGui_ImplVulkan_DestroyFontUploadObjects();
-  }
-
-  while (!glfwWindowShouldClose(device_wrapper.window)) {
-    int new_window_width, new_window_height;
-    glfwGetWindowSize(device_wrapper.window, &new_window_width,
-                      &new_window_height);
-    if (new_window_height != device_wrapper.cur_backbuffer_height ||
-        new_window_width != device_wrapper.cur_backbuffer_width) {
-      device_wrapper.update_swap_chain();
-    }
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-    static bool show_demo = true;
-    ImGui::ShowDemoWindow(&show_demo);
-
-    double xpos, ypos;
-    glfwGetCursorPos(device_wrapper.window, &xpos, &ypos);
-    if (glfwGetMouseButton(device_wrapper.window, 1))
-      break;
-    ImGui::Render();
-    auto &cmd = device_wrapper.acquire_next();
-    device_wrapper.begin_render_pass();
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
-    device_wrapper.end_render_pass();
-    device_wrapper.submit_cur_cmd();
-    device_wrapper.present();
-    glfwPollEvents();
-  }
-  device->waitIdle();
-  ImGui_ImplVulkan_Shutdown();
-  ImGui_ImplGlfw_Shutdown();
-  ImGui::DestroyContext();
-
-  glfwTerminate();
+  device_wrapper.on_gui = [&] {
+    ImGui::Begin("dummy window");
+    ImGui::Button("Press me");
+    ImGui::End();
+  };
+  device_wrapper.window_loop();
+  
 }
 
 int main(int argc, char **argv) {

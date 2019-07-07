@@ -1,5 +1,9 @@
 #include "../include/device.hpp"
 #include "../include/error_handling.hpp"
+#include "imgui.h"
+
+#include "examples/imgui_impl_glfw.h"
+#include "examples/imgui_impl_vulkan.h"
 
 PFN_vkCreateDebugReportCallbackEXT pfnVkCreateDebugReportCallbackEXT;
 PFN_vkDestroyDebugReportCallbackEXT pfnVkDestroyDebugReportCallbackEXT;
@@ -297,10 +301,6 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
           .setEnabledExtensionCount(deviceExtensions.size())));
   ASSERT_PANIC(out.device);
 
-  if (init_glfw) {
-    out.update_swap_chain();
-  }
-
   vk::DescriptorPoolSize aPoolSizes[] = {
       {vk::DescriptorType::eSampler, 1000},
       {vk::DescriptorType::eCombinedImageSampler, 1000},
@@ -328,4 +328,89 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
   out.graphics_queue = out.device->getQueue(graphics_queue_id, 0);
 
   return out;
+}
+
+void Device_Wrapper::window_loop() {
+
+  this->update_swap_chain();
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO &io = ImGui::GetIO();
+  (void)io;
+  ImGui::StyleColorsDark();
+  ImGui_ImplGlfw_InitForVulkan(this->window, true);
+  ImGui_ImplVulkan_InitInfo init_info = {};
+  init_info.Instance = this->instance.get();
+  init_info.PhysicalDevice = this->physical_device;
+  init_info.Device = this->device.get();
+  init_info.QueueFamily = this->graphics_queue_family_id;
+  init_info.Queue = this->graphics_queue;
+  init_info.PipelineCache = 0;
+  init_info.DescriptorPool = this->descset_pool.get();
+  init_info.Allocator = 0;
+  init_info.MinImageCount = this->swap_chain_images.size();
+  init_info.ImageCount = this->swap_chain_images.size();
+  init_info.CheckVkResultFn = nullptr;
+
+  ImGui_ImplVulkan_Init(&init_info, render_pass.get());
+  {
+    auto &cmd = this->acquire_next();
+    ImGui_ImplVulkan_CreateFontsTexture(cmd);
+    this->submit_cur_cmd();
+    this->flush();
+    ImGui_ImplVulkan_DestroyFontUploadObjects();
+  }
+  while (!glfwWindowShouldClose(this->window)) {
+    glfwPollEvents();
+    int new_window_width, new_window_height;
+    glfwGetWindowSize(this->window, &new_window_width, &new_window_height);
+    if (new_window_height != this->cur_backbuffer_height ||
+        new_window_width != this->cur_backbuffer_width) {
+      this->update_swap_chain();
+    }
+    auto &cmd = this->acquire_next();
+    if (this->on_tick)
+      this->on_tick();
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+    static bool show_demo = true;
+    ImGui::ShowDemoWindow(&show_demo);
+
+    double xpos, ypos;
+    glfwGetCursorPos(this->window, &xpos, &ypos);
+    if (glfwGetMouseButton(this->window, 1))
+      break;
+    if (this->on_gui)
+      this->on_gui();
+
+    ImGui::Render();
+
+    auto clear_value =
+        vk::ClearValue(vk::ClearColorValue().setFloat32({0.0, 0.0, 0.0, 1.0}));
+    cmd.beginRenderPass(
+        vk::RenderPassBeginInfo()
+            .setClearValueCount(1)
+            .setPClearValues(&clear_value)
+            .setFramebuffer(swap_chain_framebuffers[cur_image_id].get())
+            .setRenderPass(render_pass.get())
+            .setRenderArea(vk::Rect2D(
+                {
+                    0,
+                    0,
+                },
+                {cur_backbuffer_width, cur_backbuffer_height})),
+        vk::SubpassContents::eInline);
+
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+    cmd.endRenderPass();
+    this->submit_cur_cmd();
+    this->present();
+  }
+  device->waitIdle();
+  ImGui_ImplVulkan_Shutdown();
+  ImGui_ImplGlfw_Shutdown();
+  ImGui::DestroyContext();
+
+  glfwTerminate();
 }
