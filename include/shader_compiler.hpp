@@ -169,7 +169,8 @@ Shader_Parsed create_shader_module(
       pushResource(vk::DescriptorType::eStorageBuffer, item);
     }
     for (auto &item : res.sampled_images) {
-      pushResource(vk::DescriptorType::eSampledImage, item);
+      // @Cleanup: Combined/Sampled
+      pushResource(vk::DescriptorType::eCombinedImageSampler, item);
     }
     for (auto &item : res.storage_images) {
       pushResource(vk::DescriptorType::eStorageImage, item);
@@ -369,50 +370,6 @@ struct Pipeline_Wrapper {
 
     );
 
-    // vk::PipelineCreateFlagBits::eAllowDerivatives, 2u,
-    // vk::PipelineShaderStageCreateInfo(
-    //     vk::PipelineShaderStageCreateFlagBits(), ),
-    // &vk::PipelineVertexInputStateCreateInfo(
-    //     vk::PipelineVertexInputStateCreateFlagBits(), 1,
-    //     &vk::VertexInputBindingDescription(
-    //         0, 12, vk::VertexInputRate::eVertex),
-    //     1,
-    //     &vk::VertexInputAttributeDescription(
-    //         0, 0, vk::Format::eR32G32B32Sfloat, 0)),
-    // &vk::PipelineInputAssemblyStateCreateInfo(
-    //     vk::PipelineInputAssemblyStateCreateFlagBits(),
-    //     vk::PrimitiveTopology::eTriangleList, false),
-    // nullptr,
-    // &vk::PipelineViewportStateCreateInfo(
-    //     vk::PipelineViewportStateCreateFlagBits(), 1,
-    //     &vk::Viewport(-1.0f, -1.0f, 1.0f, 1.0f), 1,
-    //     &vk::Rect2D({0, 0}, {512, 512})),
-    // &vk::PipelineRasterizationStateCreateInfo(
-    //     vk::PipelineRasterizationStateCreateFlagBits(), false, false,
-    //     vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone,
-    //     vk::FrontFace::eClockwise, false, 0.0f, 0.0f, 1.0f, 1.0f),
-    // &vk::PipelineMultisampleStateCreateInfo(
-    //     vk::PipelineMultisampleStateCreateFlagBits(),
-    //     vk::SampleCountFlagBits::e1, false, 0.0f, nullptr, false,
-    //     false),
-    // &vk::PipelineDepthStencilStateCreateInfo(
-    //     vk::PipelineDepthStencilStateCreateFlagBits(), false, false,
-    //     vk::CompareOp::eAlways, false, false, vk::StencilOpState(),
-    //     vk::StencilOpState(), 0.0f, 1.0f),
-    // &vk::PipelineColorBlendStateCreateInfo(
-    //     vk::PipelineColorBlendStateCreateFlagBits(), false,
-    //     vk::LogicOp::eCopy, 1u,
-    //     &vk::PipelineColorBlendAttachmentState(
-    //         false, vk::BlendFactor::eOne, vk::BlendFactor::eZero,
-    //         vk::BlendOp::eAdd, vk::BlendFactor::eOne,
-    //         vk::BlendFactor::eOne, vk::BlendOp::eAdd,
-    //         vk::ColorComponentFlagBits::eR |
-    //             vk::ColorComponentFlagBits::eG |
-    //             vk::ColorComponentFlagBits::eB |
-    //             vk::ColorComponentFlagBits::eA)),
-    // &vk::PipelineDynamicStateCreateInfo(
-    //     vk::PipelineDynamicStateCreateFlagBits(), 0, nullptr),
-    // layout, pass));
     ASSERT_PANIC(out.pipeline);
     out.bind_point = vk::PipelineBindPoint::eGraphics;
     return out;
@@ -448,6 +405,43 @@ struct Pipeline_Wrapper {
                                   .setBuffer(buffer)
                                   .setRange(size)
                                   .setOffset(origin))},
+        {});
+  }
+  void update_storage_image_descriptor(vk::Device device,
+                                       std::string const &name,
+                                       vk::ImageView image_view) {
+    ASSERT_PANIC(this->resource_slots.find(name) != this->resource_slots.end());
+    auto slot = this->resource_slots[name];
+
+    device.updateDescriptorSets(
+        {vk::WriteDescriptorSet()
+             .setDstSet(desc_sets[slot.set].get())
+             .setDstBinding(slot.layout.binding)
+             .setDescriptorCount(1)
+             .setDescriptorType(vk::DescriptorType::eStorageImage)
+             .setPImageInfo(&vk::DescriptorImageInfo()
+                                 .setImageView(image_view)
+                                 .setImageLayout(vk::ImageLayout::eGeneral)
+                                 .setSampler(vk::Sampler()))},
+        {});
+  }
+  void update_sampled_image_descriptor(vk::Device device,
+                                       std::string const &name,
+                                       vk::ImageView image_view,
+                                       vk::Sampler sampler) {
+    ASSERT_PANIC(this->resource_slots.find(name) != this->resource_slots.end());
+    auto slot = this->resource_slots[name];
+
+    device.updateDescriptorSets(
+        {vk::WriteDescriptorSet()
+             .setDstSet(desc_sets[slot.set].get())
+             .setDstBinding(slot.layout.binding)
+             .setDescriptorCount(1)
+             .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
+             .setPImageInfo(&vk::DescriptorImageInfo()
+                                 .setImageView(image_view)
+                                 .setImageLayout(vk::ImageLayout::eShaderReadOnlyOptimal)
+                                 .setSampler(sampler))},
         {});
   }
   void bind_pipeline(vk::Device &device, vk::CommandBuffer &cmd) {

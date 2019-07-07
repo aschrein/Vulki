@@ -36,6 +36,7 @@ static void error_callback(int error, const char *description) {
   CLASS(CLASS const &) = delete;                                               \
   CLASS(CLASS &&that) { *this = std::move(that); }                             \
   CLASS &operator=(CLASS &&that) {                                             \
+    this->~CLASS();                                                            \
     memcpy(this, &that, sizeof(CLASS));                                        \
     new (&that) CLASS;                                                         \
     return *this;                                                              \

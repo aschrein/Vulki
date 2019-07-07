@@ -230,12 +230,11 @@ TEST(graphics, vulkan_graphics_shader_test_0) {
       "../shaders/tests/simple_0.frag.glsl",
       vk::GraphicsPipelineCreateInfo()
           .setPViewportState(&vk::PipelineViewportStateCreateInfo()
-                                  .setPViewports(&vk::Viewport(
-                                      0.0f, 0.0f, 512.0f, 512.0f, 0.0f, 1.0f))
+                                  .setPViewports(&vk::Viewport())
                                   .setViewportCount(1)
-                                  .setPScissors(&vk::Rect2D({0, 0}, {512, 512}))
+                                  .setPScissors(&vk::Rect2D())
                                   .setScissorCount(1))
-          .setRenderPass(device_wrapper.render_pass.get())
+
           .setPInputAssemblyState(
               &vk::PipelineInputAssemblyStateCreateInfo().setTopology(
                   vk::PrimitiveTopology::eTriangleList))
@@ -262,7 +261,8 @@ TEST(graphics, vulkan_graphics_shader_test_0) {
                                        .setLineWidth(1.0f))
           .setPMultisampleState(
               &vk::PipelineMultisampleStateCreateInfo().setRasterizationSamples(
-                  vk::SampleCountFlagBits::e1)),
+                  vk::SampleCountFlagBits::e1))
+          .setRenderPass(device_wrapper.render_pass.get()),
       {
           REG_VERTEX_ATTRIB(Vertex, inPosition, 0,
                             vk::Format::eR32G32B32Sfloat),
@@ -275,6 +275,11 @@ TEST(graphics, vulkan_graphics_shader_test_0) {
            .setStride(36)
            .setInputRate(vk::VertexInputRate::eVertex)},
       {});
+  // auto fullscreen_trianlge = Pipeline_Wrapper::create_graphics(
+  //     device_wrapper, "../shaders/tests/bufferless_triangle.vert.glsl",
+  //     "../shaders/tests/simple_0.frag.glsl",
+  //     pipeline_layout_template.setRenderPass(device_wrapper.render_pass.get()),
+  //     {}, {}, {});
 
   Alloc_State *alloc_state = device_wrapper.alloc_state.get();
 
@@ -331,14 +336,34 @@ TEST(graphics, vulkan_graphics_shader_test_0) {
     ;
   device->resetFences({transfer_fence.get()});
 
-  vk::Rect2D example_viewport;
+  vk::Rect2D example_viewport({0, 0}, {512, 512});
+  Framebuffer_Wrapper framebuffer_wrapper = Framebuffer_Wrapper::create(
+      device_wrapper, 512, 512, vk::Format::eR32G32B32A32Sfloat);
+  Storage_Image_Wrapper storage_image_wrapper = Storage_Image_Wrapper::create(
+      device_wrapper, 512, 512, vk::Format::eR32G32B32A32Sfloat);
+  device_wrapper.pre_tick = [&](vk::CommandBuffer &cmd) {
+    if (framebuffer_wrapper.width != example_viewport.extent.width ||
+        framebuffer_wrapper.height != example_viewport.extent.height) {
+      framebuffer_wrapper = Framebuffer_Wrapper::create(
+          device_wrapper, example_viewport.extent.width,
+          example_viewport.extent.height, vk::Format::eR32G32B32A32Sfloat);
+      storage_image_wrapper = Storage_Image_Wrapper::create(
+          device_wrapper, example_viewport.extent.width,
+          example_viewport.extent.height, vk::Format::eR32G32B32A32Sfloat);
+    }
+    framebuffer_wrapper.begin_render_pass(cmd);
+
+    framebuffer_wrapper.end_render_pass(cmd);
+  };
 
   device_wrapper.on_tick = [&](vk::CommandBuffer &cmd) {
     cmd.bindVertexBuffers(0, {vertex_buffer.buffer}, {0});
     my_pipeline.bind_pipeline(device.get(), cmd);
-    cmd.setViewport(0, {vk::Viewport(example_viewport.offset.x, example_viewport.offset.y,
-                                     example_viewport.extent.width,
-                                     example_viewport.extent.height, 0.0f, 1.0f)});
+    cmd.setViewport(
+        0, {vk::Viewport(example_viewport.offset.x, example_viewport.offset.y,
+                         example_viewport.extent.width,
+                         example_viewport.extent.height, 0.0f, 1.0f)});
+
     cmd.setScissor(0, example_viewport);
     cmd.draw(3, 1, 0, 0);
   };
@@ -418,6 +443,141 @@ TEST(graphics, vulkan_graphics_simple_pipeline) {
     ImGui::End();
 
     ImGui::Begin("dummy window");
+    ImGui::Button("Press me");
+    ImGui::ShowDemoWindow(&show_demo);
+    ImGui::End();
+  };
+  device_wrapper.window_loop();
+}
+
+TEST(graphics, vulkan_graphics_shader_test_1) {
+  auto device_wrapper = init_device(true);
+  auto &device = device_wrapper.device;
+  vk::DynamicState dynamic_states[] = {
+      vk::DynamicState::eViewport,
+      vk::DynamicState::eScissor,
+  };
+  auto compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
+      device_wrapper, "../shaders/tests/image_fill.comp.glsl",
+      {{"GROUP_DIM", "16"}});
+  auto my_pipeline = Pipeline_Wrapper::create_graphics(
+      device_wrapper, "../shaders/tests/bufferless_triangle.vert.glsl",
+      "../shaders/tests/simple_1.frag.glsl",
+      vk::GraphicsPipelineCreateInfo()
+          .setPViewportState(&vk::PipelineViewportStateCreateInfo()
+                                  .setPViewports(&vk::Viewport())
+                                  .setViewportCount(1)
+                                  .setPScissors(&vk::Rect2D())
+                                  .setScissorCount(1))
+
+          .setPInputAssemblyState(
+              &vk::PipelineInputAssemblyStateCreateInfo().setTopology(
+                  vk::PrimitiveTopology::eTriangleList))
+          .setPColorBlendState(
+              &vk::PipelineColorBlendStateCreateInfo()
+                   .setAttachmentCount(1)
+                   .setLogicOpEnable(false)
+                   .setPAttachments(
+                       &vk::PipelineColorBlendAttachmentState(false)
+                            .setColorWriteMask(vk::ColorComponentFlagBits::eR |
+                                               vk::ColorComponentFlagBits::eG |
+                                               vk::ColorComponentFlagBits::eB |
+                                               vk::ColorComponentFlagBits::eA)))
+          .setPDepthStencilState(&vk::PipelineDepthStencilStateCreateInfo()
+                                      .setDepthTestEnable(false)
+                                      .setMaxDepthBounds(1.0f))
+          .setPDynamicState(
+              &vk::PipelineDynamicStateCreateInfo()
+                   .setDynamicStateCount(ARRAY_SIZE(dynamic_states))
+                   .setPDynamicStates(dynamic_states))
+          .setPRasterizationState(&vk::PipelineRasterizationStateCreateInfo()
+                                       .setCullMode(vk::CullModeFlagBits::eNone)
+                                       .setPolygonMode(vk::PolygonMode::eFill)
+                                       .setLineWidth(1.0f))
+          .setPMultisampleState(
+              &vk::PipelineMultisampleStateCreateInfo().setRasterizationSamples(
+                  vk::SampleCountFlagBits::e1))
+          .setRenderPass(device_wrapper.render_pass.get()),
+      {}, {}, {});
+
+  Alloc_State *alloc_state = device_wrapper.alloc_state.get();
+  vk::UniqueSampler sampler =
+      device->createSamplerUnique(vk::SamplerCreateInfo().setMaxLod(1));
+  vk::Rect2D example_viewport({0, 0}, {512, 512});
+  Framebuffer_Wrapper framebuffer_wrapper = Framebuffer_Wrapper::create(
+      device_wrapper, 512, 512, vk::Format::eR32G32B32A32Sfloat);
+  Storage_Image_Wrapper storage_image_wrapper = Storage_Image_Wrapper::create(
+      device_wrapper, 512, 512, vk::Format::eR32G32B32A32Sfloat);
+  device_wrapper.pre_tick = [&](vk::CommandBuffer &cmd) {
+    if (framebuffer_wrapper.width != example_viewport.extent.width ||
+        framebuffer_wrapper.height != example_viewport.extent.height) {
+      framebuffer_wrapper = Framebuffer_Wrapper::create(
+          device_wrapper, example_viewport.extent.width,
+          example_viewport.extent.height, vk::Format::eR32G32B32A32Sfloat);
+      storage_image_wrapper = Storage_Image_Wrapper::create(
+          device_wrapper, example_viewport.extent.width,
+          example_viewport.extent.height, vk::Format::eR32G32B32A32Sfloat);
+    }
+    storage_image_wrapper.transition_layout_to_write(device_wrapper, cmd);
+    compute_pipeline_wrapped.update_storage_image_descriptor(
+        device.get(), "resultImage", storage_image_wrapper.image_view.get());
+    compute_pipeline_wrapped.bind_pipeline(device.get(), cmd);
+    cmd.dispatch(1, 1, 1);
+    storage_image_wrapper.transition_layout_to_read(device_wrapper, cmd);
+
+    framebuffer_wrapper.begin_render_pass(cmd);
+
+    framebuffer_wrapper.end_render_pass(cmd);
+  };
+
+  device_wrapper.on_tick = [&](vk::CommandBuffer &cmd) {
+    my_pipeline.bind_pipeline(device.get(), cmd);
+    my_pipeline.update_sampled_image_descriptor(
+        device.get(), "tex", storage_image_wrapper.image_view.get(),
+        sampler.get());
+    cmd.setViewport(
+        0, {vk::Viewport(example_viewport.offset.x, example_viewport.offset.y,
+                         example_viewport.extent.width,
+                         example_viewport.extent.height, 0.0f, 1.0f)});
+
+    cmd.setScissor(0, example_viewport);
+    cmd.draw(3, 1, 0, 0);
+  };
+
+  device_wrapper.on_gui = [&] {
+    static bool show_demo = true;
+    ImGuiWindowFlags window_flags =
+        ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+    ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->Pos);
+    ImGui::SetNextWindowSize(viewport->Size);
+    ImGui::SetNextWindowViewport(viewport->ID);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+    window_flags |=
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+
+    window_flags |= ImGuiWindowFlags_NoBackground;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::Begin("DockSpace Demo", nullptr, window_flags);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
+    ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
+    ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f),
+                     ImGuiDockNodeFlags_PassthruCentralNode);
+    ImGui::Button("Press me");
+    ImGui::End();
+
+    ImGui::Begin("dummy window");
+    auto wpos = ImGui::GetWindowPos();
+    example_viewport.offset.x = wpos.x;
+    example_viewport.offset.y = wpos.y;
+    auto wsize = ImGui::GetWindowSize();
+    example_viewport.extent.width = wsize.x;
+    example_viewport.extent.height = wsize.y;
+
     ImGui::Button("Press me");
     ImGui::ShowDemoWindow(&show_demo);
     ImGui::End();
