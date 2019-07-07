@@ -216,6 +216,15 @@ TEST(graphics, vulkan_graphics_simple_gui) {
 TEST(graphics, vulkan_graphics_shader_test_0) {
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;
+  struct Vertex {
+    vec3 inPosition;
+    vec3 inColor;
+    vec3 inNormal;
+  };
+  vk::DynamicState dynamic_states[] = {
+      vk::DynamicState::eViewport,
+      vk::DynamicState::eScissor,
+  };
   auto my_pipeline = Pipeline_Wrapper::create_graphics(
       device_wrapper, "../shaders/tests/simple_0.vert.glsl",
       "../shaders/tests/simple_0.frag.glsl",
@@ -243,7 +252,10 @@ TEST(graphics, vulkan_graphics_shader_test_0) {
           .setPDepthStencilState(&vk::PipelineDepthStencilStateCreateInfo()
                                       .setDepthTestEnable(false)
                                       .setMaxDepthBounds(1.0f))
-          .setPDynamicState(&vk::PipelineDynamicStateCreateInfo())
+          .setPDynamicState(
+              &vk::PipelineDynamicStateCreateInfo()
+                   .setDynamicStateCount(ARRAY_SIZE(dynamic_states))
+                   .setPDynamicStates(dynamic_states))
           .setPRasterizationState(&vk::PipelineRasterizationStateCreateInfo()
                                        .setCullMode(vk::CullModeFlagBits::eNone)
                                        .setPolygonMode(vk::PolygonMode::eFill)
@@ -251,21 +263,13 @@ TEST(graphics, vulkan_graphics_shader_test_0) {
           .setPMultisampleState(
               &vk::PipelineMultisampleStateCreateInfo().setRasterizationSamples(
                   vk::SampleCountFlagBits::e1)),
-      {{"inPosition", Vertex_Input{
-          binding : 0,
-          offset : 0,
-          format : vk::Format::eR32G32B32Sfloat
-        }},
-       {"inColor", Vertex_Input{
-          binding : 0,
-          offset : 12,
-          format : vk::Format::eR32G32B32Sfloat
-        }},
-       {"inNormal", Vertex_Input{
-          binding : 0,
-          offset : 24,
-          format : vk::Format::eR32G32B32Sfloat
-        }}},
+      {
+          REG_VERTEX_ATTRIB(Vertex, inPosition, 0,
+                            vk::Format::eR32G32B32Sfloat),
+          REG_VERTEX_ATTRIB(Vertex, inColor, 0, vk::Format::eR32G32B32Sfloat),
+          REG_VERTEX_ATTRIB(Vertex, inNormal, 0, vk::Format::eR32G32B32Sfloat),
+
+      },
       {vk::VertexInputBindingDescription()
            .setBinding(0)
            .setStride(36)
@@ -273,11 +277,7 @@ TEST(graphics, vulkan_graphics_shader_test_0) {
       {});
 
   Alloc_State *alloc_state = device_wrapper.alloc_state.get();
-  struct Vertex {
-    vec3 pos;
-    vec3 color;
-    vec3 normal;
-  };
+
   size_t N = 3;
   auto vertex_buffer = alloc_state->allocate_buffer(
       vk::BufferCreateInfo()
@@ -296,19 +296,19 @@ TEST(graphics, vulkan_graphics_shader_test_0) {
     void *data = staging_buffer.map();
     Vertex *typed_data = (Vertex *)data;
     typed_data[0] = Vertex{
-      pos : {0.0f, 0.0f, 0.0f},
-      color : {1.0f, 0.0f, 0.0f},
-      normal : {1.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 0.0f},
+        {1.0f, 0.0f, 0.0f},
+        {1.0f, 0.0f, 0.0f},
     };
     typed_data[1] = Vertex{
-      pos : {1.0f, 0.0f, 0.0f},
-      color : {0.0f, 0.0f, 1.0f},
-      normal : {1.0f, 0.0f, 0.0f},
+        {1.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f},
+        {1.0f, 0.0f, 0.0f},
     };
     typed_data[2] = Vertex{
-      pos : {1.0f, 1.0f, 0.0f},
-      color : {1.0f, 1.0f, 0.0f},
-      normal : {1.0f, 0.0f, 0.0f},
+        {1.0f, 1.0f, 0.0f},
+        {1.0f, 1.0f, 0.0f},
+        {1.0f, 0.0f, 0.0f},
     };
     staging_buffer.unmap();
   }
@@ -334,6 +334,12 @@ TEST(graphics, vulkan_graphics_shader_test_0) {
   device_wrapper.on_tick = [&](vk::CommandBuffer &cmd) {
     cmd.bindVertexBuffers(0, {vertex_buffer.buffer}, {0});
     my_pipeline.bind_pipeline(device.get(), cmd);
+    cmd.setViewport(
+        0, {vk::Viewport(0.0f, 0.0f, device_wrapper.cur_backbuffer_width,
+                         device_wrapper.cur_backbuffer_height, 0.0f, 1.0f)});
+    cmd.setScissor(
+        0, {vk::Rect2D({0, 0}, {device_wrapper.cur_backbuffer_width,
+                                device_wrapper.cur_backbuffer_height})});
     cmd.draw(3, 1, 0, 0);
   };
 

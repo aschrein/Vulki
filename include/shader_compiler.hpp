@@ -458,3 +458,11 @@ struct Pipeline_Wrapper {
                              raw_descsets, {});
   }
 };
+
+#define REG_VERTEX_ATTRIB(CLASS, FIELD, BND, FMT)                              \
+  {                                                                            \
+#FIELD, Vertex_Input {                                                     \
+    binding:                                                                   \
+      0, offset : offsetof(CLASS, FIELD), format : FMT                         \
+    }                                                                          \
+  }
