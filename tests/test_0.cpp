@@ -296,17 +296,17 @@ TEST(graphics, vulkan_graphics_shader_test_0) {
     void *data = staging_buffer.map();
     Vertex *typed_data = (Vertex *)data;
     typed_data[0] = Vertex{
-        {0.0f, 0.0f, 0.0f},
+        {-1.0f, -1.0f, 0.0f},
         {1.0f, 0.0f, 0.0f},
         {1.0f, 0.0f, 0.0f},
     };
     typed_data[1] = Vertex{
-        {1.0f, 0.0f, 0.0f},
+        {3.0f, -1.0f, 0.0f},
         {0.0f, 0.0f, 1.0f},
         {1.0f, 0.0f, 0.0f},
     };
     typed_data[2] = Vertex{
-        {1.0f, 1.0f, 0.0f},
+        {-1.0f, 3.0f, 0.0f},
         {1.0f, 1.0f, 0.0f},
         {1.0f, 0.0f, 0.0f},
     };
@@ -331,21 +331,54 @@ TEST(graphics, vulkan_graphics_shader_test_0) {
     ;
   device->resetFences({transfer_fence.get()});
 
+  vk::Rect2D example_viewport;
+
   device_wrapper.on_tick = [&](vk::CommandBuffer &cmd) {
     cmd.bindVertexBuffers(0, {vertex_buffer.buffer}, {0});
     my_pipeline.bind_pipeline(device.get(), cmd);
-    cmd.setViewport(
-        0, {vk::Viewport(0.0f, 0.0f, device_wrapper.cur_backbuffer_width,
-                         device_wrapper.cur_backbuffer_height, 0.0f, 1.0f)});
-    cmd.setScissor(
-        0, {vk::Rect2D({0, 0}, {device_wrapper.cur_backbuffer_width,
-                                device_wrapper.cur_backbuffer_height})});
+    cmd.setViewport(0, {vk::Viewport(example_viewport.offset.x, example_viewport.offset.y,
+                                     example_viewport.extent.width,
+                                     example_viewport.extent.height, 0.0f, 1.0f)});
+    cmd.setScissor(0, example_viewport);
     cmd.draw(3, 1, 0, 0);
   };
 
   device_wrapper.on_gui = [&] {
-    ImGui::Begin("dummy window");
+    static bool show_demo = true;
+    ImGuiWindowFlags window_flags =
+        ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+    ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->Pos);
+    ImGui::SetNextWindowSize(viewport->Size);
+    ImGui::SetNextWindowViewport(viewport->ID);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+    window_flags |=
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+
+    window_flags |= ImGuiWindowFlags_NoBackground;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::Begin("DockSpace Demo", nullptr, window_flags);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
+    ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
+    ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f),
+                     ImGuiDockNodeFlags_PassthruCentralNode);
     ImGui::Button("Press me");
+    ImGui::End();
+
+    ImGui::Begin("dummy window");
+    auto wpos = ImGui::GetWindowPos();
+    example_viewport.offset.x = wpos.x;
+    example_viewport.offset.y = wpos.y;
+    auto wsize = ImGui::GetWindowSize();
+    example_viewport.extent.width = wsize.x;
+    example_viewport.extent.height = wsize.y;
+
+    ImGui::Button("Press me");
+    ImGui::ShowDemoWindow(&show_demo);
     ImGui::End();
   };
   device_wrapper.window_loop();
@@ -359,8 +392,34 @@ TEST(graphics, vulkan_graphics_simple_pipeline) {
       device_wrapper, "../shaders/tests/simple_mul16.comp.glsl",
       {{"GROUP_SIZE", "64"}});
   device_wrapper.on_gui = [&] {
+    static bool show_demo = true;
+    ImGuiWindowFlags window_flags =
+        ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+    ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->Pos);
+    ImGui::SetNextWindowSize(viewport->Size);
+    ImGui::SetNextWindowViewport(viewport->ID);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+    window_flags |=
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+
+    window_flags |= ImGuiWindowFlags_NoBackground;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::Begin("DockSpace Demo", nullptr, window_flags);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
+    ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
+    ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f),
+                     ImGuiDockNodeFlags_PassthruCentralNode);
+    ImGui::Button("Press me");
+    ImGui::End();
+
     ImGui::Begin("dummy window");
     ImGui::Button("Press me");
+    ImGui::ShowDemoWindow(&show_demo);
     ImGui::End();
   };
   device_wrapper.window_loop();

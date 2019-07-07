@@ -290,8 +290,10 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
            static_cast<uint32_t>(graphics_queue_id), 1, &queuePriority},
       };
   const std::vector<const char *> deviceExtensions;
-  if (init_glfw)
-    deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  if (init_glfw) {
+    deviceExtensions.emplace_back(
+        (const char *)VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  }
   out.device = std::move(out.physical_device.createDeviceUnique(
       vk::DeviceCreateInfo(vk::DeviceCreateFlags(), 1, deviceQueueCreateInfo)
           .setPpEnabledLayerNames(&instanceLayerNames[0])
@@ -338,7 +340,16 @@ void Device_Wrapper::window_loop() {
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
   ImGuiIO &io = ImGui::GetIO();
-  (void)io;
+  // io.ConfigFlags |=
+  //     ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
+  // // io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable
+  // Gamepad Controls
+  io.ConfigFlags |= ImGuiConfigFlags_DockingEnable; // Enable Docking
+  // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // Enable
+  // Multi-Viewport / Platform Windows
+  // io.ConfigViewportsNoAutoMerge = true;
+  // io.ConfigViewportsNoTaskBarIcon = true;
+
   ImGui::StyleColorsDark();
   ImGui_ImplGlfw_InitForVulkan(this->window, true);
   ImGui_ImplVulkan_InitInfo init_info = {};
@@ -376,8 +387,6 @@ void Device_Wrapper::window_loop() {
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
-    static bool show_demo = true;
-    ImGui::ShowDemoWindow(&show_demo);
 
     double xpos, ypos;
     glfwGetCursorPos(this->window, &xpos, &ypos);
@@ -403,11 +412,14 @@ void Device_Wrapper::window_loop() {
                 },
                 {cur_backbuffer_width, cur_backbuffer_height})),
         vk::SubpassContents::eInline);
-
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     if (this->on_tick)
       this->on_tick(cmd);
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
 
+    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+      ImGui::UpdatePlatformWindows();
+      ImGui::RenderPlatformWindowsDefault();
+    }
     cmd.endRenderPass();
     this->submit_cur_cmd();
     this->present();
