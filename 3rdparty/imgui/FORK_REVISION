@@ -1,1 +1,10 @@
-54c49b5fb1371626f92853a2658cfe2d51d2e41d
+commit 1f54c16f5295efdfaec77ee4a022ef45f1dcf12f
+Merge: 50d421fa 54c49b5f
+Author: omar <omarcornut@gmail.com>
+Date:   Tue Jul 2 18:47:10 2019 +0200
+
+    Merge branch 'master' into docking
+    
+    # Conflicts:
+    #       docs/CHANGELOG.txt
+    #       imgui.cpp
