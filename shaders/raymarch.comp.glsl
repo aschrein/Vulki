@@ -196,7 +196,7 @@ void iterate(vec3 ray_dir, vec3 ray_invdir, vec3 ray_origin, vec3 camera_pos,
 
     const uint map[8] = {2, 1, 2, 1, 2, 2, 0, 0};
     uint axis = map[k];
-    if (hit_max < axis_distance[axis] - 1.0e-3)
+    if (hit_max < axis_distance[axis] + 1.0e-3)
       break;
     cell_id_cur += cell_delta[axis];
     axis_distance[axis] += axis_delta[axis];
@@ -230,6 +230,7 @@ void main() {
                     ray_origin, hit_min, hit_max)) {
 
     uint iter = 0;
+    hit_min = max(0.0, hit_min);
     vec3 ray_box_hit = ray_origin + ray_dir * hit_min;
     vec3 out_val = vec3(0);
     iterate(ray_dir, ray_invdir, ray_box_hit, ray_origin, hit_max - hit_min,
@@ -237,9 +238,10 @@ void main() {
     if (iter > 0) {
       // vec3 ray_vox_hit = ray_box_hit + ray_dir * out_val.x;
       color = // ray_box_hit/g_ubo.ug_bin_size/128.0;
-          // out_val;
-          // ray_vox_hit*0.1 + 0.1;
+              // out_val;
+              // ray_vox_hit*0.1 + 0.1;
           vec3(float(iter) / 100);
+        // vec3(-hit_min);
     }
   }
   imageStore(resultImage, ivec2(gl_GlobalInvocationID.xy),

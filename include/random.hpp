@@ -8,7 +8,8 @@ public:
   // @TODO: Seed
   float rand_unit_float() { return float(double(m_pcg()) / m_pcg.max()); }
   vec3 rand_unit_cube() {
-    return vec3{rand_unit_float(), rand_unit_float(), rand_unit_float()};
+    return vec3{rand_unit_float() * 2.0 - 1.0, rand_unit_float() * 2.0 - 1.0,
+                rand_unit_float() * 2.0 - 1.0};
   }
 
 private:
