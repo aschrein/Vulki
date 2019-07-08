@@ -1,0 +1,60 @@
+; SPIR-V
+; Version: 1.3
+; Generator: Google Shaderc over Glslang; 7
+; Bound: 32
+; Schema: 0
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint GLCompute %main "main" %gl_GlobalInvocationID
+               OpExecutionMode %main LocalSize 64 1 1
+               OpSource GLSL 450
+               OpSourceExtension "GL_GOOGLE_cpp_style_line_directive"
+               OpSourceExtension "GL_GOOGLE_include_directive"
+               OpName %main "main"
+               OpName %idx "idx"
+               OpName %gl_GlobalInvocationID "gl_GlobalInvocationID"
+               OpName %Data "Data"
+               OpMemberName %Data 0 "data"
+               OpName %data "data"
+               OpDecorate %gl_GlobalInvocationID BuiltIn GlobalInvocationId
+               OpDecorate %_runtimearr_uint ArrayStride 4
+               OpMemberDecorate %Data 0 Offset 0
+               OpDecorate %Data Block
+               OpDecorate %data DescriptorSet 0
+               OpDecorate %data Binding 0
+               OpDecorate %gl_WorkGroupSize BuiltIn WorkgroupSize
+       %void = OpTypeVoid
+          %3 = OpTypeFunction %void
+       %uint = OpTypeInt 32 0
+%_ptr_Function_uint = OpTypePointer Function %uint
+     %v3uint = OpTypeVector %uint 3
+%_ptr_Input_v3uint = OpTypePointer Input %v3uint
+%gl_GlobalInvocationID = OpVariable %_ptr_Input_v3uint Input
+     %uint_0 = OpConstant %uint 0
+%_ptr_Input_uint = OpTypePointer Input %uint
+%_runtimearr_uint = OpTypeRuntimeArray %uint
+       %Data = OpTypeStruct %_runtimearr_uint
+%_ptr_StorageBuffer_Data = OpTypePointer StorageBuffer %Data
+       %data = OpVariable %_ptr_StorageBuffer_Data StorageBuffer
+        %int = OpTypeInt 32 1
+      %int_0 = OpConstant %int 0
+    %uint_12 = OpConstant %uint 12
+%_ptr_StorageBuffer_uint = OpTypePointer StorageBuffer %uint
+    %uint_64 = OpConstant %uint 64
+     %uint_1 = OpConstant %uint 1
+%gl_WorkGroupSize = OpConstantComposite %v3uint %uint_64 %uint_1 %uint_1
+       %main = OpFunction %void None %3
+          %5 = OpLabel
+        %idx = OpVariable %_ptr_Function_uint Function
+         %14 = OpAccessChain %_ptr_Input_uint %gl_GlobalInvocationID %uint_0
+         %15 = OpLoad %uint %14
+               OpStore %idx %15
+         %22 = OpLoad %uint %idx
+         %25 = OpAccessChain %_ptr_StorageBuffer_uint %data %int_0 %22
+         %26 = OpLoad %uint %25
+         %27 = OpIMul %uint %26 %uint_12
+         %28 = OpAccessChain %_ptr_StorageBuffer_uint %data %int_0 %22
+               OpStore %28 %27
+               OpReturn
+               OpFunctionEnd

@@ -30,7 +30,7 @@ add_subdirectory(3rdparty/SPIRV-Cross)
 
 file(GLOB SOURCE "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widgets.cpp 3rdparty/imgui/imgui_draw.cpp 3rdparty/imgui/imgui_demo.cpp 3rdparty/imgui/examples/imgui_impl_vulkan.cpp 3rdparty/imgui/examples/imgui_impl_glfw.cpp)
 # file(GLOB 3RD_SOURCE 3rdparty/SPIRV-Reflect/spirv_reflect.c)
-# message(${SOURCE})
+message(${SOURCE})
 # message(${SOURCE})
 add_executable(GRAPHICS_EXPERIMENTS main.cpp ${SOURCE} ${3RD_SOURCE})
 target_include_directories(GRAPHICS_EXPERIMENTS PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)

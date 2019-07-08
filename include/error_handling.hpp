@@ -28,9 +28,15 @@ static void error_callback(int error, const char *description) {
   std::cerr << "Error: " << description << "\n";
 }
 
+// Poor man's rust
+using u32 = uint32_t;
+using i32 = uint32_t;
+using f32 = float;
+
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
-// memset{0} - is a valid state
+// No pointer to the object should persist
+// @Cleanup: Do something better
 #define RAW_MOVABLE(CLASS)                                                     \
   CLASS() = default;                                                           \
   CLASS(CLASS const &) = delete;                                               \
