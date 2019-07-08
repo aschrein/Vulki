@@ -5,6 +5,8 @@
 
 #include "imgui.h"
 
+#include "examples/imgui_impl_vulkan.h"
+
 #include "gtest/gtest.h"
 #include <cstring>
 
@@ -730,17 +732,18 @@ TEST(graphics, vulkan_graphics_shader_test_2) {
 
   // Render the image
   device_wrapper.on_tick = [&](vk::CommandBuffer &cmd) {
-    my_pipeline.bind_pipeline(device.get(), cmd);
-    my_pipeline.update_sampled_image_descriptor(
-        device.get(), "tex", storage_image_wrapper.image_view.get(),
-        sampler.get());
-    cmd.setViewport(
-        0, {vk::Viewport(example_viewport.offset.x, example_viewport.offset.y,
-                         example_viewport.extent.width,
-                         example_viewport.extent.height, 0.0f, 1.0f)});
+    // my_pipeline.bind_pipeline(device.get(), cmd);
+    // my_pipeline.update_sampled_image_descriptor(
+    //     device.get(), "tex", storage_image_wrapper.image_view.get(),
+    //     sampler.get());
+    // cmd.setViewport(
+    //     0, {vk::Viewport(example_viewport.offset.x,
+    //     example_viewport.offset.y,
+    //                      example_viewport.extent.width,
+    //                      example_viewport.extent.height, 0.0f, 1.0f)});
 
-    cmd.setScissor(0, example_viewport);
-    cmd.draw(3, 1, 0, 0);
+    // cmd.setScissor(0, example_viewport);
+    // cmd.draw(3, 1, 0, 0);
   };
 
   // Execute GUI
@@ -761,22 +764,25 @@ TEST(graphics, vulkan_graphics_shader_test_2) {
 
     window_flags |= ImGuiWindowFlags_NoBackground;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(-1.0f);
     ImGui::Begin("DockSpace Demo", nullptr, window_flags);
     ImGui::PopStyleVar();
     ImGui::PopStyleVar(2);
     ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
     ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f),
                      ImGuiDockNodeFlags_PassthruCentralNode);
-    ImGui::Button("Press me");
     ImGui::End();
 
+    ImGui::SetNextWindowBgAlpha(-1.0f);
     ImGui::Begin("dummy window");
+
     auto wpos = ImGui::GetWindowPos();
     example_viewport.offset.x = wpos.x;
-    example_viewport.offset.y = wpos.y;
+    example_viewport.offset.y = wpos.y + 15;
     auto wsize = ImGui::GetWindowSize();
     example_viewport.extent.width = wsize.x;
-    example_viewport.extent.height = wsize.y;
+    example_viewport.extent.height = wsize.y - 15;
+
     if (ImGui::IsWindowHovered()) {
       static ImVec2 old_mpos{};
       auto mpos = ImGui::GetMousePos();
@@ -799,8 +805,15 @@ TEST(graphics, vulkan_graphics_shader_test_2) {
         }
       }
     }
-    ImGui::Button("Press me");
-    ImGui::ShowDemoWindow(&show_demo);
+    // ImGui::Button("Press me");
+
+    ImGui::Image(
+        ImGui_ImplVulkan_AddTexture(
+            sampler.get(), storage_image_wrapper.image_view.get(),
+            VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+        ImVec2(example_viewport.extent.width, example_viewport.extent.height));
+    // ImGui::ShowDemoWindow(&show_demo);
+
     ImGui::End();
 
     ImGui::Begin("dummy window 1");

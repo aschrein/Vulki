@@ -412,9 +412,11 @@ void Device_Wrapper::window_loop() {
                 },
                 {cur_backbuffer_width, cur_backbuffer_height})),
         vk::SubpassContents::eInline);
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+
     if (this->on_tick)
       this->on_tick(cmd);
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+    
 
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
       ImGui::UpdatePlatformWindows();
