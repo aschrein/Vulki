@@ -213,7 +213,7 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
     if (!glfwInit())
       exit(EXIT_FAILURE);
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    // glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     out.window = glfwCreateWindow(512, 512, "Vulkan Window", NULL, NULL);
     ASSERT_PANIC(out.window);
 

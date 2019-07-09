@@ -4,6 +4,9 @@ layout(set = 0, binding = 0, rgba8) uniform writeonly image2D resultImage;
 #extension GL_KHR_shader_subgroup_vote : enable
 #extension GL_KHR_shader_subgroup_shuffle : enable
 
+#define RENDER_HULL 0x1
+#define RENDER_CELLS 0x2
+
 layout(set = 0, binding = 1, std140) uniform UBO {
   vec3 camera_pos;
   vec3 camera_look;
@@ -13,6 +16,10 @@ layout(set = 0, binding = 1, std140) uniform UBO {
   float ug_size;
   uint ug_bins_count;
   float ug_bin_size;
+  uint rendering_flags;
+  uint raymarch_iterations;
+  float hull_radius;
+  float step_radius;
 }
 g_ubo;
 layout(set = 0, binding = 2) buffer Bins { uint data[]; }
@@ -58,7 +65,8 @@ float eval_dist(vec3 ray_origin, uint item_start, uint item_end) {
     vec3 pos =
         vec3(g_particles.data[item_id * 3], g_particles.data[item_id * 3 + 1],
              g_particles.data[item_id * 3 + 2]);
-    dist = smin(dist, distance(pos, ray_origin) - 0.1, 0.1);
+    dist = smin(dist, distance(pos, ray_origin) - g_ubo.hull_radius,
+                g_ubo.step_radius);
   }
   return dist;
 }
@@ -75,7 +83,7 @@ vec3 eval_norm(vec3 pos, uint item_start, uint item_end) {
                    v4 * eval_dist(pos + v4 * eps, item_start, item_end));
 }
 
-void iterate(vec3 ray_dir, vec3 ray_invdir, vec3 ray_origin, vec3 camera_pos,
+bool iterate(vec3 ray_dir, vec3 ray_invdir, vec3 ray_origin, vec3 camera_pos,
              float hit_max, out uint iter, out vec3 out_val) {
   ivec3 exit, step, cell_id;
   vec3 axis_delta, axis_distance;
@@ -100,7 +108,7 @@ void iterate(vec3 ray_dir, vec3 ray_invdir, vec3 ray_origin, vec3 camera_pos,
     }
   }
   iter = 0;
-
+  out_val = vec3(0.0);
   uint cell_id_offset = cell_id[2] * g_ubo.ug_bins_count * g_ubo.ug_bins_count +
                         cell_id[1] * g_ubo.ug_bins_count + cell_id[0];
   int cell_id_cur = int(cell_id_offset);
@@ -110,65 +118,66 @@ void iterate(vec3 ray_dir, vec3 ray_invdir, vec3 ray_origin, vec3 camera_pos,
     iter++;
     uint o = cell_id_cur;
     uint bin_offset = g_bins.data[2 * o];
+    // if (bin_offset > 0) {
+    //   uint pnt_cnt = g_bins.data[2 * o + 1];
+    //   iter += pnt_cnt;
+    // }
     if (bin_offset > 0) {
       uint pnt_cnt = g_bins.data[2 * o + 1];
-      iter += pnt_cnt;
+      float min_dist = 100000.0;
+      // iter += 1;
+      bool hit = false;
+      for (uint item_id = bin_offset; item_id < bin_offset + pnt_cnt;
+           item_id++) {
+        iter++;
+        vec3 pos =
+            // vec3(0.12412, 0.15153, 0.0);
+            vec3(g_particles.data[item_id * 3],
+                 g_particles.data[item_id * 3 + 1],
+                 g_particles.data[item_id * 3 + 2]);
+        vec3 dr = pos - camera_pos;
+        float dr_dot_v = dot(dr, ray_dir);
+        float c = dot(dr, dr) - dr_dot_v * dr_dot_v;
+        float radius2 = (g_ubo.hull_radius + g_ubo.step_radius);
+        radius2 = radius2 * radius2;
+        if (c < radius2) {
+          // c = sqrt(c);
+          float t = dr_dot_v - sqrt(radius2 - c);
+          if (t < min_dist) {
+            vec3 norm = normalize(camera_pos + ray_dir * t - pos);
+            hit = true;
+            // out_val = vec3(max(0.0, dot(norm, vec3(1.4, 0.0, 1.4))));
+            min_dist = t;
+          }
+        }
+      }
+      if (hit) {
+        ray_origin = camera_pos + ray_dir * min_dist;
+        float dist = 0.0;
+        uint iter_id = 0;
+        float ITERATION_LIMIT = 1.0e-2;
+        for (iter_id = 0; iter_id < g_ubo.raymarch_iterations; iter_id++) {
+          iter++;
+          dist = eval_dist(ray_origin, bin_offset, bin_offset + pnt_cnt);
+          ray_origin += ray_dir * dist;
+          if (dist < ITERATION_LIMIT) {
+            break;
+          }
+        }
+        if (dist < ITERATION_LIMIT) {
+          vec3 norm = eval_norm(ray_origin, bin_offset, bin_offset + pnt_cnt);
+          out_val = norm;
+          // vec3(abs(dot(norm, out_val = norm * 0.1 + 0.1 + 0.9 *
+          // vec3(1.0 + dot(ray_dir, norm));
+          return true;
+        }
+      }
+
+      //     // if (iter == 1) {
+      //     //     return;
+      //     // }
+      //     // iter += pnt_cnt;
     }
-    // if (bin_offset > 0) {
-    //     uint pnt_cnt = g_bins.data[2 * o + 1];
-    //     float min_dist = 100000.0;
-    //     // iter += 1;
-    //     bool hit = false;
-    //     for (uint item_id = bin_offset; item_id < bin_offset + pnt_cnt;
-    //     item_id++) {
-    //         iter++;
-    //         vec3 pos =
-    //         //vec3(0.12412, 0.15153, 0.0);
-    //         vec3(g_particles.data[item_id * 3],
-    //         g_particles.data[item_id * 3 + 1],
-    //         g_particles.data[item_id * 3 + 2]);
-    //         vec3 dr = pos - camera_pos;
-    //         float dr_dot_v = dot(dr, ray_dir);
-    //         float c = dot(dr, dr) - dr_dot_v * dr_dot_v;
-    //         float radius = 0.2;
-    //         if (c < radius * radius) {
-    //             // c = sqrt(c);
-    //             float t = dr_dot_v - sqrt(radius * radius - c);
-    //             if (t < min_dist) {
-    //                 vec3 norm = normalize(camera_pos + ray_dir * t - pos);
-    //                 hit = true;
-    //                 out_val = vec3(max(0.0, dot(norm, vec3(1.4, 0.0, 1.4))));
-    //                 min_dist = t;
-    //             }
-    //         }
-    //     }
-    //     if (hit) {
-    //         ray_origin = camera_pos + ray_dir * min_dist;
-    //         float dist = 0.0;
-    //         uint iter_id = 0;
-    //         uint MAX_ITER = 4;
-    //         for (iter_id = 0; iter_id < MAX_ITER; iter_id++) {
-    //             iter++;
-    //             dist = eval_dist(ray_origin, bin_offset, bin_offset +
-    //             pnt_cnt); ray_origin += ray_dir * dist; if (dist < 1.0e-2) {
-    //                 break;
-    //             }
-    //         }
-    //         if (dist < 1.0e-2) {
-    //             vec3 norm = eval_norm(ray_origin, bin_offset, bin_offset +
-    //             pnt_cnt);
-    //             // out_val = norm * 0.1 + 0.1 + float(iter_id)/MAX_ITER *
-    //             vec3(abs(dot(norm, out_val = norm * 0.1 + 0.1 + 0.9 *
-    //             vec3(1.0 + dot(ray_dir, norm)); return;
-    //         }
-
-    //     }
-
-    //     // if (iter == 1) {
-    //     //     return;
-    //     // }
-    //     // iter += pnt_cnt;
-    // }
 
     uint k = (uint(axis_distance[0] < axis_distance[1]) << 2) +
              (uint(axis_distance[0] < axis_distance[2]) << 1) +
@@ -210,6 +219,7 @@ void iterate(vec3 ray_dir, vec3 ray_invdir, vec3 ray_origin, vec3 camera_pos,
 
     // out_val.x += axis_delta[axis];
   }
+  return false;
 }
 
 void main() {
@@ -233,16 +243,19 @@ void main() {
     hit_min = max(0.0, hit_min);
     vec3 ray_box_hit = ray_origin + ray_dir * hit_min;
     vec3 out_val = vec3(0);
-    iterate(ray_dir, ray_invdir, ray_box_hit, ray_origin, hit_max - hit_min,
-            iter, out_val);
-    if (iter > 0) {
+    if (iterate(ray_dir, ray_invdir, ray_box_hit, ray_origin, hit_max - hit_min,
+                iter, out_val)) {
       // vec3 ray_vox_hit = ray_box_hit + ray_dir * out_val.x;
-      color = // ray_box_hit/g_ubo.ug_bin_size/128.0;
-              // out_val;
-              // ray_vox_hit*0.1 + 0.1;
-          vec3(float(iter) / g_ubo.ug_bins_count / 3.7);
-        // vec3(-hit_min);
+
+      // ray_box_hit/g_ubo.ug_bin_size/128.0;
+      // ray_vox_hit*0.1 + 0.1;
+      //
+      // vec3(-hit_min);
     }
+    if ((g_ubo.rendering_flags & RENDER_HULL) != 0)
+      color += out_val;
+    if ((g_ubo.rendering_flags & RENDER_CELLS) != 0)
+      color += vec3(float(iter) / float(g_ubo.ug_bins_count) / 1.73205 / float(g_ubo.raymarch_iterations));
   }
   imageStore(resultImage, ivec2(gl_GlobalInvocationID.xy),
              vec4(color.xyz, 1.0));

@@ -89,7 +89,7 @@ struct UG {
   //             for dx in 0..this->bin_count {
   //                 const auto flat_id = dx + dy * this->bin_count + dz *
   //                 this->bin_count * this->bin_count; const auto bin_id =
-  //                 &this->bins_indices[flat_id as usize]; if *bin_id != 0 {
+  //                 &this->bins_indices[flat_id]; if *bin_id != 0 {
   //                     const auto bin_idx = bin_size * dx as f32 - this->size;
   //                     const auto bin_idy = bin_size * dy as f32 - this->size;
   //                     const auto bin_idz = bin_size * dz as f32 - this->size;
@@ -187,6 +187,7 @@ struct Simulation_State {
   f32 cell_radius;
   f32 cell_mass;
   f32 domain_radius;
+  u32 birth_rate;
   // Dynamic state
   std::vector<vec3> particles;
   google::dense_hash_set<std::pair<u32, u32>, Pair_Hash> links;
@@ -253,72 +254,76 @@ struct Simulation_State {
       vec3 const old_pos_1 = particles[j];
       vec3 const new_pos_1 = new_particles[j];
       f32 const dist = rest_length - glm::distance(old_pos_0, old_pos_1);
-      f32 const force = spring_factor * cell_mass * dist;
+      f32 const force = spring_factor * dist;
       vec3 const vforce = (old_pos_0 - old_pos_1) * (force * dt);
       new_particles[i] = new_pos_0 + vforce;
       new_particles[j] = new_pos_1 - vforce;
       force_table[i] += std::abs(force);
       force_table[j] += std::abs(force);
     }
+
+    // Planarization
+    struct Planar_Target {
+      vec3 target;
+      u32 n_divisor;
+    };
+    std::vector<Planar_Target> spring_target(particles.size());
+    {
+      u32 i = 0;
+      for (auto const &old_pos_0 : particles) {
+        spring_target[i] = Planar_Target{
+          target : vec3(0.0f, 0.0f, 0.0f),
+          n_divisor : 0
+        };
+        i++;
+      }
+    }
+    for (auto const &link : links) {
+      u32 i = link.first;
+      u32 j = link.second;
+      vec3 const old_pos_0 = particles[i];
+      vec3 const old_pos_1 = particles[j];
+      spring_target[i].target += old_pos_1;
+      spring_target[i].n_divisor += 1;
+      spring_target[j].target += old_pos_0;
+      spring_target[j].n_divisor += 1;
+    }
+    {
+      u32 i = 0;
+      for (auto const &old_pos_0 : particles) {
+        auto const st = spring_target[i];
+        if (st.n_divisor == 0) {
+          i++;
+          continue;
+        }
+        auto const average_target = st.target / float(st.n_divisor);
+        auto const dist = distance(old_pos_0, average_target);
+        auto const force =
+            spring_factor * dist;
+        auto const vforce = dt * (average_target - old_pos_0) * force;
+        force_table[i] += std::abs(force);
+        new_particles[i] += vforce;
+        i++;
+      }
+    }
+
     // Division
     {
       u32 i = 0;
       for (auto const &old_pos_0 : particles) {
-        if (rf.uniform(0, 10) == 0 && force_table[i] < 20.0f) {
+        if (rf.uniform(0, birth_rate) == 0 && force_table[i] < 20.0f) {
           new_particles.push_back(old_pos_0 + rf.rand_unit_cube() * 1.0e-3f);
         }
+        i++;
       }
     }
-
-    //         // Planarization
-    //         struct Planar_Target {
-    //           p : state::vec3, n : u32,
-    //         } auto const mut spring_target = Vec::<Planar_Target>::new ();
-    //         for (i, &pnt)
-    //           in state.pos.iter().enumerate() {
-    //             spring_target.push(Planar_Target{
-    //               p : state::vec3{x : 0.0, y : 0.0, z : 0.0},
-    //               n : 0,
-    //             });
-    //           }
-    //         for
-    //           &(i, j)in &state.links {
-    //             if (i, j)
-    //               == (j, i) { continue; }
-    //             auto const pnt_1 = state.pos[i as usize].clone();
-    //             auto const pnt_2 = state.pos[j as usize].clone();
-    //             // auto const dr = (pnt_1 - pnt_2);
-    //             // auto const drn = dr.normalize();
-    //             spring_target[i as usize].p +=
-    //                 pnt_2; // + state.params.rest_length * drn;
-    //             spring_target[i as usize].n += 1;
-    //             spring_target[j as usize].p +=
-    //                 pnt_1; // - state.params.rest_length * drn;
-    //             spring_target[j as usize].n += 1;
-    //           }
-    //         for (i, &pnt)
-    //           in state.pos.iter().enumerate() {
-    //             auto const st = &spring_target[i];
-    //             if
-    //               st.n == 0 { continue; }
-    //             auto const pt = st.p / st.n as f32;
-    //             auto const pnt_1 = state.pos[i as usize].clone();
-    //             auto const dist =
-    //                 state.params.rest_length - pnt_1.distance(pt.clone());
-    //             auto const force =
-    //                 state.params.spring_factor * state.params.cell_mass *
-    //                 dist;
-    //             auto const vforce = dt * (pnt_1 - pt) * force;
-    //             force_history[i as usize] += f32::abs(force);
-    //             new_pos[i as usize] += vforce;
-    //           }
 
     //         // Force into the domain
     //         for (i, pnt)
     //           in new_pos.iter_mut().enumerate() {
-    //             auto const dist = ((pnt.x * pnt.x) + (pnt.y * pnt.y)).sqrt();
-    //             auto const diff = dist - state.params.can_radius;
-    //             if
+    //             auto const dist = ((pnt.x * pnt.x) + (pnt.y *
+    //             pnt.y)).sqrt(); auto const diff = dist -
+    //             state.params.can_radius; if
     //               diff > 0.0 {
     //                 auto const k = diff / dist;
     //                 pnt.x -= pnt.x * k;
@@ -328,7 +333,7 @@ struct Simulation_State {
     //             //     pnt.z = 0.0;
     //             // }
     //             // auto const force = -pnt.z * 4.0;
-    //             // force_history[i as usize] += f32::abs(force);
+    //             // force_history[i] += f32::abs(force);
     //             // pnt.z += force * dt;
     //             if
     //               pnt.z > state.params.can_radius {
@@ -350,6 +355,5 @@ struct Simulation_State {
       ;
     }
     system_size += rest_length;
-    
   }
 };

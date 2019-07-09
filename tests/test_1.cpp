@@ -44,6 +44,10 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     float ug_size;
     uint ug_bins_count;
     float ug_bin_size;
+    uint rendering_flags;
+    uint raymarch_iterations;
+    float hull_radius;
+    float step_radius;
   };
   struct Particle_UBO {
     mat4 world;
@@ -53,6 +57,15 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
   // Viewport for this sample's rendering
   vk::Rect2D example_viewport({0, 0}, {32, 32});
   // Rendering state
+  bool render_wire = false;
+  bool render_raymarch = true;
+  bool simulate = false;
+  bool raymarch_flag_render_hull = false;
+  bool raymarch_flag_render_cells = true;
+  u32 GRID_DIM = 2;
+  uint raymarch_iterations = 64;
+  f32 rendering_radius = 0.2f;
+  f32 rendering_step = 0.2f;
   Framebuffer_Wrapper framebuffer_wrapper{};
   Storage_Image_Wrapper storage_image_wrapper{};
   Pipeline_Wrapper fullscreen_pipeline;
@@ -226,14 +239,15 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
   // Particle system state //
   ///////////////////////////
   Random_Factory frand;
-  Simulation_State particle_system{.rest_length = 0.1f,
-                                   .spring_factor = 10.0f,
-                                   .repell_factor = 10.0f,
+  Simulation_State particle_system{.rest_length = 0.25f,
+                                   .spring_factor = 0.1f,
+                                   .repell_factor = 3.0f,
                                    .planar_factor = 10.0f,
                                    .bulge_factor = 10.0f,
                                    .cell_radius = 0.025f,
                                    .cell_mass = 10.0f,
-                                   .domain_radius = 10.0f};
+                                   .domain_radius = 10.0f,
+                                   .birth_rate = 1000u};
 
   // Initialize the system
   particle_system.init();
@@ -250,11 +264,13 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     ////////////// SIMULATION //////////////////
     // Perform fixed step iteration on the particle system
     // Fill the uniform grid
-    u32 GRID_DIM = 16;
-    particle_system.step(1.0e-3f);
+    if (simulate)
+      particle_system.step(1.0e-3f);
     UG ug(particle_system.system_size, GRID_DIM);
+
     for (u32 i = 0; i < particle_system.particles.size(); i++) {
-      ug.put(particle_system.particles[i], 0.0f, i);
+      ug.put(particle_system.particles[i], rendering_radius + rendering_step * 4.0f,
+             i);
     }
     auto packed = ug.pack();
 
@@ -377,6 +393,12 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
         tmp_ubo.ug_size = particle_system.system_size;
         tmp_ubo.ug_bins_count = GRID_DIM;
         tmp_ubo.ug_bin_size = 2.0f * particle_system.system_size / GRID_DIM;
+        tmp_ubo.rendering_flags = 0;
+        tmp_ubo.rendering_flags |= (raymarch_flag_render_hull ? 1 : 0);
+        tmp_ubo.rendering_flags |= (raymarch_flag_render_cells ? 1 : 0) << 1;
+        tmp_ubo.hull_radius = rendering_radius;
+        tmp_ubo.step_radius = rendering_step;
+        tmp_ubo.raymarch_iterations = raymarch_iterations;
         *typed_data = tmp_ubo;
         compute_ubo_buffer.unmap();
       }
@@ -404,35 +426,40 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     /*------------------------------*/
     /* Spawn the raymarching kernel */
     /*------------------------------*/
-    storage_image_wrapper.transition_layout_to_write(device_wrapper, cmd);
-    compute_pipeline_wrapped.bind_pipeline(device.get(), cmd);
-    cmd.dispatch((example_viewport.extent.width + 15) / 16,
-                 (example_viewport.extent.height + 15) / 16, 1);
-    storage_image_wrapper.transition_layout_to_read(device_wrapper, cmd);
+    if (render_raymarch) {
+      storage_image_wrapper.transition_layout_to_write(device_wrapper, cmd);
+      compute_pipeline_wrapped.bind_pipeline(device.get(), cmd);
+      cmd.dispatch((example_viewport.extent.width + 15) / 16,
+                   (example_viewport.extent.height + 15) / 16, 1);
+      storage_image_wrapper.transition_layout_to_read(device_wrapper, cmd);
+    }
     /*----------------------------------*/
     /* Update the offscreen framebuffer */
     /*----------------------------------*/
     framebuffer_wrapper.begin_render_pass(cmd);
-    fullscreen_pipeline.bind_pipeline(device.get(), cmd);
-    fullscreen_pipeline.update_sampled_image_descriptor(
-        device.get(), "tex", storage_image_wrapper.image_view.get(),
-        sampler.get());
     cmd.setViewport(0,
                     {vk::Viewport(0, 0, example_viewport.extent.width,
                                   example_viewport.extent.height, 0.0f, 1.0f)});
-
     cmd.setScissor(
         0, {{{0, 0},
              {example_viewport.extent.width, example_viewport.extent.height}}});
-    cmd.draw(3, 1, 0, 0);
-    
-    particles_pipeline.bind_pipeline(device.get(), cmd);
-    cmd.bindVertexBuffers(0, {particle_vertex_buffer.buffer}, {0});
-    cmd.draw(particle_system.particles.size(), 1, 0, 0);
+    if (render_raymarch) {
+      fullscreen_pipeline.bind_pipeline(device.get(), cmd);
+      fullscreen_pipeline.update_sampled_image_descriptor(
+          device.get(), "tex", storage_image_wrapper.image_view.get(),
+          sampler.get());
 
-    links_pipeline.bind_pipeline(device.get(), cmd);
-    cmd.bindVertexBuffers(0, {links_vertex_buffer.buffer}, {0});
-    cmd.draw(particle_system.links.size() * 2, 1, 0, 0);
+      cmd.draw(3, 1, 0, 0);
+    }
+    if (render_wire) {
+      particles_pipeline.bind_pipeline(device.get(), cmd);
+      cmd.bindVertexBuffers(0, {particle_vertex_buffer.buffer}, {0});
+      cmd.draw(particle_system.particles.size(), 1, 0, 0);
+
+      links_pipeline.bind_pipeline(device.get(), cmd);
+      cmd.bindVertexBuffers(0, {links_vertex_buffer.buffer}, {0});
+      cmd.draw(particle_system.links.size() * 2, 1, 0, 0);
+    }
     framebuffer_wrapper.end_render_pass(cmd);
   };
 
@@ -536,11 +563,11 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     ImGui::DragFloat("rest_length", &particle_system.rest_length, 0.025f,
                      0.025f, 1.0f);
     ImGui::DragFloat("spring_factor", &particle_system.spring_factor, 0.025f,
-                     0.0f, 10.0f);
+                     0.0f, 50.0f);
     ImGui::DragFloat("repell_factor", &particle_system.repell_factor, 0.025f,
-                     0.0f, 10.0f);
+                     0.0f, 50.0f);
     ImGui::DragFloat("planar_factor", &particle_system.planar_factor, 0.025f,
-                     0.0f, 10.0f);
+                     0.0f, 50.0f);
     ImGui::DragFloat("bulge_factor", &particle_system.bulge_factor, 0.025f,
                      0.0f, 100.0f);
     ImGui::DragFloat("cell_radius", &particle_system.cell_radius, 0.025f,
@@ -549,8 +576,22 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
                      10.0f);
     ImGui::DragFloat("domain_radius", &particle_system.domain_radius, 0.025f,
                      0.0f, 100.0f);
+    ImGui::DragInt("birth_rate", (i32 *)&particle_system.birth_rate, 1, 10,
+                   1000);
     ImGui::End();
     ImGui::Begin("dummy window 2");
+    ImGui::Checkbox("draw wire", &render_wire);
+    ImGui::Checkbox("draw raymarch", &render_raymarch);
+    ImGui::Checkbox("simulate", &simulate);
+    ImGui::Checkbox("raymarch render hull", &raymarch_flag_render_hull);
+    ImGui::Checkbox("raymarch render iterations", &raymarch_flag_render_cells);
+    ImGui::DragFloat("raymarch hull radius", &rendering_radius, 0.025f, 0.025f,
+                     10.0f);
+    ImGui::DragFloat("raymarch step radius", &rendering_step, 0.025f, 0.025f,
+                     10.0f);
+    ImGui::DragInt("raymarch grid dimension", (i32 *)&GRID_DIM, 1, 2, 64);
+    ImGui::DragInt("raymarch max iterations", (i32 *)&raymarch_iterations, 1, 1,
+                   64);
     ImGui::End();
     ImGui::Begin("dummy window 3");
     ImGui::End();
