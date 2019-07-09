@@ -41,3 +41,8 @@ add_executable(test_0 tests/test_0.cpp ${SOURCE} ${3RD_SOURCE})
 target_include_directories(test_0 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
 target_link_libraries(test_0 ${Vulkan_LIBRARY} glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util)
 target_link_libraries(test_0 PRIVATE shaderc_shared)
+
+add_executable(test_1 tests/test_1.cpp ${SOURCE} ${3RD_SOURCE})
+target_include_directories(test_1 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
+target_link_libraries(test_1 ${Vulkan_LIBRARY} glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util)
+target_link_libraries(test_1 PRIVATE shaderc_shared)

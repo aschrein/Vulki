@@ -30,7 +30,8 @@ static void error_callback(int error, const char *description) {
 
 // Poor man's rust
 using u32 = uint32_t;
-using i32 = uint32_t;
+using u64 = uint64_t;
+using i32 = int32_t;
 using f32 = float;
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))

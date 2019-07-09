@@ -219,7 +219,7 @@ void main() {
     return;
   vec3 ray_origin = g_ubo.camera_pos;
   vec2 xy = (-1.0 + 2.0 * uv) * vec2(g_ubo.camera_fov, 1.0);
-  vec3 ray_dir = normalize(g_ubo.camera_look + g_ubo.camera_up * xy.y +
+  vec3 ray_dir = normalize(g_ubo.camera_look + g_ubo.camera_up * xy.y -
                            g_ubo.camera_right * xy.x);
   // float val = subgroupShuffle(ray_dir.x, 0);
   float hit_min;
