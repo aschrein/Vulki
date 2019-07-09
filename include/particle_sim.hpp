@@ -52,6 +52,7 @@ struct UG {
     if (pos.x > this->size + radius || pos.y > this->size + radius ||
         pos.z > this->size + radius || pos.x < -this->size - radius ||
         pos.y < -this->size - radius || pos.z < -this->size - radius) {
+      panic("");
       return;
     }
     const auto bin_size = (2.0f * this->size) / float(this->bin_count);
@@ -194,18 +195,12 @@ struct Simulation_State {
   // Methods
   void init() {
     links.set_empty_key({UINT32_MAX, UINT32_MAX});
-    particles.push_back({0.0f, 0.0f, 0.0f});
+    links.insert({0, 1});
+    particles.push_back({0.0f, 0.0f, -cell_radius});
+    particles.push_back({0.0f, 0.0f, cell_radius});
+    system_size = cell_radius;
   }
   void step(float dt) {
-
-    system_size = 0.0f;
-    for (auto const &pnt : particles) {
-      system_size = std::max(
-          system_size, std::max(std::abs(pnt.x),
-                                std::max(std::abs(pnt.y), std::abs(pnt.z))));
-      ;
-    }
-    system_size += rest_length;
     auto const M = u32(2.0f * system_size / rest_length);
     auto ug = UG(system_size, M);
     {
@@ -347,5 +342,14 @@ struct Simulation_State {
 
     // Apply the changes
     particles = new_particles;
+    system_size = 0.0f;
+    for (auto const &pnt : particles) {
+      system_size = std::max(
+          system_size, std::max(std::abs(pnt.x),
+                                std::max(std::abs(pnt.y), std::abs(pnt.z))));
+      ;
+    }
+    system_size += rest_length;
+    
   }
 };

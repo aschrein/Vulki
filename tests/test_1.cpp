@@ -57,6 +57,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
   Storage_Image_Wrapper storage_image_wrapper{};
   Pipeline_Wrapper fullscreen_pipeline;
   Pipeline_Wrapper particles_pipeline;
+  Pipeline_Wrapper links_pipeline;
   auto onResize = [&] {
     framebuffer_wrapper = Framebuffer_Wrapper::create(
         device_wrapper, example_viewport.extent.width,
@@ -121,6 +122,57 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
                 &vk::PipelineInputAssemblyStateCreateInfo().setTopology(
                     // We want points here
                     vk::PrimitiveTopology::ePointList))
+            .setPColorBlendState(
+                &vk::PipelineColorBlendStateCreateInfo()
+                     .setAttachmentCount(1)
+                     .setLogicOpEnable(false)
+                     .setPAttachments(
+                         &vk::PipelineColorBlendAttachmentState(false)
+                              .setColorWriteMask(
+                                  vk::ColorComponentFlagBits::eR |
+                                  vk::ColorComponentFlagBits::eG |
+                                  vk::ColorComponentFlagBits::eB |
+                                  vk::ColorComponentFlagBits::eA)))
+            .setPDepthStencilState(&vk::PipelineDepthStencilStateCreateInfo()
+                                        .setDepthTestEnable(false)
+                                        .setMaxDepthBounds(1.0f))
+            .setPDynamicState(
+                &vk::PipelineDynamicStateCreateInfo()
+                     .setDynamicStateCount(ARRAY_SIZE(dynamic_states))
+                     .setPDynamicStates(dynamic_states))
+            .setPRasterizationState(
+                &vk::PipelineRasterizationStateCreateInfo()
+                     .setCullMode(vk::CullModeFlagBits::eNone)
+                     .setPolygonMode(vk::PolygonMode::eFill)
+                     .setLineWidth(1.0f))
+            .setPMultisampleState(
+                &vk::PipelineMultisampleStateCreateInfo()
+                     .setRasterizationSamples(vk::SampleCountFlagBits::e1))
+            .setRenderPass(framebuffer_wrapper.render_pass.get()),
+        {
+            REG_VERTEX_ATTRIB(Particle_Vertex, position, 0,
+                              vk::Format::eR32G32B32Sfloat),
+        },
+        {vk::VertexInputBindingDescription()
+             .setBinding(0)
+             .setStride(12)
+             .setInputRate(vk::VertexInputRate::eVertex)},
+        {});
+    // Links pipeline
+    links_pipeline = Pipeline_Wrapper::create_graphics(
+        device_wrapper, "../shaders/particle.vert.glsl",
+        "../shaders/particle.frag.glsl",
+        vk::GraphicsPipelineCreateInfo()
+            .setPViewportState(&vk::PipelineViewportStateCreateInfo()
+                                    .setPViewports(&vk::Viewport())
+                                    .setViewportCount(1)
+                                    .setPScissors(&vk::Rect2D())
+                                    .setScissorCount(1))
+
+            .setPInputAssemblyState(
+                &vk::PipelineInputAssemblyStateCreateInfo().setTopology(
+                    // We want lines here
+                    vk::PrimitiveTopology::eLineList))
             .setPColorBlendState(
                 &vk::PipelineColorBlendStateCreateInfo()
                      .setAttachmentCount(1)
@@ -242,6 +294,14 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
                       vk::BufferUsageFlagBits::eTransferDst),
         VMA_MEMORY_USAGE_CPU_TO_GPU);
 
+    auto links_vertex_buffer = alloc_state->allocate_buffer(
+        vk::BufferCreateInfo()
+            .setSize(particle_system.links.size() * sizeof(Particle_Vertex) * 2)
+            .setUsage(vk::BufferUsageFlagBits::eVertexBuffer |
+                      vk::BufferUsageFlagBits::eTransferDst |
+                      vk::BufferUsageFlagBits::eTransferSrc),
+        VMA_MEMORY_USAGE_CPU_TO_GPU);
+
     // Update gpu visible buffers
     {
       vec3 camera_pos =
@@ -257,16 +317,28 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
         particle_vertex_buffer.unmap();
       }
       {
+        void *data = links_vertex_buffer.map();
+        Particle_Vertex *typed_data = (Particle_Vertex *)data;
+        u32 i = 0;
+        for (auto link : particle_system.links) {
+          typed_data[2 * i].position = particle_system.particles[link.first];
+          typed_data[2 * i + 1].position =
+              particle_system.particles[link.second];
+          i++;
+        }
+        links_vertex_buffer.unmap();
+      }
+      {
         void *data = particle_ubo_buffer.map();
         Particle_UBO *typed_data = (Particle_UBO *)data;
         Particle_UBO tmp_ubo;
-        tmp_ubo.proj = glm::perspective(1.0f,
+        tmp_ubo.proj = glm::perspective(float(M_PI) / 2.0f,
                                         float(example_viewport.extent.width) /
                                             example_viewport.extent.height,
-                                        1.0e-2f, 1.0e2f);
+                                        1.0e-3f, 1.0e2f);
         tmp_ubo.view = glm::lookAt(camera_pos, vec3(0.0f, 0.0f, 0.0f),
                                    vec3(0.0f, 0.0f, 1.0f));
-        tmp_ubo.world = glm::mat4(1.0f);
+        tmp_ubo.world = glm::mat4(0.5f);
         *typed_data = tmp_ubo;
         particle_ubo_buffer.unmap();
       }
@@ -301,7 +373,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
         tmp_ubo.camera_right =
             normalize(cross(tmp_ubo.camera_look, vec3(0.0f, 0.0f, 1.0f)));
         tmp_ubo.camera_up =
-            normalize(cross(tmp_ubo.camera_look, tmp_ubo.camera_right));
+            normalize(cross(tmp_ubo.camera_right, tmp_ubo.camera_look));
         tmp_ubo.ug_size = particle_system.system_size;
         tmp_ubo.ug_bins_count = GRID_DIM;
         tmp_ubo.ug_bin_size = 2.0f * particle_system.system_size / GRID_DIM;
@@ -321,10 +393,14 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
         device.get(), "UBO", compute_ubo_buffer.buffer, 0, sizeof(Compute_UBO),
         vk::DescriptorType::eUniformBuffer);
     particles_pipeline.update_descriptor(
-        device.get(), "UBO", particle_ubo_buffer.buffer, 0, sizeof(Particle_UBO),
-        vk::DescriptorType::eUniformBuffer);
+        device.get(), "UBO", particle_ubo_buffer.buffer, 0,
+        sizeof(Particle_UBO), vk::DescriptorType::eUniformBuffer);
+    links_pipeline.update_descriptor(
+        device.get(), "UBO", particle_ubo_buffer.buffer, 0,
+        sizeof(Particle_UBO), vk::DescriptorType::eUniformBuffer);
     compute_pipeline_wrapped.update_storage_image_descriptor(
         device.get(), "resultImage", storage_image_wrapper.image_view.get());
+
     /*------------------------------*/
     /* Spawn the raymarching kernel */
     /*------------------------------*/
@@ -349,9 +425,14 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
         0, {{{0, 0},
              {example_viewport.extent.width, example_viewport.extent.height}}});
     cmd.draw(3, 1, 0, 0);
-    cmd.bindVertexBuffers(0, {particle_vertex_buffer.buffer}, {0});
+    
     particles_pipeline.bind_pipeline(device.get(), cmd);
+    cmd.bindVertexBuffers(0, {particle_vertex_buffer.buffer}, {0});
     cmd.draw(particle_system.particles.size(), 1, 0, 0);
+
+    links_pipeline.bind_pipeline(device.get(), cmd);
+    cmd.bindVertexBuffers(0, {links_vertex_buffer.buffer}, {0});
+    cmd.draw(particle_system.links.size() * 2, 1, 0, 0);
     framebuffer_wrapper.end_render_pass(cmd);
   };
 
@@ -421,8 +502,8 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
           auto dx = mpos.x - old_mpos.x;
           auto dy = mpos.y - old_mpos.y;
 
-          camera_phi += dx * 1.0e-2f;
-          camera_theta -= dy * 1.0e-2f;
+          camera_phi -= dx * 1.0e-2f;
+          camera_theta += dy * 1.0e-2f;
           if (camera_phi > M_PI * 2.0f) {
             camera_phi -= M_PI * 2.0f;
           } else if (camera_phi < 0.0f) {
