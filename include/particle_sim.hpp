@@ -6,6 +6,8 @@
 #include <memory>
 #include <sparsehash/dense_hash_set>
 #include <vector>
+#include <string>
+#include <fstream>
 using namespace glm;
 
 struct Packed_UG {
@@ -194,12 +196,90 @@ struct Simulation_State {
   f32 system_size;
   Random_Factory rf;
   // Methods
-  void init() {
+  void dump(std::string const &filename) {
+    std::ofstream out(filename, std::ios::binary | std::ios::out);
+    out << rest_length << "\n";
+    out << spring_factor << "\n";
+    out << repell_factor << "\n";
+    out << planar_factor << "\n";
+    out << bulge_factor << "\n";
+    out << cell_radius << "\n";
+    out << cell_mass << "\n";
+    out << domain_radius << "\n";
+    out << birth_rate << "\n";
+    out << system_size << "\n";
+    out << particles.size() << "\n";
+    for (u32 i = 0; i < particles.size(); i++) {
+      out << particles[i].x << "\n";
+      out << particles[i].y << "\n";
+      out << particles[i].z << "\n";
+    }
+    out << links.size() << "\n";
+    for (auto link : links) {
+      out << link.first << "\n";
+      out << link.second << "\n";
+    }
+  }
+  void restore_or_default(std::string const &filename) {
+    std::ifstream is(filename, std::ios::binary | std::ios::in);
+    if (is.is_open()) {
+      links.set_empty_key({UINT32_MAX, UINT32_MAX});
+      is >> rest_length;
+      is >> spring_factor;
+      is >> repell_factor;
+      is >> planar_factor;
+      is >> bulge_factor;
+      is >> cell_radius;
+      is >> cell_mass;
+      is >> domain_radius;
+      is >> birth_rate;
+      is >> system_size;
+      u32 particles_count;
+      is >> particles_count;
+      particles.resize(particles_count);
+      for (u32 i = 0; i < particles_count; i++) {
+        is >> particles[i].x;
+        is >> particles[i].y;
+        is >> particles[i].z;
+      }
+      u32 links_count;
+      is >> links_count;
+      for (u32 k = 0; k < particles_count; k++) {
+        u32 i, j;
+        is >> i;
+        is >> j;
+        links.insert({i, j});
+      }
+      update_size();
+    } else {
+      init_default();
+    }
+  }
+  void init_default() {
+    *this = Simulation_State{.rest_length = 0.25f,
+                             .spring_factor = 0.1f,
+                             .repell_factor = 3.0f,
+                             .planar_factor = 10.0f,
+                             .bulge_factor = 10.0f,
+                             .cell_radius = 0.025f,
+                             .cell_mass = 10.0f,
+                             .domain_radius = 10.0f,
+                             .birth_rate = 1000u};
     links.set_empty_key({UINT32_MAX, UINT32_MAX});
     links.insert({0, 1});
     particles.push_back({0.0f, 0.0f, -cell_radius});
     particles.push_back({0.0f, 0.0f, cell_radius});
     system_size = cell_radius;
+  }
+  void update_size() {
+    system_size = 0.0f;
+    for (auto const &pnt : particles) {
+      system_size = std::max(
+          system_size, std::max(std::abs(pnt.x),
+                                std::max(std::abs(pnt.y), std::abs(pnt.z))));
+      ;
+    }
+    system_size += rest_length;
   }
   void step(float dt) {
     auto const M = u32(2.0f * system_size / rest_length);
@@ -271,10 +351,8 @@ struct Simulation_State {
     {
       u32 i = 0;
       for (auto const &old_pos_0 : particles) {
-        spring_target[i] = Planar_Target{
-          target : vec3(0.0f, 0.0f, 0.0f),
-          n_divisor : 0
-        };
+        spring_target[i] =
+        Planar_Target{target : vec3(0.0f, 0.0f, 0.0f), n_divisor : 0};
         i++;
       }
     }
@@ -298,8 +376,7 @@ struct Simulation_State {
         }
         auto const average_target = st.target / float(st.n_divisor);
         auto const dist = distance(old_pos_0, average_target);
-        auto const force =
-            spring_factor * dist;
+        auto const force = spring_factor * dist;
         auto const vforce = dt * (average_target - old_pos_0) * force;
         force_table[i] += std::abs(force);
         new_particles[i] += vforce;
@@ -347,13 +424,6 @@ struct Simulation_State {
 
     // Apply the changes
     particles = new_particles;
-    system_size = 0.0f;
-    for (auto const &pnt : particles) {
-      system_size = std::max(
-          system_size, std::max(std::abs(pnt.x),
-                                std::max(std::abs(pnt.y), std::abs(pnt.z))));
-      ;
-    }
-    system_size += rest_length;
+    update_size();
   }
 };

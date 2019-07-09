@@ -60,8 +60,8 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
   bool render_wire = false;
   bool render_raymarch = true;
   bool simulate = false;
-  bool raymarch_flag_render_hull = false;
-  bool raymarch_flag_render_cells = true;
+  bool raymarch_flag_render_hull = true;
+  bool raymarch_flag_render_cells = false;
   u32 GRID_DIM = 2;
   uint raymarch_iterations = 64;
   f32 rendering_radius = 0.2f;
@@ -239,18 +239,10 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
   // Particle system state //
   ///////////////////////////
   Random_Factory frand;
-  Simulation_State particle_system{.rest_length = 0.25f,
-                                   .spring_factor = 0.1f,
-                                   .repell_factor = 3.0f,
-                                   .planar_factor = 10.0f,
-                                   .bulge_factor = 10.0f,
-                                   .cell_radius = 0.025f,
-                                   .cell_mass = 10.0f,
-                                   .domain_radius = 10.0f,
-                                   .birth_rate = 1000u};
+  Simulation_State particle_system;
 
   // Initialize the system
-  particle_system.init();
+  particle_system.restore_or_default("simulation_state_dump");
   //////////////////////
   // Render offscreen //
   //////////////////////
@@ -597,6 +589,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     ImGui::End();
   };
   device_wrapper.window_loop();
+  particle_system.dump("simulation_state_dump");
 }
 
 int main(int argc, char **argv) {
