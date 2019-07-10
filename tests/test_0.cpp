@@ -275,7 +275,7 @@ TEST(graphics, vulkan_graphics_shader_test_0) {
                                       .setMaxDepthBounds(1.0f))
           .setPDynamicState(
               &vk::PipelineDynamicStateCreateInfo()
-                   .setDynamicStateCount(ARRAY_SIZE(dynamic_states))
+                   .setDynamicStateCount(__ARRAY_SIZE(dynamic_states))
                    .setPDynamicStates(dynamic_states))
           .setPRasterizationState(&vk::PipelineRasterizationStateCreateInfo()
                                        .setCullMode(vk::CullModeFlagBits::eNone)
@@ -510,7 +510,7 @@ TEST(graphics, vulkan_graphics_shader_test_1) {
                                       .setMaxDepthBounds(1.0f))
           .setPDynamicState(
               &vk::PipelineDynamicStateCreateInfo()
-                   .setDynamicStateCount(ARRAY_SIZE(dynamic_states))
+                   .setDynamicStateCount(__ARRAY_SIZE(dynamic_states))
                    .setPDynamicStates(dynamic_states))
           .setPRasterizationState(&vk::PipelineRasterizationStateCreateInfo()
                                        .setCullMode(vk::CullModeFlagBits::eNone)
@@ -650,7 +650,7 @@ TEST(graphics, vulkan_graphics_shader_test_2) {
                                       .setMaxDepthBounds(1.0f))
           .setPDynamicState(
               &vk::PipelineDynamicStateCreateInfo()
-                   .setDynamicStateCount(ARRAY_SIZE(dynamic_states))
+                   .setDynamicStateCount(__ARRAY_SIZE(dynamic_states))
                    .setPDynamicStates(dynamic_states))
           .setPRasterizationState(&vk::PipelineRasterizationStateCreateInfo()
                                        .setCullMode(vk::CullModeFlagBits::eNone)

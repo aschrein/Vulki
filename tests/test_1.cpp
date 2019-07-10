@@ -19,7 +19,55 @@
 #include <glm/glm.hpp>
 using namespace glm;
 
-struct Plot_Wrapper {
+template <int N> struct Time_Stack { f32 vals[N]; };
+template <int N> struct Stack_Plot {
+  std::string name;
+  u32 max_values;
+  std::vector<std::string> plot_names;
+
+  std::unordered_map<std::string, u32> legend;
+  Time_Stack<N> tmp_value;
+  std::vector<Time_Stack<N>> values;
+  void set_value(std::string const &name, f32 val) {
+    if (legend.size() == 0) {
+      u32 id = 0;
+      for (auto const &name : plot_names) {
+        legend[name] = id++;
+      }
+    }
+    ASSERT_PANIC(legend.find(name) != legend.end());
+    u32 id = legend[name];
+    tmp_value.vals[id] = val;
+  }
+  void push_value() {
+    if (values.size() == max_values) {
+      for (int i = 0; i < max_values - 1; i++) {
+        values[i] = values[i + 1];
+      }
+      values[max_values - 1] = tmp_value;
+    } else {
+      values.push_back(tmp_value);
+    }
+    tmp_value = {};
+  }
+};
+
+struct CPU_timestamp {
+  std::chrono::high_resolution_clock::time_point frame_begin_timestamp;
+  CPU_timestamp() {
+    frame_begin_timestamp = std::chrono::high_resolution_clock::now();
+  }
+  f32 end() {
+    auto frame_end_timestamp = std::chrono::high_resolution_clock::now();
+    auto frame_cpu_delta_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            frame_end_timestamp - frame_begin_timestamp)
+            .count();
+    return f32(frame_cpu_delta_ns) / 1000;
+  }
+};
+
+struct Plot_Internal {
   std::string name;
   u32 max_values;
   std::vector<f32> values;
@@ -62,7 +110,7 @@ struct Timestamp_Plot_Wrapper {
   u32 max_values;
   //
   bool timestamp_requested = false;
-  Plot_Wrapper plot;
+  Plot_Internal plot;
   void query_begin(vk::CommandBuffer &cmd, Device_Wrapper &device_wrapper) {
     cmd.resetQueryPool(device_wrapper.timestamp.pool.get(), query_begin_id, 2);
     cmd.writeTimestamp(vk::PipelineStageFlagBits::eAllCommands,
@@ -144,20 +192,35 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
 
   // Rendering state
   // @TODO: Proper serialization with protocol buffers or smth
-  Timestamp_Plot_Wrapper raymarch_timestamp_graph{
-    name : "raymarch time",
-    query_begin_id : 0,
-    max_values : 100
+  Stack_Plot<3> cpu_frametime_stack{
+    name : "CPU frame time",
+    max_values : 256,
+    plot_names : {"grid baking", "simulation", "full frame"}
   };
-  Timestamp_Plot_Wrapper fullframe_gpu_graph{
-    name : "full frame GPU time",
-    query_begin_id : 2,
-    max_values : 100
+  CPU_Image cpu_time =
+      CPU_Image::create(device_wrapper, 256, 128, vk::Format::eR8G8B8A8Unorm);
+  Stack_Plot<3> gpu_frametime_stack{
+    name : "CPU frame time",
+    max_values : 256,
+    plot_names : {"raymarch", "full frame"}
   };
-  Plot_Wrapper
-  fullframe_cpu_graph{name : "full frame CPU time", max_values : 100};
-  Plot_Wrapper sim_cpu_graph{name : "simulation CPU time", max_values : 100};
-  Plot_Wrapper ug_cpu_graph{name : "grid builindg CPU time", max_values : 100};
+  CPU_Image gpu_time =
+      CPU_Image::create(device_wrapper, 256, 128, vk::Format::eR8G8B8A8Unorm);
+  // Timestamp_Plot_Wrapper raymarch_timestamp_graph{
+  //   name : "raymarch time",
+  //   query_begin_id : 0,
+  //   max_values : 100
+  // };
+  // Timestamp_Plot_Wrapper fullframe_gpu_graph{
+  //   name : "full frame GPU time",
+  //   query_begin_id : 2,
+  //   max_values : 100
+  // };
+  // Plot_Internal
+  // fullframe_cpu_graph{name : "full frame CPU time", max_values : 100};
+  // Plot_Internal sim_cpu_graph{name : "simulation CPU time", max_values :
+  // 100}; Plot_Internal ug_cpu_graph{name : "grid builindg CPU time",
+  // max_values : 100};
   bool render_wire = false;
   bool render_raymarch = true;
   bool simulate = false;
@@ -213,7 +276,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
                                         .setMaxDepthBounds(1.0f))
             .setPDynamicState(
                 &vk::PipelineDynamicStateCreateInfo()
-                     .setDynamicStateCount(ARRAY_SIZE(dynamic_states))
+                     .setDynamicStateCount(__ARRAY_SIZE(dynamic_states))
                      .setPDynamicStates(dynamic_states))
             .setPRasterizationState(
                 &vk::PipelineRasterizationStateCreateInfo()
@@ -256,7 +319,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
                                         .setMaxDepthBounds(1.0f))
             .setPDynamicState(
                 &vk::PipelineDynamicStateCreateInfo()
-                     .setDynamicStateCount(ARRAY_SIZE(dynamic_states))
+                     .setDynamicStateCount(__ARRAY_SIZE(dynamic_states))
                      .setPDynamicStates(dynamic_states))
             .setPRasterizationState(
                 &vk::PipelineRasterizationStateCreateInfo()
@@ -307,7 +370,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
                                         .setMaxDepthBounds(1.0f))
             .setPDynamicState(
                 &vk::PipelineDynamicStateCreateInfo()
-                     .setDynamicStateCount(ARRAY_SIZE(dynamic_states))
+                     .setDynamicStateCount(__ARRAY_SIZE(dynamic_states))
                      .setPDynamicStates(dynamic_states))
             .setPRasterizationState(
                 &vk::PipelineRasterizationStateCreateInfo()
@@ -333,7 +396,26 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
   // Shared sampler
   vk::UniqueSampler sampler =
       device->createSamplerUnique(vk::SamplerCreateInfo().setMaxLod(1));
-
+  // Init device stuff
+  {
+    vk::UniqueFence transfer_fence =
+        device->createFenceUnique(vk::FenceCreateInfo());
+    auto &cmd = device_wrapper.graphics_cmds[0].get();
+    cmd.reset(vk::CommandBufferResetFlagBits::eReleaseResources);
+    cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
+    cpu_time.transition_layout_to_general(device_wrapper, cmd);
+    cmd.end();
+    device_wrapper.graphics_queue.submit(
+        vk::SubmitInfo(
+            0, nullptr,
+            &vk::PipelineStageFlags(vk::PipelineStageFlagBits::eAllCommands), 1,
+            &cmd),
+        transfer_fence.get());
+    while (vk::Result::eTimeout ==
+           device->waitForFences(transfer_fence.get(), VK_TRUE, 0xffffffffu))
+      ;
+  }
+  //
   //////////////////
   // Camera state //
   //////////////////
@@ -352,7 +434,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
   VmaBuffer links_vertex_buffer;
 
   device_wrapper.pre_tick = [&](vk::CommandBuffer &cmd) {
-    fullframe_cpu_graph.cpu_timestamp_begin();
+    CPU_timestamp __full_frame;
     fullframe_gpu_graph.push_value(device_wrapper);
     fullframe_gpu_graph.query_begin(cmd, device_wrapper);
     // Update backbuffer if the viewport size has changed
@@ -365,24 +447,26 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     // Perform fixed step iteration on the particle system
     // Fill the uniform grid
     if (simulate) {
-      sim_cpu_graph.cpu_timestamp_begin();
+      CPU_timestamp __timestamp;
       particle_system.step(1.0e-3f);
       rendering_grid_size =
           particle_system.system_size + debug_grid_flood_radius;
-      sim_cpu_graph.cpu_timestamp_end();
+      cpu_frametime_stack.set_value("simulation", __timestamp.end());
     }
-    ug_cpu_graph.cpu_timestamp_begin();
-    UG ug(rendering_grid_size, GRID_DIM);
+    Packed_UG packed;
+    {
+      CPU_timestamp __timestamp;
+      UG ug(rendering_grid_size, GRID_DIM);
 
-    for (u32 i = 0; i < particle_system.particles.size(); i++) {
-      ug.put(
-          particle_system.particles[i],
-          debug_grid_flood_radius, // rendering_radius + rendering_step * 4.0f,
-          i);
+      for (u32 i = 0; i < particle_system.particles.size(); i++) {
+        ug.put(particle_system.particles[i],
+               debug_grid_flood_radius, // rendering_radius + rendering_step
+                                        // * 4.0f,
+               i);
+      }
+      packed = ug.pack();
+      cpu_frametime_stack.set_value("grid baking", __timestamp.end());
     }
-    auto packed = ug.pack();
-    ug_cpu_graph.cpu_timestamp_end();
-
     ///////////// RENDERING ////////////////////
 
     // Create new GPU visible buffers
@@ -579,8 +663,8 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     framebuffer_wrapper.end_render_pass(cmd);
     framebuffer_wrapper.transition_layout_to_read(device_wrapper, cmd);
     fullframe_gpu_graph.query_end(cmd, device_wrapper);
-
-    fullframe_cpu_graph.cpu_timestamp_end();
+    cpu_frametime_stack.set_value("full frame", __full_frame.end());
+    cpu_frametime_stack.push_value();
   };
 
   /////////////////////
@@ -676,10 +760,9 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
             VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
         ImVec2(example_viewport.extent.width, example_viewport.extent.height),
         ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
-    // ImGui::ShowDemoWindow(&show_demo);
 
     ImGui::End();
-
+    ImGui::ShowDemoWindow(&show_demo);
     ImGui::Begin("Simulation parameters");
     ImGui::DragFloat("rest_length", &particle_system.rest_length, 0.025f,
                      0.025f, 1.0f);
@@ -697,8 +780,8 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
                      10.0f);
     ImGui::DragFloat("domain_radius", &particle_system.domain_radius, 0.025f,
                      0.0f, 100.0f);
-    ImGui::DragInt("birth_rate", (i32 *)&particle_system.birth_rate, 1, 10,
-                   1000);
+    ImGui::SliderInt("birth_rate", (i32 *)&particle_system.birth_rate, 10,
+                     1000);
     ImGui::End();
     ImGui::Begin("Rendering configuration");
     ImGui::Checkbox("draw wire", &render_wire);
@@ -714,16 +797,73 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
                      0.025f, 0.0f, 10.0f);
     ImGui::DragFloat("[Debug] rendering grid size", &rendering_grid_size,
                      0.025f, 0.025f, 10.0f);
-    ImGui::DragInt("raymarch grid dimension", (i32 *)&GRID_DIM, 1, 2, 64);
-    ImGui::DragInt("raymarch max iterations", (i32 *)&raymarch_iterations, 1, 1,
-                   64);
+    ImGui::SliderInt("raymarch grid dimension", (i32 *)&GRID_DIM, 2, 64);
+    ImGui::SliderInt("raymarch max iterations", (i32 *)&raymarch_iterations, 1,
+                     64);
     ImGui::End();
     ImGui::Begin("Metrics");
+    {
+      u32 colors[] = {
+          0x6a4740ff, 0xe6fdabff, 0xb7be0bff, 0x8fe5beff,
+          0x03bcd8ff, 0xed3e0eff, 0xa90b0cff,
+      };
+      auto bswap = [](u32 val) {
+        return ((val >> 24) & 0xff) | ((val << 8) & 0xff0000) |
+               ((val >> 8) & 0xff00) | ((val << 24) & 0xff000000);
+      };
+      f32 max = 0.0f;
+      for (auto const &item : cpu_frametime_stack.values) {
+        for (u32 i = 0; i < __ARRAY_SIZE(item.vals); i++) {
+          max = std::max(max, item.vals[i]);
+        }
+      }
+      void *data = cpu_time.image.map();
+      u32 *typed_data = (u32 *)data;
+      // typed_data[0] = 0xffu;
+      for (u32 x = 0; x < cpu_time.width; x++) {
+        for (u32 y = 0; y < cpu_time.height; y++) {
+          typed_data[x + y * cpu_time.width] = bswap(0x000000ffu);
+        }
+      }
+      for (u32 x = 0; x < cpu_time.width; x++) {
+        if (x == cpu_frametime_stack.values.size())
+          break;
+        auto item = cpu_frametime_stack.values[x];
+        for (u32 i = 1; i < __ARRAY_SIZE(item.vals) - 1; i++) {
+          item.vals[i] += item.vals[i - 1];
+        }
+        for (auto &val : item.vals) {
+          val *= f32(cpu_time.height) / max;
+        }
+        for (u32 y = 0; y < cpu_time.height; y++) {
+
+          for (u32 i = 0; i < __ARRAY_SIZE(item.vals); i++) {
+            if (y <= u32(item.vals[i])) {
+              typed_data[x + y * cpu_time.width] = bswap(colors[i]);
+              break;
+            }
+          }
+        }
+      }
+      cpu_time.image.unmap();
+    }
+    if (cpu_frametime_stack.values.size()) {
+      ImGui::Image(
+          ImGui_ImplVulkan_AddTexture(sampler.get(), cpu_time.image_view.get(),
+                                      VkImageLayout::VK_IMAGE_LAYOUT_GENERAL),
+          ImVec2(cpu_time.width, cpu_time.height), ImVec2(0.0f, 1.0f),
+          ImVec2(1.0f, 0.0f));
+      ImGui::SameLine();
+      ImGui::Text(
+          "%s:%-3.1fuS", cpu_frametime_stack.name.c_str(),
+          cpu_frametime_stack.values[cpu_frametime_stack.values.size() - 1]
+              .vals[__ARRAY_SIZE(cpu_frametime_stack.values[0].vals) - 1]);
+    }
     raymarch_timestamp_graph.draw();
     fullframe_gpu_graph.draw();
-    fullframe_cpu_graph.draw();
-    ug_cpu_graph.draw();
-    sim_cpu_graph.draw();
+    // fullframe_cpu_graph.draw();
+    // ug_cpu_graph.draw();
+    // sim_cpu_graph.draw();
     ImGui::End();
   };
   device_wrapper.window_loop();

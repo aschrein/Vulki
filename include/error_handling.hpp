@@ -34,7 +34,8 @@ using u64 = uint64_t;
 using i32 = int32_t;
 using f32 = float;
 
-#define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
+template <typename T, size_t N>
+constexpr size_t __ARRAY_SIZE(T (&)[N]) { return N; }
 
 // No pointer to the object should persist
 // @Cleanup: Do something better

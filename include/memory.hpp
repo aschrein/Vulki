@@ -30,6 +30,12 @@ struct VmaImage {
     if (image)
       vmaDestroyImage(allocator, image, allocation);
   }
+  void *map() {
+    void *data = nullptr;
+    vmaMapMemory(allocator, allocation, &data);
+    return data;
+  }
+  void unmap() { vmaUnmapMemory(allocator, allocation); }
 };
 
 struct Alloc_State {
