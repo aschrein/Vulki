@@ -33,7 +33,7 @@ struct Plot_Wrapper {
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             frame_end_timestamp - frame_begin_timestamp)
             .count();
-    push_value(f32(frame_cpu_delta_ns / 1000));
+    push_value(f32(frame_cpu_delta_ns) / 1000);
   }
   void push_value(f32 value) {
     if (values.size() == max_values) {
@@ -46,8 +46,12 @@ struct Plot_Wrapper {
     }
   }
   void draw() {
+    if (values.size() == 0)
+      return;
     ImGui::PlotLines(name.c_str(), &values[0], values.size(), 0, NULL, FLT_MAX,
                      FLT_MAX, ImVec2(0, 100));
+    ImGui::SameLine();
+    ImGui::Text("%-3.1fuS", values[values.size() - 1]);
   }
 };
 
@@ -79,7 +83,7 @@ struct Timestamp_Plot_Wrapper {
       u64 begin_ns = device_wrapper.timestamp.convert_to_ns(query_results[0]);
       u64 end_ns = device_wrapper.timestamp.convert_to_ns(query_results[1]);
       u64 diff_ns = end_ns - begin_ns;
-      f32 us = f32(diff_ns / 1000);
+      f32 us = f32(diff_ns) / 1000;
       timestamp_requested = false;
       plot.push_value(us);
     }
@@ -547,6 +551,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     /*----------------------------------*/
     /* Update the offscreen framebuffer */
     /*----------------------------------*/
+    framebuffer_wrapper.transition_layout_to_write(device_wrapper, cmd);
     framebuffer_wrapper.begin_render_pass(cmd);
     cmd.setViewport(0,
                     {vk::Viewport(0, 0, example_viewport.extent.width,
@@ -572,6 +577,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
       cmd.draw(particle_system.links.size() * 2, 1, 0, 0);
     }
     framebuffer_wrapper.end_render_pass(cmd);
+    framebuffer_wrapper.transition_layout_to_read(device_wrapper, cmd);
     fullframe_gpu_graph.query_end(cmd, device_wrapper);
 
     fullframe_cpu_graph.cpu_timestamp_end();

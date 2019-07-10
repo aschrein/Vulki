@@ -105,7 +105,7 @@ void Device_Wrapper::update_swap_chain() {
           .setImageArrayLayers(1)
           .setImageExtent(caps.currentExtent)
           .setOldSwapchain(this->swap_chain.get())
-          .setMinImageCount(caps.minImageCount));
+          .setMinImageCount(3));
   ASSERT_PANIC(this->swap_chain);
   this->swap_chain_images =
       this->device->getSwapchainImagesKHR(swap_chain.get());
@@ -193,7 +193,7 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
       vk::enumerateInstanceLayerProperties();
 
   std::vector<char const *> instanceLayerNames;
-  // instanceLayerNames.push_back("VK_LAYER_LUNARG_standard_validation");
+  instanceLayerNames.push_back("VK_LAYER_LUNARG_standard_validation");
   // instanceLayerNames.push_back("VK_LAYER_LUNARG_object_tracker");
   // instanceLayerNames.push_back("VK_LAYER_LUNARG_parameter_validation");
   // instanceLayerNames.push_back("VK_LAYER_LUNARG_assistant_layer");
@@ -214,7 +214,7 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
       exit(EXIT_FAILURE);
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-    out.window = glfwCreateWindow(512, 512, "Vulkan Window", NULL, NULL);
+    out.window = glfwCreateWindow(1024, 1024, "Vulkan Window", NULL, NULL);
     ASSERT_PANIC(out.window);
 
     uint32_t glfw_extensions_count;

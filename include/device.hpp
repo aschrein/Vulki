@@ -22,9 +22,7 @@ struct Device_Wrapper {
     // This is approximate due to varying frequency
     u64 ns_per_tick;
     u64 valid_bits;
-    u64 convert_to_ns(u64 val) {
-      return (val & valid_bits) * ns_per_tick;
-    }
+    u64 convert_to_ns(u64 val) { return (val & valid_bits) * ns_per_tick; }
   } timestamp;
   uint32_t graphics_queue_family_id;
   vk::UniqueCommandPool graphcis_cmd_pool;
@@ -76,6 +74,7 @@ struct Device_Wrapper {
         // @Cleanup
         vk::Fence());
     ASSERT_PANIC(res.result == vk::Result::eSuccess);
+    cur_image_id = res.value;
     auto &cmd = graphics_cmds[cur_image_id].get();
     cmd.reset(vk::CommandBufferResetFlagBits::eReleaseResources);
     cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
@@ -106,21 +105,23 @@ struct Device_Wrapper {
     if (submit_fence) {
       if (vk::Result::eNotReady == device->getFenceStatus(submit_fence.get()))
         device->waitForFences({submit_fence.get()}, true, UINT64_MAX);
+      // device->waitIdle();
     } else {
       submit_fence = device->createFenceUnique(vk::FenceCreateInfo());
     }
   }
   void present() {
-    graphics_queue.presentKHR(
+    auto res = graphics_queue.presentKHR(
         vk::PresentInfoKHR()
             .setPWaitSemaphores(&sema_image_complete[cur_image_id].get())
             .setWaitSemaphoreCount(1)
             .setPSwapchains(&swap_chain.get())
             .setSwapchainCount(1)
             .setPImageIndices(&cur_image_id));
+    ASSERT_PANIC(res == vk::Result::eSuccess);
     // This is where I pull the next image
     // @Cleanup: Is this the right way?
-    cur_image_id = (cur_image_id + 1) % sema_image_acquired.size();
+    // cur_image_id = (cur_image_id + 1) % sema_image_acquired.size();
   }
 };
 
@@ -130,6 +131,8 @@ struct Framebuffer_Wrapper {
   vk::UniqueImageView image_view;
   vk::UniqueFramebuffer frame_buffer;
   vk::UniqueRenderPass render_pass;
+  vk::ImageLayout cur_layout;
+  vk::AccessFlags cur_access_flags;
   uint32_t width;
   uint32_t height;
   static Framebuffer_Wrapper create(Device_Wrapper &device_wrapper,
@@ -156,7 +159,8 @@ struct Framebuffer_Wrapper {
                       vk::ImageUsageFlagBits::eSampled),
 
         VMA_MEMORY_USAGE_GPU_ONLY);
-
+    out.cur_layout = vk::ImageLayout::eUndefined;
+    out.cur_access_flags = vk::AccessFlagBits::eMemoryRead;
     out.image_view =
         device_wrapper.device->createImageViewUnique(vk::ImageViewCreateInfo(
             vk::ImageViewCreateFlags(), out.image.image, vk::ImageViewType::e2D,
@@ -173,8 +177,8 @@ struct Framebuffer_Wrapper {
     attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    attachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     VkAttachmentReference color_attachment = {};
     color_attachment.attachment = 0;
     color_attachment.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -226,6 +230,50 @@ struct Framebuffer_Wrapper {
                         vk::SubpassContents::eInline);
   }
   void end_render_pass(vk::CommandBuffer &cmd) { cmd.endRenderPass(); }
+  void transition_layout_to_read(Device_Wrapper &device,
+                                 vk::CommandBuffer &cmd) {
+    cmd.pipelineBarrier(
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::DependencyFlagBits::eByRegion, {}, {},
+        {vk::ImageMemoryBarrier()
+             .setSrcAccessMask(this->cur_access_flags)
+             .setDstAccessMask(vk::AccessFlagBits::eShaderRead)
+             .setOldLayout(this->cur_layout)
+             .setNewLayout(vk::ImageLayout::eShaderReadOnlyOptimal)
+             .setSrcQueueFamilyIndex(device.graphics_queue_family_id)
+             .setDstQueueFamilyIndex(device.graphics_queue_family_id)
+             .setImage(this->image.image)
+             .setSubresourceRange(
+                 vk::ImageSubresourceRange()
+                     .setLayerCount(1)
+                     .setLevelCount(1)
+                     .setAspectMask(vk::ImageAspectFlagBits::eColor))});
+    this->cur_access_flags = vk::AccessFlagBits::eShaderRead;
+    this->cur_layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+  }
+  void transition_layout_to_write(Device_Wrapper &device,
+                                  vk::CommandBuffer &cmd) {
+    cmd.pipelineBarrier(
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::DependencyFlagBits::eByRegion, {}, {},
+        {vk::ImageMemoryBarrier()
+             .setSrcAccessMask(this->cur_access_flags)
+             .setDstAccessMask(vk::AccessFlagBits::eColorAttachmentWrite)
+             .setOldLayout(this->cur_layout)
+             .setNewLayout(vk::ImageLayout::eColorAttachmentOptimal)
+             .setSrcQueueFamilyIndex(device.graphics_queue_family_id)
+             .setDstQueueFamilyIndex(device.graphics_queue_family_id)
+             .setImage(this->image.image)
+             .setSubresourceRange(
+                 vk::ImageSubresourceRange()
+                     .setLayerCount(1)
+                     .setLevelCount(1)
+                     .setAspectMask(vk::ImageAspectFlagBits::eColor))});
+    this->cur_access_flags = vk::AccessFlagBits::eColorAttachmentWrite;
+    this->cur_layout = vk::ImageLayout::eColorAttachmentOptimal;
+  }
 };
 
 struct Storage_Image_Wrapper {
