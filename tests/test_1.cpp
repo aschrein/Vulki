@@ -199,23 +199,16 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
   };
   CPU_Image cpu_time =
       CPU_Image::create(device_wrapper, 256, 128, vk::Format::eR8G8B8A8Unorm);
-  Stack_Plot<3> gpu_frametime_stack{
-    name : "CPU frame time",
-    max_values : 256,
-    plot_names : {"raymarch", "full frame"}
+  Timestamp_Plot_Wrapper raymarch_timestamp_graph{
+    name : "raymarch time",
+    query_begin_id : 0,
+    max_values : 100
   };
-  CPU_Image gpu_time =
-      CPU_Image::create(device_wrapper, 256, 128, vk::Format::eR8G8B8A8Unorm);
-  // Timestamp_Plot_Wrapper raymarch_timestamp_graph{
-  //   name : "raymarch time",
-  //   query_begin_id : 0,
-  //   max_values : 100
-  // };
-  // Timestamp_Plot_Wrapper fullframe_gpu_graph{
-  //   name : "full frame GPU time",
-  //   query_begin_id : 2,
-  //   max_values : 100
-  // };
+  Timestamp_Plot_Wrapper fullframe_gpu_graph{
+    name : "full frame GPU time",
+    query_begin_id : 2,
+    max_values : 100
+  };
   // Plot_Internal
   // fullframe_cpu_graph{name : "full frame CPU time", max_values : 100};
   // Plot_Internal sim_cpu_graph{name : "simulation CPU time", max_values :
