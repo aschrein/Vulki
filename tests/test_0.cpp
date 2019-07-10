@@ -186,7 +186,13 @@ TEST(graphics, vulkan_compute_simple) {
   cmd.reset(vk::CommandBufferResetFlagBits::eReleaseResources);
   cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
   compute_pipeline_wrapped.bind_pipeline(device.get(), cmd);
-  cmd.dispatch(1, 1, 1);
+  u32 query_ids[] = {0, 1};
+  cmd.resetQueryPool(device_wrapper.timestamp.pool.get(), query_ids[0], 2);
+  cmd.writeTimestamp(vk::PipelineStageFlagBits::eAllCommands,
+                     device_wrapper.timestamp.pool.get(), query_ids[0]);
+  cmd.dispatch(N / 64, 1, 1);
+  cmd.writeTimestamp(vk::PipelineStageFlagBits::eAllCommands,
+                     device_wrapper.timestamp.pool.get(), query_ids[1]);
   cmd.copyBuffer(storage_buffer.buffer, staging_buffer.buffer,
                  {vk::BufferCopy(0, 0, N * sizeof(uint32_t))});
   cmd.end();
@@ -199,6 +205,15 @@ TEST(graphics, vulkan_compute_simple) {
   while (vk::Result::eTimeout ==
          device->waitForFences(transfer_fence.get(), VK_TRUE, 0xffffffffu))
     ;
+  u64 query_results[] = {0, 0};
+  device->getQueryPoolResults(
+      device_wrapper.timestamp.pool.get(), query_ids[0], 2, 2 * sizeof(u64),
+      (void *)query_results, sizeof(u64),
+      vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+  std::cout << "timestamp diff:"
+            << (device_wrapper.timestamp.convert_to_ns(query_results[1]) -
+                device_wrapper.timestamp.convert_to_ns(query_results[0]))
+            << "\n";
   {
     void *data = staging_buffer.map();
     uint32_t *typed_data = (uint32_t *)data;

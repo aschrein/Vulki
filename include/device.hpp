@@ -16,6 +16,16 @@ struct Device_Wrapper {
   // AMD memory allocator
   std::unique_ptr<Alloc_State> alloc_state;
   vk::UniqueDescriptorPool descset_pool;
+  // Timestamp query stuff
+  struct {
+    vk::UniqueQueryPool pool;
+    // This is approximate due to varying frequency
+    u64 ns_per_tick;
+    u64 valid_bits;
+    u64 convert_to_ns(u64 val) {
+      return (val & valid_bits) * ns_per_tick;
+    }
+  } timestamp;
   uint32_t graphics_queue_family_id;
   vk::UniqueCommandPool graphcis_cmd_pool;
   // In graphics mode at least as much as swapchain images

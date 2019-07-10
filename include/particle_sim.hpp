@@ -207,7 +207,6 @@ struct Simulation_State {
     out << cell_mass << "\n";
     out << domain_radius << "\n";
     out << birth_rate << "\n";
-    out << system_size << "\n";
     out << particles.size() << "\n";
     for (u32 i = 0; i < particles.size(); i++) {
       out << particles[i].x << "\n";
@@ -233,7 +232,6 @@ struct Simulation_State {
       is >> cell_mass;
       is >> domain_radius;
       is >> birth_rate;
-      is >> system_size;
       u32 particles_count;
       is >> particles_count;
       particles.resize(particles_count);
@@ -256,7 +254,7 @@ struct Simulation_State {
     }
   }
   void init_default() {
-    *this = Simulation_State{.rest_length = 0.25f,
+    *this = Simulation_State{.rest_length = 0.15f,
                              .spring_factor = 0.1f,
                              .repell_factor = 3.0f,
                              .planar_factor = 10.0f,
@@ -264,7 +262,7 @@ struct Simulation_State {
                              .cell_radius = 0.025f,
                              .cell_mass = 10.0f,
                              .domain_radius = 10.0f,
-                             .birth_rate = 1000u};
+                             .birth_rate = 100u};
     links.set_empty_key({UINT32_MAX, UINT32_MAX});
     links.insert({0, 1});
     particles.push_back({0.0f, 0.0f, -cell_radius});
@@ -394,33 +392,18 @@ struct Simulation_State {
         i++;
       }
     }
+    // Force into the domain
+    {
+      u32 i = 0;
+      for (auto &new_pos_0 : new_particles) {
+        new_pos_0.z -= new_pos_0.z * dt;
+        if (new_pos_0.z < 0.0f) {
+          new_pos_0.z = 0.0f;
+        }
+        i++;
+      }
+    }
 
-    //         // Force into the domain
-    //         for (i, pnt)
-    //           in new_pos.iter_mut().enumerate() {
-    //             auto const dist = ((pnt.x * pnt.x) + (pnt.y *
-    //             pnt.y)).sqrt(); auto const diff = dist -
-    //             state.params.can_radius; if
-    //               diff > 0.0 {
-    //                 auto const k = diff / dist;
-    //                 pnt.x -= pnt.x * k;
-    //                 pnt.y -= pnt.y * k;
-    //               }
-    //             // if pnt.z < 0.0 {
-    //             //     pnt.z = 0.0;
-    //             // }
-    //             // auto const force = -pnt.z * 4.0;
-    //             // force_history[i] += f32::abs(force);
-    //             // pnt.z += force * dt;
-    //             if
-    //               pnt.z > state.params.can_radius {
-    //                 pnt.z = state.params.can_radius;
-    //               }
-    //             if
-    //               pnt.z < -state.params.can_radius {
-    //                 pnt.z = -state.params.can_radius;
-    //               }
-    //           }
 
     // Apply the changes
     particles = new_particles;

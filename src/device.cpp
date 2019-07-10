@@ -193,7 +193,7 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
       vk::enumerateInstanceLayerProperties();
 
   std::vector<char const *> instanceLayerNames;
-  instanceLayerNames.push_back("VK_LAYER_LUNARG_standard_validation");
+  // instanceLayerNames.push_back("VK_LAYER_LUNARG_standard_validation");
   // instanceLayerNames.push_back("VK_LAYER_LUNARG_object_tracker");
   // instanceLayerNames.push_back("VK_LAYER_LUNARG_parameter_validation");
   // instanceLayerNames.push_back("VK_LAYER_LUNARG_assistant_layer");
@@ -332,6 +332,15 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
   if (init_glfw)
     out.update_swap_chain();
 
+  out.timestamp.pool = out.device->createQueryPoolUnique(
+      vk::QueryPoolCreateInfo()
+          .setQueryType(vk::QueryType::eTimestamp)
+          .setQueryCount(0x100));
+  auto props = out.physical_device.getProperties();
+  out.timestamp.ns_per_tick = props.limits.timestampPeriod;
+  auto queue_props = out.physical_device.getQueueFamilyProperties();
+  out.timestamp.valid_bits =
+      (u64(1) << u64(queue_props[out.graphics_queue_family_id].timestampValidBits)) - 1;
   return out;
 }
 
@@ -416,7 +425,6 @@ void Device_Wrapper::window_loop() {
     if (this->on_tick)
       this->on_tick(cmd);
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
-    
 
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
       ImGui::UpdatePlatformWindows();

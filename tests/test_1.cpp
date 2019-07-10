@@ -11,12 +11,85 @@
 
 #include "gtest/gtest.h"
 
+#include <chrono>
 #include <cstring>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/ext.hpp>
 #include <glm/glm.hpp>
 using namespace glm;
+
+struct Plot_Wrapper {
+  std::string name;
+  u32 max_values;
+  std::vector<f32> values;
+  std::chrono::high_resolution_clock::time_point frame_begin_timestamp;
+  void cpu_timestamp_begin() {
+    frame_begin_timestamp = std::chrono::high_resolution_clock::now();
+  }
+  void cpu_timestamp_end() {
+    auto frame_end_timestamp = std::chrono::high_resolution_clock::now();
+    auto frame_cpu_delta_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            frame_end_timestamp - frame_begin_timestamp)
+            .count();
+    push_value(f32(frame_cpu_delta_ns / 1000));
+  }
+  void push_value(f32 value) {
+    if (values.size() == max_values) {
+      for (int i = 0; i < max_values - 1; i++) {
+        values[i] = values[i + 1];
+      }
+      values[max_values - 1] = value;
+    } else {
+      values.push_back(value);
+    }
+  }
+  void draw() {
+    ImGui::PlotLines(name.c_str(), &values[0], values.size(), 0, NULL, FLT_MAX,
+                     FLT_MAX, ImVec2(0, 100));
+  }
+};
+
+struct Timestamp_Plot_Wrapper {
+  std::string name;
+  // 2 slots are needed
+  u32 query_begin_id;
+  u32 max_values;
+  //
+  bool timestamp_requested = false;
+  Plot_Wrapper plot;
+  void query_begin(vk::CommandBuffer &cmd, Device_Wrapper &device_wrapper) {
+    cmd.resetQueryPool(device_wrapper.timestamp.pool.get(), query_begin_id, 2);
+    cmd.writeTimestamp(vk::PipelineStageFlagBits::eAllCommands,
+                       device_wrapper.timestamp.pool.get(), query_begin_id);
+  }
+  void query_end(vk::CommandBuffer &cmd, Device_Wrapper &device_wrapper) {
+    cmd.writeTimestamp(vk::PipelineStageFlagBits::eAllCommands,
+                       device_wrapper.timestamp.pool.get(), query_begin_id + 1);
+    timestamp_requested = true;
+  }
+  void push_value(Device_Wrapper &device_wrapper) {
+    if (timestamp_requested) {
+      u64 query_results[] = {0, 0};
+      device_wrapper.device->getQueryPoolResults(
+          device_wrapper.timestamp.pool.get(), query_begin_id, 2,
+          2 * sizeof(u64), (void *)query_results, sizeof(u64),
+          vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+      u64 begin_ns = device_wrapper.timestamp.convert_to_ns(query_results[0]);
+      u64 end_ns = device_wrapper.timestamp.convert_to_ns(query_results[1]);
+      u64 diff_ns = end_ns - begin_ns;
+      f32 us = f32(diff_ns / 1000);
+      timestamp_requested = false;
+      plot.push_value(us);
+    }
+  }
+  void draw() {
+    plot.name = this->name;
+    plot.max_values = this->max_values;
+    plot.draw();
+  }
+};
 
 TEST(graphics, vulkan_graphics_shader_test_4) {
   auto device_wrapper = init_device(true);
@@ -56,16 +129,43 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
   };
   // Viewport for this sample's rendering
   vk::Rect2D example_viewport({0, 0}, {32, 32});
+  ///////////////////////////
+  // Particle system state //
+  ///////////////////////////
+  Random_Factory frand;
+  Simulation_State particle_system;
+
+  // Initialize the system
+  particle_system.restore_or_default("simulation_state_dump");
+
   // Rendering state
+  // @TODO: Proper serialization with protocol buffers or smth
+  Timestamp_Plot_Wrapper raymarch_timestamp_graph{
+    name : "raymarch time",
+    query_begin_id : 0,
+    max_values : 100
+  };
+  Timestamp_Plot_Wrapper fullframe_gpu_graph{
+    name : "full frame GPU time",
+    query_begin_id : 2,
+    max_values : 100
+  };
+  Plot_Wrapper
+  fullframe_cpu_graph{name : "full frame CPU time", max_values : 100};
+  Plot_Wrapper sim_cpu_graph{name : "simulation CPU time", max_values : 100};
+  Plot_Wrapper ug_cpu_graph{name : "grid builindg CPU time", max_values : 100};
   bool render_wire = false;
   bool render_raymarch = true;
   bool simulate = false;
   bool raymarch_flag_render_hull = true;
   bool raymarch_flag_render_cells = false;
-  u32 GRID_DIM = 2;
-  uint raymarch_iterations = 64;
-  f32 rendering_radius = 0.2f;
+  u32 GRID_DIM = 32;
+  uint raymarch_iterations = 32;
+  f32 rendering_radius = 0.1f;
   f32 rendering_step = 0.2f;
+  f32 debug_grid_flood_radius = 0.325f;
+  f32 rendering_grid_size =
+      particle_system.system_size + debug_grid_flood_radius;
   Framebuffer_Wrapper framebuffer_wrapper{};
   Storage_Image_Wrapper storage_image_wrapper{};
   Pipeline_Wrapper fullscreen_pipeline;
@@ -78,6 +178,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     storage_image_wrapper = Storage_Image_Wrapper::create(
         device_wrapper, example_viewport.extent.width,
         example_viewport.extent.height, vk::Format::eR32G32B32A32Sfloat);
+    // @TODO: Squash all this pipeline creation boilerplate
     // Fullscreen pass
     fullscreen_pipeline = Pipeline_Wrapper::create_graphics(
         device_wrapper, "../shaders/tests/bufferless_triangle.vert.glsl",
@@ -235,18 +336,21 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
   float camera_phi = 0.0;
   float camera_theta = M_PI / 2.0f;
   float camera_distance = 10.0f;
-  ///////////////////////////
-  // Particle system state //
-  ///////////////////////////
-  Random_Factory frand;
-  Simulation_State particle_system;
 
-  // Initialize the system
-  particle_system.restore_or_default("simulation_state_dump");
   //////////////////////
   // Render offscreen //
   //////////////////////
+  VmaBuffer compute_ubo_buffer;
+  VmaBuffer bins_buffer;
+  VmaBuffer particles_buffer;
+  VmaBuffer particle_vertex_buffer;
+  VmaBuffer particle_ubo_buffer;
+  VmaBuffer links_vertex_buffer;
+
   device_wrapper.pre_tick = [&](vk::CommandBuffer &cmd) {
+    fullframe_cpu_graph.cpu_timestamp_begin();
+    fullframe_gpu_graph.push_value(device_wrapper);
+    fullframe_gpu_graph.query_begin(cmd, device_wrapper);
     // Update backbuffer if the viewport size has changed
     if (framebuffer_wrapper.width != example_viewport.extent.width ||
         framebuffer_wrapper.height != example_viewport.extent.height) {
@@ -256,53 +360,65 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     ////////////// SIMULATION //////////////////
     // Perform fixed step iteration on the particle system
     // Fill the uniform grid
-    if (simulate)
+    if (simulate) {
+      sim_cpu_graph.cpu_timestamp_begin();
       particle_system.step(1.0e-3f);
-    UG ug(particle_system.system_size, GRID_DIM);
+      rendering_grid_size =
+          particle_system.system_size + debug_grid_flood_radius;
+      sim_cpu_graph.cpu_timestamp_end();
+    }
+    ug_cpu_graph.cpu_timestamp_begin();
+    UG ug(rendering_grid_size, GRID_DIM);
 
     for (u32 i = 0; i < particle_system.particles.size(); i++) {
-      ug.put(particle_system.particles[i], rendering_radius + rendering_step * 4.0f,
-             i);
+      ug.put(
+          particle_system.particles[i],
+          debug_grid_flood_radius, // rendering_radius + rendering_step * 4.0f,
+          i);
     }
     auto packed = ug.pack();
+    ug_cpu_graph.cpu_timestamp_end();
 
     ///////////// RENDERING ////////////////////
 
     // Create new GPU visible buffers
-    auto compute_ubo_buffer = alloc_state->allocate_buffer(
+    // @TODO: Track usage of the old buffers
+    // Right now there is no overlapping of cpu and gpu work
+    // With overlapping this will invalidate used buffers
+    compute_ubo_buffer = alloc_state->allocate_buffer(
         vk::BufferCreateInfo()
             .setSize(sizeof(Compute_UBO))
             .setUsage(vk::BufferUsageFlagBits::eUniformBuffer |
                       vk::BufferUsageFlagBits::eTransferDst),
         VMA_MEMORY_USAGE_CPU_TO_GPU);
-    auto bins_buffer = alloc_state->allocate_buffer(
+    bins_buffer = alloc_state->allocate_buffer(
         vk::BufferCreateInfo()
             .setSize(sizeof(u32) * packed.arena_table.size())
             .setUsage(vk::BufferUsageFlagBits::eStorageBuffer |
                       vk::BufferUsageFlagBits::eTransferDst),
         VMA_MEMORY_USAGE_CPU_TO_GPU);
-    auto particles_buffer = alloc_state->allocate_buffer(
+    particles_buffer = alloc_state->allocate_buffer(
         vk::BufferCreateInfo()
             .setSize(sizeof(f32) * 3 * packed.ids.size())
             .setUsage(vk::BufferUsageFlagBits::eStorageBuffer |
                       vk::BufferUsageFlagBits::eTransferDst),
         VMA_MEMORY_USAGE_CPU_TO_GPU);
 
-    auto particle_vertex_buffer = alloc_state->allocate_buffer(
+    particle_vertex_buffer = alloc_state->allocate_buffer(
         vk::BufferCreateInfo()
             .setSize(particle_system.particles.size() * sizeof(Particle_Vertex))
             .setUsage(vk::BufferUsageFlagBits::eVertexBuffer |
                       vk::BufferUsageFlagBits::eTransferDst |
                       vk::BufferUsageFlagBits::eTransferSrc),
         VMA_MEMORY_USAGE_CPU_TO_GPU);
-    auto particle_ubo_buffer = alloc_state->allocate_buffer(
+    particle_ubo_buffer = alloc_state->allocate_buffer(
         vk::BufferCreateInfo()
             .setSize(sizeof(Particle_UBO))
             .setUsage(vk::BufferUsageFlagBits::eUniformBuffer |
                       vk::BufferUsageFlagBits::eTransferDst),
         VMA_MEMORY_USAGE_CPU_TO_GPU);
 
-    auto links_vertex_buffer = alloc_state->allocate_buffer(
+    links_vertex_buffer = alloc_state->allocate_buffer(
         vk::BufferCreateInfo()
             .setSize(particle_system.links.size() * sizeof(Particle_Vertex) * 2)
             .setUsage(vk::BufferUsageFlagBits::eVertexBuffer |
@@ -382,9 +498,9 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
             normalize(cross(tmp_ubo.camera_look, vec3(0.0f, 0.0f, 1.0f)));
         tmp_ubo.camera_up =
             normalize(cross(tmp_ubo.camera_right, tmp_ubo.camera_look));
-        tmp_ubo.ug_size = particle_system.system_size;
+        tmp_ubo.ug_size = rendering_grid_size;
         tmp_ubo.ug_bins_count = GRID_DIM;
-        tmp_ubo.ug_bin_size = 2.0f * particle_system.system_size / GRID_DIM;
+        tmp_ubo.ug_bin_size = 2.0f * rendering_grid_size / GRID_DIM;
         tmp_ubo.rendering_flags = 0;
         tmp_ubo.rendering_flags |= (raymarch_flag_render_hull ? 1 : 0);
         tmp_ubo.rendering_flags |= (raymarch_flag_render_cells ? 1 : 0) << 1;
@@ -419,10 +535,13 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     /* Spawn the raymarching kernel */
     /*------------------------------*/
     if (render_raymarch) {
+      raymarch_timestamp_graph.push_value(device_wrapper);
       storage_image_wrapper.transition_layout_to_write(device_wrapper, cmd);
       compute_pipeline_wrapped.bind_pipeline(device.get(), cmd);
+      raymarch_timestamp_graph.query_begin(cmd, device_wrapper);
       cmd.dispatch((example_viewport.extent.width + 15) / 16,
                    (example_viewport.extent.height + 15) / 16, 1);
+      raymarch_timestamp_graph.query_end(cmd, device_wrapper);
       storage_image_wrapper.transition_layout_to_read(device_wrapper, cmd);
     }
     /*----------------------------------*/
@@ -453,6 +572,9 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
       cmd.draw(particle_system.links.size() * 2, 1, 0, 0);
     }
     framebuffer_wrapper.end_render_pass(cmd);
+    fullframe_gpu_graph.query_end(cmd, device_wrapper);
+
+    fullframe_cpu_graph.cpu_timestamp_end();
   };
 
   /////////////////////
@@ -522,7 +644,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
           auto dy = mpos.y - old_mpos.y;
 
           camera_phi -= dx * 1.0e-2f;
-          camera_theta += dy * 1.0e-2f;
+          camera_theta -= dy * 1.0e-2f;
           if (camera_phi > M_PI * 2.0f) {
             camera_phi -= M_PI * 2.0f;
           } else if (camera_phi < 0.0f) {
@@ -546,12 +668,13 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
         ImGui_ImplVulkan_AddTexture(
             sampler.get(), framebuffer_wrapper.image_view.get(),
             VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
-        ImVec2(example_viewport.extent.width, example_viewport.extent.height));
+        ImVec2(example_viewport.extent.width, example_viewport.extent.height),
+        ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
     // ImGui::ShowDemoWindow(&show_demo);
 
     ImGui::End();
 
-    ImGui::Begin("dummy window 1");
+    ImGui::Begin("Simulation parameters");
     ImGui::DragFloat("rest_length", &particle_system.rest_length, 0.025f,
                      0.025f, 1.0f);
     ImGui::DragFloat("spring_factor", &particle_system.spring_factor, 0.025f,
@@ -571,7 +694,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     ImGui::DragInt("birth_rate", (i32 *)&particle_system.birth_rate, 1, 10,
                    1000);
     ImGui::End();
-    ImGui::Begin("dummy window 2");
+    ImGui::Begin("Rendering configuration");
     ImGui::Checkbox("draw wire", &render_wire);
     ImGui::Checkbox("draw raymarch", &render_raymarch);
     ImGui::Checkbox("simulate", &simulate);
@@ -581,11 +704,20 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
                      10.0f);
     ImGui::DragFloat("raymarch step radius", &rendering_step, 0.025f, 0.025f,
                      10.0f);
+    ImGui::DragFloat("[Debug] grid flood radius", &debug_grid_flood_radius,
+                     0.025f, 0.0f, 10.0f);
+    ImGui::DragFloat("[Debug] rendering grid size", &rendering_grid_size,
+                     0.025f, 0.025f, 10.0f);
     ImGui::DragInt("raymarch grid dimension", (i32 *)&GRID_DIM, 1, 2, 64);
     ImGui::DragInt("raymarch max iterations", (i32 *)&raymarch_iterations, 1, 1,
                    64);
     ImGui::End();
-    ImGui::Begin("dummy window 3");
+    ImGui::Begin("Metrics");
+    raymarch_timestamp_graph.draw();
+    fullframe_gpu_graph.draw();
+    fullframe_cpu_graph.draw();
+    ug_cpu_graph.draw();
+    sim_cpu_graph.draw();
     ImGui::End();
   };
   device_wrapper.window_loop();
