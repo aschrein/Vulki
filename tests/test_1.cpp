@@ -9,8 +9,9 @@
 
 #include "examples/imgui_impl_vulkan.h"
 
+#include "dir_monitor/include/dir_monitor/dir_monitor.hpp"
 #include "gtest/gtest.h"
-
+#include <boost/thread.hpp>
 #include <chrono>
 #include <cstring>
 
@@ -143,6 +144,20 @@ struct Timestamp_Plot_Wrapper {
   }
 };
 
+boost::asio::io_service io_service;
+
+std::atomic<bool> shaders_updated = false;
+void dir_event_handler(boost::asio::dir_monitor &dm,
+                       const boost::system::error_code &ec,
+                       const boost::asio::dir_monitor_event &ev) {
+  if (ev.type == boost::asio::dir_monitor_event::event_type::modified)
+    shaders_updated = true;
+  dm.async_monitor([&](const boost::system::error_code &ec,
+                       const boost::asio::dir_monitor_event &ev) {
+    dir_event_handler(dm, ec, ev);
+  });
+}
+
 TEST(graphics, vulkan_graphics_shader_test_4) {
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;
@@ -151,8 +166,21 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
       vk::DynamicState::eScissor,
   };
   // Raymarching kernel
-  auto compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
-      device_wrapper, "../shaders/raymarch.comp.glsl", {{"GROUP_DIM", "16"}});
+  boost::asio::dir_monitor dm(io_service);
+  dm.add_directory("../shaders");
+  //
+  // dm.async_monitor(blocked_async_call_handler_with_local_ioservice);
+  // io_service.run();
+
+  dm.async_monitor([&](const boost::system::error_code &ec,
+                       const boost::asio::dir_monitor_event &ev) {
+    dir_event_handler(dm, ec, ev);
+  });
+
+  boost::asio::io_service::work workload(io_service);
+  boost::thread dm_thread = boost::thread(
+      boost::bind(&boost::asio::io_service::run, boost::ref(io_service)));
+
   // Some shader data structures
   struct Particle_Vertex {
     vec3 position;
@@ -231,7 +259,10 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
   Pipeline_Wrapper fullscreen_pipeline;
   Pipeline_Wrapper particles_pipeline;
   Pipeline_Wrapper links_pipeline;
-  auto onResize = [&] {
+  Pipeline_Wrapper compute_pipeline_wrapped;
+  auto recreate_resources = [&] {
+    compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
+      device_wrapper, "../shaders/raymarch.comp.glsl", {{"GROUP_DIM", "16"}});
     framebuffer_wrapper = Framebuffer_Wrapper::create(
         device_wrapper, example_viewport.extent.width,
         example_viewport.extent.height, vk::Format::eR32G32B32A32Sfloat);
@@ -431,9 +462,11 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     fullframe_gpu_graph.push_value(device_wrapper);
     fullframe_gpu_graph.query_begin(cmd, device_wrapper);
     // Update backbuffer if the viewport size has changed
-    if (framebuffer_wrapper.width != example_viewport.extent.width ||
+    bool expected = true;
+    if (shaders_updated.compare_exchange_weak(expected, false) ||
+        framebuffer_wrapper.width != example_viewport.extent.width ||
         framebuffer_wrapper.height != example_viewport.extent.height) {
-      onResize();
+      recreate_resources();
     }
 
     ////////////// SIMULATION //////////////////
@@ -790,7 +823,9 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
                      0.025f, 0.0f, 10.0f);
     ImGui::DragFloat("[Debug] rendering grid size", &rendering_grid_size,
                      0.025f, 0.025f, 10.0f);
-    ImGui::SliderInt("raymarch grid dimension", (i32 *)&GRID_DIM, 2, 64);
+    u32 step = 1;
+    ImGui::InputScalar("raymarch grid dimension", ImGuiDataType_U32, &GRID_DIM,
+                       &step);
     ImGui::SliderInt("raymarch max iterations", (i32 *)&raymarch_iterations, 1,
                      64);
     ImGui::End();

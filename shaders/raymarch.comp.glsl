@@ -268,7 +268,7 @@ void main() {
     if ((g_ubo.rendering_flags & RENDER_HULL) != 0) {
       float k = dot(out_val, vec3(0.0, 0.0, 1.0));
       
-      color += abs(k) * mix(vec3(1.0), vec3(0.0, 0.1, 0.2), -k * 0.5 + 0.5);
+      color += abs(k) * mix(vec3(1.0), vec3(0.1, 0.2, 0.2), -k * 0.5 + 0.5);
     }
     if ((g_ubo.rendering_flags & RENDER_CELLS) != 0)
       color += vec3(float(iter) / float(g_ubo.ug_bins_count) / 1.73205 /
