@@ -128,7 +128,9 @@ struct Device_Wrapper {
 struct Framebuffer_Wrapper {
   RAW_MOVABLE(Framebuffer_Wrapper)
   VmaImage image;
+  VmaImage depth_image;
   vk::UniqueImageView image_view;
+  vk::UniqueImageView depth_view;
   vk::UniqueFramebuffer frame_buffer;
   vk::UniqueRenderPass render_pass;
   vk::ImageLayout cur_layout;
@@ -157,7 +159,21 @@ struct Framebuffer_Wrapper {
             .setTiling(vk::ImageTiling::eOptimal)
             .setUsage(vk::ImageUsageFlagBits::eColorAttachment |
                       vk::ImageUsageFlagBits::eSampled),
-
+        VMA_MEMORY_USAGE_GPU_ONLY);
+    out.depth_image = device_wrapper.alloc_state->allocate_image(
+        vk::ImageCreateInfo()
+            .setArrayLayers(1)
+            .setExtent(vk::Extent3D(width, height, 1))
+            .setFormat(vk::Format::eD32Sfloat)
+            .setMipLevels(1)
+            .setImageType(vk::ImageType::e2D)
+            .setInitialLayout(vk::ImageLayout::eUndefined)
+            .setPQueueFamilyIndices(&device_wrapper.graphics_queue_family_id)
+            .setQueueFamilyIndexCount(1)
+            .setSamples(vk::SampleCountFlagBits::e1)
+            .setSharingMode(vk::SharingMode::eExclusive)
+            .setTiling(vk::ImageTiling::eOptimal)
+            .setUsage(vk::ImageUsageFlagBits::eDepthStencilAttachment),
         VMA_MEMORY_USAGE_GPU_ONLY);
     out.cur_layout = vk::ImageLayout::eUndefined;
     out.cur_access_flags = vk::AccessFlagBits::eMemoryRead;
@@ -170,22 +186,47 @@ struct Framebuffer_Wrapper {
                 vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA),
             vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0,
                                       1)));
+    out.depth_view =
+        device_wrapper.device->createImageViewUnique(vk::ImageViewCreateInfo(
+            vk::ImageViewCreateFlags(), out.depth_image.image,
+            vk::ImageViewType::e2D, vk::Format::eD32Sfloat,
+            vk::ComponentMapping(
+                vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG,
+                vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA),
+            vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0,
+                                      1)));
     VkAttachmentDescription attachment = {};
     attachment.format = VkFormat(format);
     attachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    VkAttachmentDescription depth_attachment_desc = {};
+    depth_attachment_desc.format = VkFormat(vk::Format::eD32Sfloat);
+    depth_attachment_desc.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth_attachment_desc.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_attachment_desc.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth_attachment_desc.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_attachment_desc.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth_attachment_desc.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depth_attachment_desc.finalLayout =
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    VkAttachmentDescription attach_descs[] = {attachment,
+                                              depth_attachment_desc};
     VkAttachmentReference color_attachment = {};
     color_attachment.attachment = 0;
     color_attachment.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     VkSubpassDescription subpass = {};
+    VkAttachmentReference depth_attachment = {};
+    depth_attachment.attachment = 1;
+    depth_attachment.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &color_attachment;
+    subpass.pDepthStencilAttachment = &depth_attachment;
     VkSubpassDependency dependency = {};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0;
@@ -195,30 +236,35 @@ struct Framebuffer_Wrapper {
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     VkRenderPassCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    info.attachmentCount = 1;
-    info.pAttachments = &attachment;
+    info.attachmentCount = 2;
+    info.pAttachments = attach_descs;
     info.subpassCount = 1;
     info.pSubpasses = &subpass;
     info.dependencyCount = 1;
     info.pDependencies = &dependency;
     out.render_pass = device_wrapper.device->createRenderPassUnique(
         vk::RenderPassCreateInfo(info));
+    vk::ImageView attachmetnts_ptr[] = {out.image_view.get(),
+                                        out.depth_view.get()};
     out.frame_buffer = device_wrapper.device->createFramebufferUnique(
         vk::FramebufferCreateInfo()
-            .setAttachmentCount(1)
+            .setAttachmentCount(2)
             .setHeight(height)
             .setWidth(width)
             .setLayers(1)
-            .setPAttachments(&out.image_view.get())
+            .setPAttachments(attachmetnts_ptr)
             .setRenderPass(out.render_pass.get()));
     return out;
   }
   void begin_render_pass(vk::CommandBuffer &cmd) {
-    auto clear_value =
-        vk::ClearValue(vk::ClearColorValue().setFloat32({0.0, 0.0, 0.0, 1.0}));
+    vk::ClearValue clear_value[] = {
+        vk::ClearValue(vk::ClearColorValue().setFloat32({0.0, 0.0, 0.0, 1.0})),
+        vk::ClearValue().setDepthStencil(vk::ClearDepthStencilValue(1.0f)),
+    };
+    
     cmd.beginRenderPass(vk::RenderPassBeginInfo()
-                            .setClearValueCount(1)
-                            .setPClearValues(&clear_value)
+                            .setClearValueCount(2)
+                            .setPClearValues(clear_value)
                             .setFramebuffer(frame_buffer.get())
                             .setRenderPass(render_pass.get())
                             .setRenderArea(vk::Rect2D(
@@ -228,6 +274,15 @@ struct Framebuffer_Wrapper {
                                 },
                                 {width, height})),
                         vk::SubpassContents::eInline);
+    // cmd.clearAttachments(
+    //     {vk::ClearAttachment()
+    //          .setAspectMask(vk::ImageAspectFlagBits::eColor)
+    //          .setClearValue(vk::ClearValue().setColor(
+    //              vk::ClearColorValue().setFloat32({0.0f, 0.1f, 0.0f, 1.0f})
+
+    //                  ))},
+    //     {vk::Rect2D({0, 0}, {example_viewport.extent.width,
+    //                          example_viewport.extent.height})});
   }
   void end_render_pass(vk::CommandBuffer &cmd) { cmd.endRenderPass(); }
   void transition_layout_to_read(Device_Wrapper &device,
@@ -271,6 +326,27 @@ struct Framebuffer_Wrapper {
                      .setLayerCount(1)
                      .setLevelCount(1)
                      .setAspectMask(vk::ImageAspectFlagBits::eColor))});
+    // Transition the depth buffer only once because we don't read from it
+    // @TODO
+    if (this->cur_layout == vk::ImageLayout::eUndefined) {
+      cmd.pipelineBarrier(
+          vk::PipelineStageFlagBits::eAllCommands,
+          vk::PipelineStageFlagBits::eAllCommands,
+          vk::DependencyFlagBits::eByRegion, {}, {},
+          {vk::ImageMemoryBarrier()
+               .setSrcAccessMask(this->cur_access_flags)
+               .setDstAccessMask(vk::AccessFlagBits::eDepthStencilAttachmentWrite)
+               .setOldLayout(this->cur_layout)
+               .setNewLayout(vk::ImageLayout::eDepthStencilAttachmentOptimal)
+               .setSrcQueueFamilyIndex(device.graphics_queue_family_id)
+               .setDstQueueFamilyIndex(device.graphics_queue_family_id)
+               .setImage(this->depth_image.image)
+               .setSubresourceRange(
+                   vk::ImageSubresourceRange()
+                       .setLayerCount(1)
+                       .setLevelCount(1)
+                       .setAspectMask(vk::ImageAspectFlagBits::eDepth))});
+    }
     this->cur_access_flags = vk::AccessFlagBits::eColorAttachmentWrite;
     this->cur_layout = vk::ImageLayout::eColorAttachmentOptimal;
   }
@@ -413,7 +489,7 @@ struct CPU_Image {
     return out;
   }
   void transition_layout_to_general(Device_Wrapper &device,
-                                 vk::CommandBuffer &cmd) {
+                                    vk::CommandBuffer &cmd) {
     cmd.pipelineBarrier(
         vk::PipelineStageFlagBits::eAllCommands,
         vk::PipelineStageFlagBits::eAllCommands,

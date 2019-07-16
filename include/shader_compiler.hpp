@@ -178,7 +178,9 @@ Shader_Parsed create_shader_module(
     for (auto &item : res.uniform_buffers) {
       pushResource(vk::DescriptorType::eUniformBuffer, item);
     }
-
+    for (auto &item : res.push_constant_buffers) {
+      pushResource(vk::DescriptorType::eUniformBuffer, item);
+    }
     for (auto &item : res.stage_inputs) {
       auto location =
           comp.get_decoration(item.id, spv::Decoration::DecorationLocation);
@@ -285,7 +287,8 @@ struct Pipeline_Wrapper {
       vk::GraphicsPipelineCreateInfo pipeline_create_template,
       std::unordered_map<std::string, Vertex_Input> vertex_inputs,
       std::vector<vk::VertexInputBindingDescription> vertex_bind_desc,
-      std::vector<std::pair<std::string, std::string>> const &defines) {
+      std::vector<std::pair<std::string, std::string>> const &defines,
+      size_t push_constants_size = 0) {
     auto &device = device_wrapper.device.get();
     Pipeline_Wrapper out;
 
@@ -345,10 +348,23 @@ struct Pipeline_Wrapper {
               .setDescriptorPool(device_wrapper.descset_pool.get())
               .setDescriptorSetCount(raw_set_layouts.size()));
     }
-    out.pipeline_layout = device.createPipelineLayoutUnique(
-        vk::PipelineLayoutCreateInfo()
-            .setPSetLayouts(&raw_set_layouts[0])
-            .setSetLayoutCount(raw_set_layouts.size()));
+    if (push_constants_size) {
+      out.pipeline_layout = device.createPipelineLayoutUnique(
+          vk::PipelineLayoutCreateInfo()
+              .setPPushConstantRanges(
+                  &vk::PushConstantRange()
+                       .setOffset(0)
+                       .setSize(push_constants_size)
+                       .setStageFlags(vk::ShaderStageFlagBits::eAll))
+              .setPushConstantRangeCount(1)
+              .setPSetLayouts(&raw_set_layouts[0])
+              .setSetLayoutCount(raw_set_layouts.size()));
+    } else {
+      out.pipeline_layout = device.createPipelineLayoutUnique(
+          vk::PipelineLayoutCreateInfo()
+              .setPSetLayouts(&raw_set_layouts[0])
+              .setSetLayoutCount(raw_set_layouts.size()));
+    }
 
     {
       // Setup funky defaults
@@ -374,7 +390,9 @@ struct Pipeline_Wrapper {
         pipeline_create_template.setPColorBlendState(&_blend_ci);
       }
       auto _depth_ci = vk::PipelineDepthStencilStateCreateInfo()
-                           .setDepthTestEnable(false)
+                           .setDepthTestEnable(true)
+                           .setDepthCompareOp(vk::CompareOp::eLessOrEqual)
+                           .setDepthWriteEnable(true)
                            .setMaxDepthBounds(1.0f);
       if (!pipeline_create_template.pDepthStencilState) {
         pipeline_create_template.setPDepthStencilState(&_depth_ci);
@@ -468,6 +486,13 @@ struct Pipeline_Wrapper {
                                                           .setOffset(origin))},
                                 {});
   }
+  void push_constants(vk::CommandBuffer &cmd, void *data, size_t size) {
+    cmd.pushConstants(pipeline_layout.get(),
+                      (vk::ShaderStageFlags)vk::ShaderStageFlagBits::eAll, 0,
+                      (uint32_t)size, data);
+    // void pushConstants( PipelineLayout layout, ShaderStageFlags stageFlags,
+    // uint32_t offset, uint32_t size, const void* pValues,
+  }
   void update_storage_image_descriptor(vk::Device device,
                                        std::string const &name,
                                        vk::ImageView image_view) {
@@ -519,6 +544,6 @@ struct Pipeline_Wrapper {
   {                                                                            \
 #FIELD, Vertex_Input {                                                     \
     binding:                                                                   \
-      0, offset : offsetof(CLASS, FIELD), format : FMT                         \
+      BND, offset : offsetof(CLASS, FIELD), format : FMT                       \
     }                                                                          \
   }
