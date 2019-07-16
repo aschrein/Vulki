@@ -690,12 +690,26 @@ struct Gizmo_Drag_State {
   bool selected_axis[3];
   bool hovered_axis[3];
   int selected_axis_id = -1;
+  float old_cpa, cpa;
   void on_mouse_release() {
     selected = false;
     selected_axis[0] = false;
     selected_axis[1] = false;
     selected_axis[2] = false;
+    old_cpa = 0.0f;
+    cpa = 0.0f;
     selected_axis_id = -1;
+  }
+  float get_cpa(vec3 const &ray_origin, vec3 const &ray_dir) {
+    vec3 axis{};
+    axis[selected_axis_id] = 1.0f;
+    float b = ray_dir[selected_axis_id];
+    vec3 w0 = ray_origin - pos;
+    float d = dot(ray_dir, w0);
+    float e = dot(axis, w0);
+    float t = (b * e - d) / (1.0f - b * b);
+    vec3 closest_point = ray_origin + ray_dir * t;
+    return closest_point[selected_axis_id];
   }
   void on_mouse_move(vec3 const &ray_origin, vec3 const &ray_dir) {
     vec3 sphere_pos[] = {
@@ -716,6 +730,11 @@ struct Gizmo_Drag_State {
         hovered_axis[i] = true;
       }
     }
+  }
+  void on_mouse_drag(vec3 const &ray_origin, vec3 const &ray_dir) {
+    float cpa = get_cpa(ray_origin, ray_dir);
+    pos[selected_axis_id] += cpa - old_cpa;
+    old_cpa = cpa;
   }
   bool on_mouse_click(vec3 const &ray_origin, vec3 const &ray_dir) {
     on_mouse_release();
@@ -745,6 +764,7 @@ struct Gizmo_Drag_State {
       selected_axis[0] = selected_axis_id == 0;
       selected_axis[1] = selected_axis_id == 1;
       selected_axis[2] = selected_axis_id == 2;
+      old_cpa = get_cpa(ray_origin, ray_dir);
       return true;
     }
     return false;
@@ -842,7 +862,7 @@ TEST(graphics, vulkan_graphics_test_gizmo) {
   Raw_Mesh_3p16i_Wrapper icosahedron_wrapper =
       Raw_Mesh_3p16i_Wrapper::create(device_wrapper, subdivide_icosahedron(2));
   Raw_Mesh_3p16i_Wrapper cylinder_wrapper = Raw_Mesh_3p16i_Wrapper::create(
-      device_wrapper, subdivide_cylinder(8, 0.1f, 1.0f));
+      device_wrapper, subdivide_cylinder(8, 0.025f, 1.0f));
   // Shared sampler
   vk::UniqueSampler sampler =
       device->createSamplerUnique(vk::SamplerCreateInfo().setMaxLod(1));
@@ -1069,16 +1089,6 @@ TEST(graphics, vulkan_graphics_test_gizmo) {
       if (ImGui::GetIO().MouseDown[0]) {
         if (!mouse_last_down) {
           if (gizmo_state.on_mouse_click(camera_pos, mouse_ray)) {
-            vec3 axis{};
-            axis[gizmo_state.selected_axis_id] = 1.0f;
-            float b = mouse_ray[gizmo_state.selected_axis_id];
-            vec3 w0 = camera_pos - gizmo_state.pos;
-            float d = dot(mouse_ray, w0);
-            float e = dot(axis, w0);
-            float t = (b * e - d) / (1.0f - b * b);
-            vec3 closest_point = camera_pos + mouse_ray * t;
-            float cpa = closest_point[gizmo_state.selected_axis_id];
-            old_cpa = cpa;
           }
         }
 
@@ -1086,17 +1096,8 @@ TEST(graphics, vulkan_graphics_test_gizmo) {
           auto dx = mpos.x - old_mpos.x;
           auto dy = mpos.y - old_mpos.y;
           if (gizmo_state.selected) {
-            vec3 axis{};
-            axis[gizmo_state.selected_axis_id] = 1.0f;
-            float b = mouse_ray[gizmo_state.selected_axis_id];
-            vec3 w0 = camera_pos - gizmo_state.pos;
-            float d = dot(mouse_ray, w0);
-            float e = dot(axis, w0);
-            float t = (b * e - d) / (1.0f - b * b);
-            vec3 closest_point = camera_pos + mouse_ray * t;
-            float cpa = closest_point[gizmo_state.selected_axis_id];
-            gizmo_state.pos[gizmo_state.selected_axis_id] += cpa - old_cpa;
-            old_cpa = cpa;
+            gizmo_state.on_mouse_drag(camera_pos, mouse_ray);
+
           } else {
             camera_phi -= dx * 1.0e-2f;
             camera_theta -= dy * 1.0e-2f;
