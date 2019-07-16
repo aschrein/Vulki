@@ -21,6 +21,27 @@ struct Raw_Mesh_3p16i {
   std::vector<u16_face> indices;
 };
 
+static Raw_Mesh_3p16i subdivide_cylinder(uint32_t level, float radius,
+                                         float length) {
+  Raw_Mesh_3p16i out;
+  level += 4;
+  float step = M_PI * 2.0f / level;
+  out.positions.resize(level * 2);
+  for (u32 i = 0; i < level; i++) {
+    float angle = step * i;
+    out.positions[i] = {0.0f, radius * std::cos(angle),
+                        radius * std::sin(angle)};
+    out.positions[i + level] = {length, radius * std::cos(angle),
+                                radius * std::sin(angle)};
+  }
+  for (u32 i = 0; i < level; i++) {
+    out.indices.push_back({i, i + level, (i + 1) % level});
+    out.indices.push_back(
+        {(i + 1) % level, i + level, ((i + 1) % level) + level});
+  }
+  return out;
+}
+
 static Raw_Mesh_3p16i subdivide_icosahedron(uint32_t level) {
   Raw_Mesh_3p16i out;
   static float const X = 0.5257311f;

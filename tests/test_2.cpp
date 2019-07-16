@@ -774,6 +774,7 @@ TEST(graphics, vulkan_graphics_test_gizmo) {
     vec3 offset;
     float scale;
     vec3 color;
+    vec3 rotation;
   };
   struct Gizmo_Instance_Data {
     vec4 in_model_0;
@@ -840,6 +841,8 @@ TEST(graphics, vulkan_graphics_test_gizmo) {
   Alloc_State *alloc_state = device_wrapper.alloc_state.get();
   Raw_Mesh_3p16i_Wrapper icosahedron_wrapper =
       Raw_Mesh_3p16i_Wrapper::create(device_wrapper, subdivide_icosahedron(2));
+  Raw_Mesh_3p16i_Wrapper cylinder_wrapper = Raw_Mesh_3p16i_Wrapper::create(
+      device_wrapper, subdivide_cylinder(8, 0.1f, 1.0f));
   // Shared sampler
   vk::UniqueSampler sampler =
       device->createSamplerUnique(vk::SamplerCreateInfo().setMaxLod(1));
@@ -883,7 +886,12 @@ TEST(graphics, vulkan_graphics_test_gizmo) {
       {vec3(1.0f, 0.0f, 0.0f), 0.2f, vec3(1.0f, 0.0f, 0.0f)},
       {vec3(0.0f, 1.0f, 0.0f), 0.2f, vec3(0.0f, 1.0f, 0.0f)},
       {vec3(0.0f, 0.0f, 1.0f), 0.2f, vec3(0.0f, 0.0f, 1.0f)},
-      // {vec3(0.0f, 0.0f, 0.0f), 0.5f, vec3(1.0f, 1.0f, 1.0f)},
+      {vec3(0.0f, 0.0f, 0.0f), 1.0f, vec3(1.0f, 0.0f, 0.0f),
+       vec3(0.0f, 0.0f, 0.0f)},
+      {vec3(0.0f, 0.0f, 0.0f), 1.0f, vec3(0.0f, 1.0f, 0.0f),
+       vec3(0.0f, 0.0f, M_PI_2)},
+      {vec3(0.0f, 0.0f, 0.0f), 1.0f, vec3(0.0f, 0.0f, 1.0f),
+       vec3(0.0f, -M_PI_2, 0.0f)},
   };
 
   device_wrapper.pre_tick = [&](vk::CommandBuffer &cmd) {
@@ -907,12 +915,16 @@ TEST(graphics, vulkan_graphics_test_gizmo) {
       for (u32 i = 0; i < gizmo_instances.size(); i++) {
         mat4 translation =
             glm::translate(gizmo_state.pos + gizmo_instances[i].offset) *
+            glm::rotate(gizmo_instances[i].rotation.x, vec3(1.0f, 0.0f, 0.0f)) *
+            glm::rotate(gizmo_instances[i].rotation.y, vec3(0.0f, 1.0f, 0.0f)) *
+            glm::rotate(gizmo_instances[i].rotation.z, vec3(0.0f, 0.0f, 1.0f)) *
             glm::scale(vec3(gizmo_instances[i].scale));
         typed_data[i].in_model_0 = translation[0];
         typed_data[i].in_model_1 = translation[1];
         typed_data[i].in_model_2 = translation[2];
         typed_data[i].in_model_3 = translation[3];
-        float k = gizmo_state.hovered_axis[i] ? 1.0f : 0.5f;
+
+        float k = gizmo_state.hovered_axis[i % 3] ? 1.0f : 0.5f;
         typed_data[i].in_color = gizmo_instances[i].color * k;
       }
       gizmo_instance_buffer.unmap();
@@ -948,8 +960,14 @@ TEST(graphics, vulkan_graphics_test_gizmo) {
                             {0, 0});
       cmd.bindIndexBuffer(icosahedron_wrapper.index_buffer.buffer, 0,
                           vk::IndexType::eUint16);
-      cmd.drawIndexed(icosahedron_wrapper.vertex_count, gizmo_instances.size(),
-                      0, 0, 0);
+      cmd.drawIndexed(icosahedron_wrapper.vertex_count, 3, 0, 0, 0);
+      cmd.bindVertexBuffers(
+          0,
+          {cylinder_wrapper.vertex_buffer.buffer, gizmo_instance_buffer.buffer},
+          {0, 0});
+      cmd.bindIndexBuffer(cylinder_wrapper.index_buffer.buffer, 0,
+                          vk::IndexType::eUint16);
+      cmd.drawIndexed(cylinder_wrapper.vertex_count, 3, 0, 0, 3);
     }
     fullscreen_pipeline.bind_pipeline(device.get(), cmd);
 
