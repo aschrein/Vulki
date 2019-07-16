@@ -350,26 +350,86 @@ struct Pipeline_Wrapper {
             .setPSetLayouts(&raw_set_layouts[0])
             .setSetLayoutCount(raw_set_layouts.size()));
 
-    out.pipeline = device.createGraphicsPipelineUnique(
-        vk::PipelineCache(),
-        pipeline_create_template
-            .setLayout(out.pipeline_layout.get())
+    {
+      // Setup funky defaults
+      auto _viewport = vk::Viewport();
+      auto _rect = vk::Rect2D();
+      auto _viewport_ci = vk::PipelineViewportStateCreateInfo()
+                              .setPViewports(&_viewport)
+                              .setViewportCount(1)
+                              .setPScissors(&_rect)
+                              .setScissorCount(1);
+      if (!pipeline_create_template.pViewportState) {
+        pipeline_create_template.setPViewportState(&_viewport_ci);
+      }
+      auto _blend_att_state =
+          vk::PipelineColorBlendAttachmentState(false).setColorWriteMask(
+              vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+              vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
+      auto _blend_ci = vk::PipelineColorBlendStateCreateInfo()
+                           .setAttachmentCount(1)
+                           .setLogicOpEnable(false)
+                           .setPAttachments(&_blend_att_state);
+      if (!pipeline_create_template.pColorBlendState) {
+        pipeline_create_template.setPColorBlendState(&_blend_ci);
+      }
+      auto _depth_ci = vk::PipelineDepthStencilStateCreateInfo()
+                           .setDepthTestEnable(false)
+                           .setMaxDepthBounds(1.0f);
+      if (!pipeline_create_template.pDepthStencilState) {
+        pipeline_create_template.setPDepthStencilState(&_depth_ci);
+      }
+      vk::DynamicState dynamic_states[] = {
+          vk::DynamicState::eViewport,
+          vk::DynamicState::eScissor,
+      };
+      auto _dynamic_state =
+          vk::PipelineDynamicStateCreateInfo()
+              .setDynamicStateCount(__ARRAY_SIZE(dynamic_states))
+              .setPDynamicStates(dynamic_states);
+      if (!pipeline_create_template.pDynamicState) {
+        pipeline_create_template.setPDynamicState(&_dynamic_state);
+      }
+      auto _raster_ci = vk::PipelineRasterizationStateCreateInfo()
+                            .setCullMode(vk::CullModeFlagBits::eNone)
+                            .setPolygonMode(vk::PolygonMode::eFill)
+                            .setLineWidth(1.0f);
+      if (!pipeline_create_template.pRasterizationState) {
+        pipeline_create_template.setPRasterizationState(&_raster_ci);
+      }
+      auto _ms_ci =
+          vk::PipelineMultisampleStateCreateInfo().setRasterizationSamples(
+              vk::SampleCountFlagBits::e1);
+      if (!pipeline_create_template.pMultisampleState) {
+        pipeline_create_template.setPMultisampleState(&_ms_ci);
+      }
+      auto _ia_ci = vk::PipelineInputAssemblyStateCreateInfo().setTopology(
+          vk::PrimitiveTopology::eTriangleList);
+      if (!pipeline_create_template.pInputAssemblyState) {
+        pipeline_create_template.setPInputAssemblyState(&_ia_ci);
+      }
 
-            // .setPMultisampleState()
-            // .setPRasterizationState()
-            .setPStages(&stages[0])
-            .setStageCount(stages.size())
-            // .setPTessellationState()
-            .setPVertexInputState(
-                &vk::PipelineVertexInputStateCreateInfo()
-                     .setPVertexAttributeDescriptions(&vertex_attr_desc[0])
-                     .setVertexAttributeDescriptionCount(
-                         vertex_attr_desc.size())
-                     .setPVertexBindingDescriptions(&vertex_bind_desc[0])
-                     .setVertexBindingDescriptionCount(vertex_bind_desc.size()))
+      out.pipeline = device.createGraphicsPipelineUnique(
+          vk::PipelineCache(),
+          pipeline_create_template
+              .setLayout(out.pipeline_layout.get())
 
-    );
+              // .setPMultisampleState()
+              // .setPRasterizationState()
+              .setPStages(&stages[0])
+              .setStageCount(stages.size())
+              // .setPTessellationState()
+              .setPVertexInputState(
+                  &vk::PipelineVertexInputStateCreateInfo()
+                       .setPVertexAttributeDescriptions(&vertex_attr_desc[0])
+                       .setVertexAttributeDescriptionCount(
+                           vertex_attr_desc.size())
+                       .setPVertexBindingDescriptions(&vertex_bind_desc[0])
+                       .setVertexBindingDescriptionCount(
+                           vertex_bind_desc.size()))
 
+      );
+    }
     ASSERT_PANIC(out.pipeline);
     out.bind_point = vk::PipelineBindPoint::eGraphics;
     return out;
@@ -397,17 +457,16 @@ struct Pipeline_Wrapper {
     ASSERT_PANIC(this->resource_slots.find(name) != this->resource_slots.end());
     auto slot = this->resource_slots[name];
 
-    device.updateDescriptorSets(
-        {vk::WriteDescriptorSet()
-             .setDstSet(desc_sets[slot.set].get())
-             .setDstBinding(slot.layout.binding)
-             .setDescriptorCount(1)
-             .setDescriptorType(type)
-             .setPBufferInfo(&vk::DescriptorBufferInfo()
-                                  .setBuffer(buffer)
-                                  .setRange(size)
-                                  .setOffset(origin))},
-        {});
+    device.updateDescriptorSets({vk::WriteDescriptorSet()
+                                     .setDstSet(desc_sets[slot.set].get())
+                                     .setDstBinding(slot.layout.binding)
+                                     .setDescriptorCount(1)
+                                     .setDescriptorType(type)
+                                     .setPBufferInfo(&vk::DescriptorBufferInfo()
+                                                          .setBuffer(buffer)
+                                                          .setRange(size)
+                                                          .setOffset(origin))},
+                                {});
   }
   void update_storage_image_descriptor(vk::Device device,
                                        std::string const &name,

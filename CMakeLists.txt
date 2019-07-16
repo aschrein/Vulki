@@ -47,3 +47,8 @@ add_executable(test_1 tests/test_1.cpp ${SOURCE} ${3RD_SOURCE})
 target_include_directories(test_1 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
 target_link_libraries(test_1 ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(test_1 PRIVATE shaderc_shared)
+
+add_executable(test_2 tests/test_2.cpp ${SOURCE} ${3RD_SOURCE})
+target_include_directories(test_2 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
+target_link_libraries(test_2 ${Vulkan_LIBRARY} ${LIBS})
+target_link_libraries(test_2 PRIVATE shaderc_shared)

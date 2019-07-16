@@ -254,9 +254,9 @@ struct Simulation_State {
     }
   }
   void init_default() {
-    *this = Simulation_State{.rest_length = 0.15f,
-                             .spring_factor = 0.1f,
-                             .repell_factor = 3.0f,
+    *this = Simulation_State{.rest_length = 0.35f,
+                             .spring_factor = 100.f,
+                             .repell_factor = 3.0e-1f,
                              .planar_factor = 10.0f,
                              .bulge_factor = 10.0f,
                              .cell_radius = 0.025f,
@@ -331,8 +331,8 @@ struct Simulation_State {
       vec3 const new_pos_0 = new_particles[i];
       vec3 const old_pos_1 = particles[j];
       vec3 const new_pos_1 = new_particles[j];
-      f32 const dist = rest_length - glm::distance(old_pos_0, old_pos_1);
-      f32 const force = spring_factor * dist;
+      f32 const dist = glm::distance(old_pos_0, old_pos_1);
+      f32 const force = spring_factor * (rest_length - dist) / dist;
       vec3 const vforce = (old_pos_0 - old_pos_1) * (force * dt);
       new_particles[i] = new_pos_0 + vforce;
       new_particles[j] = new_pos_1 - vforce;
@@ -386,7 +386,7 @@ struct Simulation_State {
     {
       u32 i = 0;
       for (auto const &old_pos_0 : particles) {
-        if (rf.uniform(0, birth_rate) == 0 && force_table[i] < 20.0f) {
+        if (rf.uniform(0, birth_rate) == 0 && force_table[i] < 120.0f) {
           new_particles.push_back(old_pos_0 + rf.rand_unit_cube() * 1.0e-3f);
         }
         i++;
