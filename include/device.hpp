@@ -100,6 +100,19 @@ struct Device_Wrapper {
         // Raise the fence
         submit_fence.get());
   }
+  void sumbit_and_flush(vk::CommandBuffer &cmd) {
+    vk::UniqueFence transfer_fence =
+        device->createFenceUnique(vk::FenceCreateInfo());
+    graphics_queue.submit(
+        vk::SubmitInfo(
+            0, nullptr,
+            &vk::PipelineStageFlags(vk::PipelineStageFlagBits::eAllCommands), 1,
+            &cmd),
+        transfer_fence.get());
+    while (vk::Result::eTimeout ==
+           device->waitForFences(transfer_fence.get(), VK_TRUE, 0xffffffffu))
+      ;
+  }
   // @Cleanup
   void flush() {
     if (submit_fence) {
@@ -211,7 +224,8 @@ struct Framebuffer_Wrapper {
     depth_attachment_desc.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     depth_attachment_desc.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     depth_attachment_desc.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depth_attachment_desc.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depth_attachment_desc.initialLayout =
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     depth_attachment_desc.finalLayout =
         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     VkAttachmentDescription attach_descs[] = {attachment,
@@ -261,7 +275,7 @@ struct Framebuffer_Wrapper {
         vk::ClearValue(vk::ClearColorValue().setFloat32({0.0, 0.0, 0.0, 1.0})),
         vk::ClearValue().setDepthStencil(vk::ClearDepthStencilValue(1.0f)),
     };
-    
+
     cmd.beginRenderPass(vk::RenderPassBeginInfo()
                             .setClearValueCount(2)
                             .setPClearValues(clear_value)
@@ -335,7 +349,8 @@ struct Framebuffer_Wrapper {
           vk::DependencyFlagBits::eByRegion, {}, {},
           {vk::ImageMemoryBarrier()
                .setSrcAccessMask(this->cur_access_flags)
-               .setDstAccessMask(vk::AccessFlagBits::eDepthStencilAttachmentWrite)
+               .setDstAccessMask(
+                   vk::AccessFlagBits::eDepthStencilAttachmentWrite)
                .setOldLayout(this->cur_layout)
                .setNewLayout(vk::ImageLayout::eDepthStencilAttachmentOptimal)
                .setSrcQueueFamilyIndex(device.graphics_queue_family_id)
