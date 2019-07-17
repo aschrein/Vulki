@@ -111,6 +111,28 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
   Pipeline_Wrapper links_pipeline;
   Pipeline_Wrapper compute_pipeline_wrapped;
   Gizmo_Layer gizmo_layer{};
+  i32 selected_particle = -1;
+  gizmo_layer.on_click = [&](int button_id) {
+    if (button_id == 0) {
+      selected_particle = -1;
+      float min_dist = 10000000.0f;
+      for (u32 i = 0; i < particle_system.particles.size(); i++) {
+        float radius = rendering_radius;
+        float radius2 = radius * radius;
+        vec3 dr = particle_system.particles[i] - gizmo_layer.camera_pos;
+        float dr_dot_v = glm::dot(dr, gizmo_layer.mouse_ray);
+        float c = dot(dr, dr) - dr_dot_v * dr_dot_v;
+        if (c < radius2) {
+          float t = dr_dot_v - std::sqrt(radius2 - c);
+          if (t < min_dist) {
+            gizmo_layer.gizmo_drag_state.pos = particle_system.particles[i];
+            selected_particle = i;
+            min_dist = t;
+          }
+        }
+      }
+    }
+  };
   auto recreate_resources = [&] {
     compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
         device_wrapper, "../shaders/raymarch.comp.glsl", {{"GROUP_DIM", "16"}});
@@ -329,7 +351,9 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
           particle_system.system_size + debug_grid_flood_radius;
       cpu_frametime_stack.set_value("simulation", __timestamp.end());
     }
-    particle_system.particles[0] = gizmo_layer.gizmo_drag_state.pos;
+    if (selected_particle >= 0)
+      particle_system.particles[selected_particle] =
+          gizmo_layer.gizmo_drag_state.pos;
     Packed_UG packed;
     {
       CPU_timestamp __timestamp;
@@ -531,7 +555,8 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
       cmd.bindVertexBuffers(0, {links_vertex_buffer.buffer}, {0});
       cmd.draw(particle_system.links.size() * 2, 1, 0, 0);
     }
-    gizmo_layer.draw(device_wrapper, cmd);
+    if (selected_particle >= 0)
+      gizmo_layer.draw(device_wrapper, cmd);
     framebuffer_wrapper.end_render_pass(cmd);
     framebuffer_wrapper.transition_layout_to_read(device_wrapper, cmd);
     fullframe_gpu_graph.query_end(cmd, device_wrapper);
