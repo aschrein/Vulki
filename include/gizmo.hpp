@@ -300,7 +300,7 @@ struct Gizmo_Layer {
     example_viewport.offset.y = wpos.y;
     auto wsize = ImGui::GetWindowSize();
     example_viewport.extent.width = wsize.x;
-    float height_diff = 20;
+    float height_diff = 24;
     if (wsize.y < height_diff + 2) {
       example_viewport.extent.height = 2;
     } else {

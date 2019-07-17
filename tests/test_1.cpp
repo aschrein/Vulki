@@ -29,10 +29,8 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
       vk::DynamicState::eViewport,
       vk::DynamicState::eScissor,
   };
-  std::atomic<bool> shaders_updated = false;
-  Simple_Monitor simple_monitor;
-  simple_monitor.monitor("../shaders", shaders_updated);
 
+  Simple_Monitor simple_monitor("../shaders");
   // Some shader data structures
   struct Particle_Vertex {
     vec3 position;
@@ -70,10 +68,12 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
 
   // Rendering state
   // @TODO: Proper serialization with protocol buffers or smth
-  Stack_Plot<3> cpu_frametime_stack{
+  Stack_Plot<7> cpu_frametime_stack{
     name : "CPU frame time",
     max_values : 256,
-    plot_names : {"grid baking", "simulation", "full frame"}
+    plot_names :
+        {"grid baking", "simulation", "buffer update", "descriptor update",
+         "command submit", "recreate resources", "full frame"}
   };
   CPU_Image cpu_time =
       CPU_Image::create(device_wrapper, 256, 128, vk::Format::eR8G8B8A8Unorm);
@@ -333,18 +333,21 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     fullframe_gpu_graph.query_begin(cmd, device_wrapper);
     // Update backbuffer if the viewport size has changed
     bool expected = true;
-    if (shaders_updated.compare_exchange_weak(expected, false) ||
+    if (simple_monitor.is_updated() ||
         framebuffer_wrapper.width !=
             gizmo_layer.example_viewport.extent.width ||
         framebuffer_wrapper.height !=
             gizmo_layer.example_viewport.extent.height) {
+      CPU_timestamp __timestamp;
       recreate_resources();
+      cpu_frametime_stack.set_value("recreate resources", __timestamp.end());
     }
 
     ////////////// SIMULATION //////////////////
     // Perform fixed step iteration on the particle system
     // Fill the uniform grid
     if (simulate) {
+
       CPU_timestamp __timestamp;
       particle_system.step(1.0e-3f);
       rendering_grid_size =
@@ -374,50 +377,50 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     // @TODO: Track usage of the old buffers
     // Right now there is no overlapping of cpu and gpu work
     // With overlapping this will invalidate used buffers
-    compute_ubo_buffer = alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(sizeof(Compute_UBO))
-            .setUsage(vk::BufferUsageFlagBits::eUniformBuffer |
-                      vk::BufferUsageFlagBits::eTransferDst),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-    bins_buffer = alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(sizeof(u32) * packed.arena_table.size())
-            .setUsage(vk::BufferUsageFlagBits::eStorageBuffer |
-                      vk::BufferUsageFlagBits::eTransferDst),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-    particles_buffer = alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(sizeof(f32) * 3 * packed.ids.size())
-            .setUsage(vk::BufferUsageFlagBits::eStorageBuffer |
-                      vk::BufferUsageFlagBits::eTransferDst),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-
-    particle_vertex_buffer = alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(particle_system.particles.size() * sizeof(Particle_Vertex))
-            .setUsage(vk::BufferUsageFlagBits::eVertexBuffer |
-                      vk::BufferUsageFlagBits::eTransferDst |
-                      vk::BufferUsageFlagBits::eTransferSrc),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-    particle_ubo_buffer = alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(sizeof(Particle_UBO))
-            .setUsage(vk::BufferUsageFlagBits::eUniformBuffer |
-                      vk::BufferUsageFlagBits::eTransferDst),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-
-    links_vertex_buffer = alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(particle_system.links.size() * sizeof(Particle_Vertex) * 2)
-            .setUsage(vk::BufferUsageFlagBits::eVertexBuffer |
-                      vk::BufferUsageFlagBits::eTransferDst |
-                      vk::BufferUsageFlagBits::eTransferSrc),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-
-    // Update gpu visible buffers
     {
+      CPU_timestamp __timestamp;
+      compute_ubo_buffer = alloc_state->allocate_buffer(
+          vk::BufferCreateInfo()
+              .setSize(sizeof(Compute_UBO))
+              .setUsage(vk::BufferUsageFlagBits::eUniformBuffer |
+                        vk::BufferUsageFlagBits::eTransferDst),
+          VMA_MEMORY_USAGE_CPU_TO_GPU);
+      bins_buffer = alloc_state->allocate_buffer(
+          vk::BufferCreateInfo()
+              .setSize(sizeof(u32) * packed.arena_table.size())
+              .setUsage(vk::BufferUsageFlagBits::eStorageBuffer |
+                        vk::BufferUsageFlagBits::eTransferDst),
+          VMA_MEMORY_USAGE_CPU_TO_GPU);
+      particles_buffer = alloc_state->allocate_buffer(
+          vk::BufferCreateInfo()
+              .setSize(sizeof(f32) * 3 * packed.ids.size())
+              .setUsage(vk::BufferUsageFlagBits::eStorageBuffer |
+                        vk::BufferUsageFlagBits::eTransferDst),
+          VMA_MEMORY_USAGE_CPU_TO_GPU);
 
+      particle_vertex_buffer = alloc_state->allocate_buffer(
+          vk::BufferCreateInfo()
+              .setSize(particle_system.particles.size() *
+                       sizeof(Particle_Vertex))
+              .setUsage(vk::BufferUsageFlagBits::eVertexBuffer |
+                        vk::BufferUsageFlagBits::eTransferDst |
+                        vk::BufferUsageFlagBits::eTransferSrc),
+          VMA_MEMORY_USAGE_CPU_TO_GPU);
+      particle_ubo_buffer = alloc_state->allocate_buffer(
+          vk::BufferCreateInfo()
+              .setSize(sizeof(Particle_UBO))
+              .setUsage(vk::BufferUsageFlagBits::eUniformBuffer |
+                        vk::BufferUsageFlagBits::eTransferDst),
+          VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+      links_vertex_buffer = alloc_state->allocate_buffer(
+          vk::BufferCreateInfo()
+              .setSize(particle_system.links.size() * sizeof(Particle_Vertex) *
+                       2)
+              .setUsage(vk::BufferUsageFlagBits::eVertexBuffer |
+                        vk::BufferUsageFlagBits::eTransferDst |
+                        vk::BufferUsageFlagBits::eTransferSrc),
+          VMA_MEMORY_USAGE_CPU_TO_GPU);
       {
         void *data = particle_vertex_buffer.map();
         Particle_Vertex *typed_data = (Particle_Vertex *)data;
@@ -492,74 +495,82 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
         *typed_data = tmp_ubo;
         compute_ubo_buffer.unmap();
       }
+      cpu_frametime_stack.set_value("buffer update", __timestamp.end());
     }
     // Update descriptor tables
-    compute_pipeline_wrapped.update_descriptor(
-        device.get(), "Bins", bins_buffer.buffer, 0,
-        sizeof(uint) * packed.arena_table.size(),
-        vk::DescriptorType::eStorageBuffer);
-    compute_pipeline_wrapped.update_descriptor(
-        device.get(), "Particles", particles_buffer.buffer, 0,
-        sizeof(float) * 3 * packed.ids.size());
-    compute_pipeline_wrapped.update_descriptor(
-        device.get(), "UBO", compute_ubo_buffer.buffer, 0, sizeof(Compute_UBO),
-        vk::DescriptorType::eUniformBuffer);
-    particles_pipeline.update_descriptor(
-        device.get(), "UBO", particle_ubo_buffer.buffer, 0,
-        sizeof(Particle_UBO), vk::DescriptorType::eUniformBuffer);
-    links_pipeline.update_descriptor(
-        device.get(), "UBO", particle_ubo_buffer.buffer, 0,
-        sizeof(Particle_UBO), vk::DescriptorType::eUniformBuffer);
-    compute_pipeline_wrapped.update_storage_image_descriptor(
-        device.get(), "resultImage", storage_image_wrapper.image_view.get());
-
+    {
+      CPU_timestamp __timestamp;
+      compute_pipeline_wrapped.update_descriptor(
+          device.get(), "Bins", bins_buffer.buffer, 0,
+          sizeof(uint) * packed.arena_table.size(),
+          vk::DescriptorType::eStorageBuffer);
+      compute_pipeline_wrapped.update_descriptor(
+          device.get(), "Particles", particles_buffer.buffer, 0,
+          sizeof(float) * 3 * packed.ids.size());
+      compute_pipeline_wrapped.update_descriptor(
+          device.get(), "UBO", compute_ubo_buffer.buffer, 0,
+          sizeof(Compute_UBO), vk::DescriptorType::eUniformBuffer);
+      particles_pipeline.update_descriptor(
+          device.get(), "UBO", particle_ubo_buffer.buffer, 0,
+          sizeof(Particle_UBO), vk::DescriptorType::eUniformBuffer);
+      links_pipeline.update_descriptor(
+          device.get(), "UBO", particle_ubo_buffer.buffer, 0,
+          sizeof(Particle_UBO), vk::DescriptorType::eUniformBuffer);
+      compute_pipeline_wrapped.update_storage_image_descriptor(
+          device.get(), "resultImage", storage_image_wrapper.image_view.get());
+      cpu_frametime_stack.set_value("descriptor update", __timestamp.end());
+    }
     /*------------------------------*/
     /* Spawn the raymarching kernel */
     /*------------------------------*/
-    if (render_raymarch) {
-      raymarch_timestamp_graph.push_value(device_wrapper);
-      storage_image_wrapper.transition_layout_to_write(device_wrapper, cmd);
-      compute_pipeline_wrapped.bind_pipeline(device.get(), cmd);
-      raymarch_timestamp_graph.query_begin(cmd, device_wrapper);
-      cmd.dispatch((gizmo_layer.example_viewport.extent.width + 15) / 16,
-                   (gizmo_layer.example_viewport.extent.height + 15) / 16, 1);
-      raymarch_timestamp_graph.query_end(cmd, device_wrapper);
-      storage_image_wrapper.transition_layout_to_read(device_wrapper, cmd);
-    }
-    /*----------------------------------*/
-    /* Update the offscreen framebuffer */
-    /*----------------------------------*/
-    framebuffer_wrapper.transition_layout_to_write(device_wrapper, cmd);
-    framebuffer_wrapper.begin_render_pass(cmd);
-    cmd.setViewport(
-        0,
-        {vk::Viewport(0, 0, gizmo_layer.example_viewport.extent.width,
-                      gizmo_layer.example_viewport.extent.height, 0.0f, 1.0f)});
-    cmd.setScissor(0, {{{0, 0},
-                        {gizmo_layer.example_viewport.extent.width,
-                         gizmo_layer.example_viewport.extent.height}}});
-    if (render_raymarch) {
-      fullscreen_pipeline.bind_pipeline(device.get(), cmd);
-      fullscreen_pipeline.update_sampled_image_descriptor(
-          device.get(), "tex", storage_image_wrapper.image_view.get(),
-          sampler.get());
+    {
+      CPU_timestamp __timestamp;
+      if (render_raymarch) {
+        raymarch_timestamp_graph.push_value(device_wrapper);
+        storage_image_wrapper.transition_layout_to_write(device_wrapper, cmd);
+        compute_pipeline_wrapped.bind_pipeline(device.get(), cmd);
+        raymarch_timestamp_graph.query_begin(cmd, device_wrapper);
+        cmd.dispatch((gizmo_layer.example_viewport.extent.width + 15) / 16,
+                     (gizmo_layer.example_viewport.extent.height + 15) / 16, 1);
+        raymarch_timestamp_graph.query_end(cmd, device_wrapper);
+        storage_image_wrapper.transition_layout_to_read(device_wrapper, cmd);
+      }
+      /*----------------------------------*/
+      /* Update the offscreen framebuffer */
+      /*----------------------------------*/
+      framebuffer_wrapper.transition_layout_to_write(device_wrapper, cmd);
+      framebuffer_wrapper.begin_render_pass(cmd);
+      cmd.setViewport(
+          0, {vk::Viewport(0, 0, gizmo_layer.example_viewport.extent.width,
+                           gizmo_layer.example_viewport.extent.height, 0.0f,
+                           1.0f)});
+      cmd.setScissor(0, {{{0, 0},
+                          {gizmo_layer.example_viewport.extent.width,
+                           gizmo_layer.example_viewport.extent.height}}});
+      if (render_raymarch) {
+        fullscreen_pipeline.bind_pipeline(device.get(), cmd);
+        fullscreen_pipeline.update_sampled_image_descriptor(
+            device.get(), "tex", storage_image_wrapper.image_view.get(),
+            sampler.get());
 
-      cmd.draw(3, 1, 0, 0);
-    }
-    if (render_wire) {
-      particles_pipeline.bind_pipeline(device.get(), cmd);
-      cmd.bindVertexBuffers(0, {particle_vertex_buffer.buffer}, {0});
-      cmd.draw(particle_system.particles.size(), 1, 0, 0);
+        cmd.draw(3, 1, 0, 0);
+      }
+      if (render_wire) {
+        particles_pipeline.bind_pipeline(device.get(), cmd);
+        cmd.bindVertexBuffers(0, {particle_vertex_buffer.buffer}, {0});
+        cmd.draw(particle_system.particles.size(), 1, 0, 0);
 
-      links_pipeline.bind_pipeline(device.get(), cmd);
-      cmd.bindVertexBuffers(0, {links_vertex_buffer.buffer}, {0});
-      cmd.draw(particle_system.links.size() * 2, 1, 0, 0);
+        links_pipeline.bind_pipeline(device.get(), cmd);
+        cmd.bindVertexBuffers(0, {links_vertex_buffer.buffer}, {0});
+        cmd.draw(particle_system.links.size() * 2, 1, 0, 0);
+      }
+      if (selected_particle >= 0)
+        gizmo_layer.draw(device_wrapper, cmd);
+      framebuffer_wrapper.end_render_pass(cmd);
+      framebuffer_wrapper.transition_layout_to_read(device_wrapper, cmd);
+      fullframe_gpu_graph.query_end(cmd, device_wrapper);
+      cpu_frametime_stack.set_value("command submit", __timestamp.end());
     }
-    if (selected_particle >= 0)
-      gizmo_layer.draw(device_wrapper, cmd);
-    framebuffer_wrapper.end_render_pass(cmd);
-    framebuffer_wrapper.transition_layout_to_read(device_wrapper, cmd);
-    fullframe_gpu_graph.query_end(cmd, device_wrapper);
     cpu_frametime_stack.set_value("full frame", __full_frame.end());
     cpu_frametime_stack.push_value();
   };
@@ -601,7 +612,11 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     ImGui::End();
 
     ImGui::SetNextWindowBgAlpha(-1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::Begin("dummy window");
+    ImGui::PopStyleVar(3);
 
     gizmo_layer.on_imgui_viewport();
     ImGui::Image(ImGui_ImplVulkan_AddTexture(
@@ -696,6 +711,17 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
             }
           }
         }
+      }
+      auto int_to_color = [](u32 color) {
+        return ImVec4(float((color >> 24) & 0xff) / 255.0f,
+                      float((color >> 16) & 0xff) / 255.0f,
+                      float((color >> 8) & 0xff) / 255.0f,
+                      float((color >> 0) & 0xff) / 255.0f);
+      };
+      for (auto const &item : cpu_frametime_stack.legend) {
+        ImGui::SameLine();
+        ImGui::ColorButton(item.first.c_str(),
+                           int_to_color(colors[item.second]));
       }
       cpu_time.image.unmap();
     }

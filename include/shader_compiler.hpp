@@ -135,12 +135,12 @@ Shader_Parsed create_shader_module(
     break;
   }
   }
-  {
-    auto shader_assembly =
-        compile_file_to_assembly(source_name, kind, shader_text, defines);
-    std::ofstream out(source_name + ".spv.txt");
-    out << shader_assembly;
-  }
+  // {
+  //   auto shader_assembly =
+  //       compile_file_to_assembly(source_name, kind, shader_text, defines);
+  //   std::ofstream out(source_name + ".spv.txt");
+  //   out << shader_assembly;
+  // }
   auto shader_code = compile_file(source_name, kind, shader_text, defines);
   // parse_descriptors(shader_code);
   Shader_Parsed out;

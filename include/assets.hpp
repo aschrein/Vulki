@@ -1,7 +1,9 @@
 #pragma once
 #include <iostream>
+
 #include "dir_monitor/include/dir_monitor/dir_monitor.hpp"
 #include <boost/thread.hpp>
+
 
 static void dir_event_handler(boost::asio::dir_monitor &dm,
                               std::atomic<bool> &updated,
@@ -19,18 +21,19 @@ struct Simple_Monitor {
   boost::asio::io_service io_service;
   boost::asio::dir_monitor dm;
   boost::thread dm_thread;
-  Simple_Monitor() : dm(io_service) {}
-  void monitor(std::string const &folder, std::atomic<bool> &updated) {
+  std::atomic<bool> updated = false;
+  Simple_Monitor(std::string const &folder) : dm(io_service) {
 
     dm.add_directory(folder);
-
     dm.async_monitor([&](const boost::system::error_code &ec,
                          const boost::asio::dir_monitor_event &ev) {
       dir_event_handler(dm, updated, ec, ev);
     });
-
     dm_thread = boost::thread(
         boost::bind(&boost::asio::io_service::run, boost::ref(io_service)));
-    dm_thread.detach();
+  }
+  bool is_updated() {
+    bool expected = true;
+    return updated.compare_exchange_weak(expected, false);
   }
 };
