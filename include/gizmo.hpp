@@ -47,6 +47,7 @@ struct Raw_Mesh_3p16i_Wrapper {
 
 struct Gizmo_Drag_State {
   RAW_MOVABLE(Gizmo_Drag_State)
+  float size = 1.0f;
   vec3 pos;
   bool selected;
   bool selected_axis[3];
@@ -119,14 +120,14 @@ struct Gizmo_Drag_State {
   void draw(Device_Wrapper &device_wrapper, vk::CommandBuffer &cmd,
             mat4 const &view, mat4 const &proj) {
     std::vector<Gizmo_Instance_Data_CPU> gizmo_instances = {
-        {vec3(1.0f, 0.0f, 0.0f), 0.2f, vec3(1.0f, 0.0f, 0.0f)},
-        {vec3(0.0f, 1.0f, 0.0f), 0.2f, vec3(0.0f, 1.0f, 0.0f)},
-        {vec3(0.0f, 0.0f, 1.0f), 0.2f, vec3(0.0f, 0.0f, 1.0f)},
-        {vec3(0.0f, 0.0f, 0.0f), 1.0f, vec3(1.0f, 0.0f, 0.0f),
+        {size * vec3(1.0f, 0.0f, 0.0f), size * 0.2f, vec3(1.0f, 0.0f, 0.0f)},
+        {size * vec3(0.0f, 1.0f, 0.0f), size * 0.2f, vec3(0.0f, 1.0f, 0.0f)},
+        {size * vec3(0.0f, 0.0f, 1.0f), size * 0.2f, vec3(0.0f, 0.0f, 1.0f)},
+        {vec3(0.0f, 0.0f, 0.0f), size * 1.0f, vec3(1.0f, 0.0f, 0.0f),
          vec3(0.0f, 0.0f, 0.0f)},
-        {vec3(0.0f, 0.0f, 0.0f), 1.0f, vec3(0.0f, 1.0f, 0.0f),
+        {vec3(0.0f, 0.0f, 0.0f), size * 1.0f, vec3(0.0f, 1.0f, 0.0f),
          vec3(0.0f, 0.0f, M_PI_2)},
-        {vec3(0.0f, 0.0f, 0.0f), 1.0f, vec3(0.0f, 0.0f, 1.0f),
+        {vec3(0.0f, 0.0f, 0.0f), size * 1.0f, vec3(0.0f, 0.0f, 1.0f),
          vec3(0.0f, -M_PI_2, 0.0f)},
     };
     {
@@ -194,16 +195,17 @@ struct Gizmo_Drag_State {
     return closest_point[selected_axis_id];
   }
   void on_mouse_move(vec3 const &ray_origin, vec3 const &ray_dir) {
+    size = distance(pos, ray_origin) / 8;
     vec3 sphere_pos[] = {
-        pos + vec3(1.0f, 0.0f, 0.0f),
-        pos + vec3(0.0f, 1.0f, 0.0f),
-        pos + vec3(0.0f, 0.0f, 1.0f),
+        pos + size * vec3(1.0f, 0.0f, 0.0f),
+        pos + size * vec3(0.0f, 1.0f, 0.0f),
+        pos + size * vec3(0.0f, 0.0f, 1.0f),
     };
     hovered_axis[0] = false;
     hovered_axis[1] = false;
     hovered_axis[2] = false;
     for (u32 i = 0; i < 3; i++) {
-      float radius = 0.2f;
+      float radius = size * 0.2f;
       float radius2 = radius * radius;
       vec3 dr = sphere_pos[i] - ray_origin;
       float dr_dot_v = glm::dot(dr, ray_dir);
@@ -221,14 +223,14 @@ struct Gizmo_Drag_State {
   bool on_mouse_click(vec3 const &ray_origin, vec3 const &ray_dir) {
     on_mouse_release();
     vec3 sphere_pos[] = {
-        pos + vec3(1.0f, 0.0f, 0.0f),
-        pos + vec3(0.0f, 1.0f, 0.0f),
-        pos + vec3(0.0f, 0.0f, 1.0f),
+        pos + size * vec3(1.0f, 0.0f, 0.0f),
+        pos + size * vec3(0.0f, 1.0f, 0.0f),
+        pos + size * vec3(0.0f, 0.0f, 1.0f),
     };
     float min_dist = 10000000.0f;
 
     for (u32 i = 0; i < 3; i++) {
-      float radius = 0.2f;
+      float radius = size * 0.2f;
       float radius2 = radius * radius;
       vec3 dr = sphere_pos[i] - ray_origin;
       float dr_dot_v = glm::dot(dr, ray_dir);
@@ -262,11 +264,19 @@ struct Gizmo_Layer {
   float camera_theta = M_PI / 2.0f;
   float camera_distance = 10.0f;
   float mx = 0.0f, my = 0.0f;
+
+  ImVec2 old_mpos{};
+  float old_cpa{};
+  bool mouse_last_down = false;
+
   vec3 camera_pos;
+  mat4 camera_view;
+  mat4 camera_proj;
   vec3 camera_look;
   vec3 camera_right;
   vec3 camera_up;
   vec3 mouse_ray;
+  std::function<void(int)> on_click;
   // Viewport for this sample's rendering
   vk::Rect2D example_viewport = vk::Rect2D({0, 0}, {32, 32});
 
@@ -277,14 +287,8 @@ struct Gizmo_Layer {
     gizmo_drag_state.init_vulkan_state(device_wrapper, render_pass);
   }
   void draw(Device_Wrapper &device_wrapper, vk::CommandBuffer &cmd) {
-    mat4 proj =
-        glm::perspective(float(M_PI) / 2.0f,
-                         float(example_viewport.extent.width) /
-                             example_viewport.extent.height,
-                         1.0e-1f, 1.0e2f);
-    mat4 view = glm::lookAt(camera_pos, vec3(0.0f, 0.0f, 0.0f),
-                            vec3(0.0f, 0.0f, 1.0f));
-    gizmo_drag_state.draw(device_wrapper, cmd, view, proj);
+
+    gizmo_drag_state.draw(device_wrapper, cmd, camera_view, camera_proj);
   }
 
   void on_imgui_viewport() {
@@ -317,13 +321,17 @@ struct Gizmo_Layer {
                   camera_right * mx * float(example_viewport.extent.width) /
                       example_viewport.extent.height +
                   camera_up * my);
+    camera_proj = glm::perspective(float(M_PI) / 2.0f,
+                                   float(example_viewport.extent.width) /
+                                       example_viewport.extent.height,
+                                   1.0e-1f, 1.0e2f);
+    camera_view =
+        glm::lookAt(camera_pos, vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, 1.0f));
     if (ImGui::GetIO().MouseReleased[0]) {
       gizmo_drag_state.on_mouse_release();
     }
     if (ImGui::IsWindowHovered()) {
-      static ImVec2 old_mpos{};
-      static float old_cpa{};
-      static bool mouse_last_down = false;
+
       auto eps = 1.0e-4f;
       auto mpos = ImGui::GetMousePos();
       auto cr = ImGui::GetWindowContentRegionMax();
@@ -336,7 +344,9 @@ struct Gizmo_Layer {
       gizmo_drag_state.on_mouse_move(camera_pos, mouse_ray);
       if (ImGui::GetIO().MouseDown[0]) {
         if (!mouse_last_down) {
-          if (gizmo_drag_state.on_mouse_click(camera_pos, mouse_ray)) {
+          if (!gizmo_drag_state.on_mouse_click(camera_pos, mouse_ray) &&
+              on_click) {
+            on_click(0);
           }
         }
 

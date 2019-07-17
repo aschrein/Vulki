@@ -1,7 +1,10 @@
+#include "../include/assets.hpp"
 #include "../include/device.hpp"
 #include "../include/error_handling.hpp"
+#include "../include/gizmo.hpp"
 #include "../include/memory.hpp"
 #include "../include/particle_sim.hpp"
+#include "../include/profiling.hpp"
 #include "../include/shader_compiler.hpp"
 
 #include "../include/random.hpp"
@@ -9,9 +12,8 @@
 
 #include "examples/imgui_impl_vulkan.h"
 
-#include "dir_monitor/include/dir_monitor/dir_monitor.hpp"
 #include "gtest/gtest.h"
-#include <boost/thread.hpp>
+
 #include <chrono>
 #include <cstring>
 
@@ -20,144 +22,6 @@
 #include <glm/glm.hpp>
 using namespace glm;
 
-template <int N> struct Time_Stack { f32 vals[N]; };
-template <int N> struct Stack_Plot {
-  std::string name;
-  u32 max_values;
-  std::vector<std::string> plot_names;
-
-  std::unordered_map<std::string, u32> legend;
-  Time_Stack<N> tmp_value;
-  std::vector<Time_Stack<N>> values;
-  void set_value(std::string const &name, f32 val) {
-    if (legend.size() == 0) {
-      u32 id = 0;
-      for (auto const &name : plot_names) {
-        legend[name] = id++;
-      }
-    }
-    ASSERT_PANIC(legend.find(name) != legend.end());
-    u32 id = legend[name];
-    tmp_value.vals[id] = val;
-  }
-  void push_value() {
-    if (values.size() == max_values) {
-      for (int i = 0; i < max_values - 1; i++) {
-        values[i] = values[i + 1];
-      }
-      values[max_values - 1] = tmp_value;
-    } else {
-      values.push_back(tmp_value);
-    }
-    tmp_value = {};
-  }
-};
-
-struct CPU_timestamp {
-  std::chrono::high_resolution_clock::time_point frame_begin_timestamp;
-  CPU_timestamp() {
-    frame_begin_timestamp = std::chrono::high_resolution_clock::now();
-  }
-  f32 end() {
-    auto frame_end_timestamp = std::chrono::high_resolution_clock::now();
-    auto frame_cpu_delta_ns =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            frame_end_timestamp - frame_begin_timestamp)
-            .count();
-    return f32(frame_cpu_delta_ns) / 1000;
-  }
-};
-
-struct Plot_Internal {
-  std::string name;
-  u32 max_values;
-  std::vector<f32> values;
-  std::chrono::high_resolution_clock::time_point frame_begin_timestamp;
-  void cpu_timestamp_begin() {
-    frame_begin_timestamp = std::chrono::high_resolution_clock::now();
-  }
-  void cpu_timestamp_end() {
-    auto frame_end_timestamp = std::chrono::high_resolution_clock::now();
-    auto frame_cpu_delta_ns =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            frame_end_timestamp - frame_begin_timestamp)
-            .count();
-    push_value(f32(frame_cpu_delta_ns) / 1000);
-  }
-  void push_value(f32 value) {
-    if (values.size() == max_values) {
-      for (int i = 0; i < max_values - 1; i++) {
-        values[i] = values[i + 1];
-      }
-      values[max_values - 1] = value;
-    } else {
-      values.push_back(value);
-    }
-  }
-  void draw() {
-    if (values.size() == 0)
-      return;
-    ImGui::PlotLines(name.c_str(), &values[0], values.size(), 0, NULL, FLT_MAX,
-                     FLT_MAX, ImVec2(0, 100));
-    ImGui::SameLine();
-    ImGui::Text("%-3.1fuS", values[values.size() - 1]);
-  }
-};
-
-struct Timestamp_Plot_Wrapper {
-  std::string name;
-  // 2 slots are needed
-  u32 query_begin_id;
-  u32 max_values;
-  //
-  bool timestamp_requested = false;
-  Plot_Internal plot;
-  void query_begin(vk::CommandBuffer &cmd, Device_Wrapper &device_wrapper) {
-    cmd.resetQueryPool(device_wrapper.timestamp.pool.get(), query_begin_id, 2);
-    cmd.writeTimestamp(vk::PipelineStageFlagBits::eAllCommands,
-                       device_wrapper.timestamp.pool.get(), query_begin_id);
-  }
-  void query_end(vk::CommandBuffer &cmd, Device_Wrapper &device_wrapper) {
-    cmd.writeTimestamp(vk::PipelineStageFlagBits::eAllCommands,
-                       device_wrapper.timestamp.pool.get(), query_begin_id + 1);
-    timestamp_requested = true;
-  }
-  void push_value(Device_Wrapper &device_wrapper) {
-    if (timestamp_requested) {
-      u64 query_results[] = {0, 0};
-      device_wrapper.device->getQueryPoolResults(
-          device_wrapper.timestamp.pool.get(), query_begin_id, 2,
-          2 * sizeof(u64), (void *)query_results, sizeof(u64),
-          vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
-      u64 begin_ns = device_wrapper.timestamp.convert_to_ns(query_results[0]);
-      u64 end_ns = device_wrapper.timestamp.convert_to_ns(query_results[1]);
-      u64 diff_ns = end_ns - begin_ns;
-      f32 us = f32(diff_ns) / 1000;
-      timestamp_requested = false;
-      plot.push_value(us);
-    }
-  }
-  void draw() {
-    plot.name = this->name;
-    plot.max_values = this->max_values;
-    plot.draw();
-  }
-};
-
-boost::asio::io_service io_service;
-
-std::atomic<bool> shaders_updated = false;
-void dir_event_handler(boost::asio::dir_monitor &dm,
-                       const boost::system::error_code &ec,
-                       const boost::asio::dir_monitor_event &ev) {
-  if (ev.type == boost::asio::dir_monitor_event::event_type::modified)
-    shaders_updated = true;
-  dm.async_monitor([&](const boost::system::error_code &ec,
-                       const boost::asio::dir_monitor_event &ev) {
-    dir_event_handler(dm, ec, ev);
-  });
-}
-
 TEST(graphics, vulkan_graphics_shader_test_4) {
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;
@@ -165,21 +29,9 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
       vk::DynamicState::eViewport,
       vk::DynamicState::eScissor,
   };
-  // Raymarching kernel
-  boost::asio::dir_monitor dm(io_service);
-  dm.add_directory("../shaders");
-  //
-  // dm.async_monitor(blocked_async_call_handler_with_local_ioservice);
-  // io_service.run();
-
-  dm.async_monitor([&](const boost::system::error_code &ec,
-                       const boost::asio::dir_monitor_event &ev) {
-    dir_event_handler(dm, ec, ev);
-  });
-
-  boost::asio::io_service::work workload(io_service);
-  boost::thread dm_thread = boost::thread(
-      boost::bind(&boost::asio::io_service::run, boost::ref(io_service)));
+  std::atomic<bool> shaders_updated = false;
+  Simple_Monitor simple_monitor;
+  simple_monitor.monitor("../shaders", shaders_updated);
 
   // Some shader data structures
   struct Particle_Vertex {
@@ -207,8 +59,6 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     mat4 view;
     mat4 proj;
   };
-  // Viewport for this sample's rendering
-  vk::Rect2D example_viewport({0, 0}, {32, 32});
   ///////////////////////////
   // Particle system state //
   ///////////////////////////
@@ -260,15 +110,20 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
   Pipeline_Wrapper particles_pipeline;
   Pipeline_Wrapper links_pipeline;
   Pipeline_Wrapper compute_pipeline_wrapped;
+  Gizmo_Layer gizmo_layer{};
   auto recreate_resources = [&] {
     compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
-      device_wrapper, "../shaders/raymarch.comp.glsl", {{"GROUP_DIM", "16"}});
+        device_wrapper, "../shaders/raymarch.comp.glsl", {{"GROUP_DIM", "16"}});
     framebuffer_wrapper = Framebuffer_Wrapper::create(
-        device_wrapper, example_viewport.extent.width,
-        example_viewport.extent.height, vk::Format::eR32G32B32A32Sfloat);
+        device_wrapper, gizmo_layer.example_viewport.extent.width,
+        gizmo_layer.example_viewport.extent.height,
+        vk::Format::eR32G32B32A32Sfloat);
     storage_image_wrapper = Storage_Image_Wrapper::create(
-        device_wrapper, example_viewport.extent.width,
-        example_viewport.extent.height, vk::Format::eR32G32B32A32Sfloat);
+        device_wrapper, gizmo_layer.example_viewport.extent.width,
+        gizmo_layer.example_viewport.extent.height,
+        vk::Format::eR32G32B32A32Sfloat);
+    gizmo_layer.init_vulkan_state(device_wrapper,
+                                  framebuffer_wrapper.render_pass.get());
     // @TODO: Squash all this pipeline creation boilerplate
     // Fullscreen pass
     fullscreen_pipeline = Pipeline_Wrapper::create_graphics(
@@ -439,13 +294,6 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
            device->waitForFences(transfer_fence.get(), VK_TRUE, 0xffffffffu))
       ;
   }
-  //
-  //////////////////
-  // Camera state //
-  //////////////////
-  float camera_phi = 0.0;
-  float camera_theta = M_PI / 2.0f;
-  float camera_distance = 10.0f;
 
   //////////////////////
   // Render offscreen //
@@ -464,8 +312,10 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     // Update backbuffer if the viewport size has changed
     bool expected = true;
     if (shaders_updated.compare_exchange_weak(expected, false) ||
-        framebuffer_wrapper.width != example_viewport.extent.width ||
-        framebuffer_wrapper.height != example_viewport.extent.height) {
+        framebuffer_wrapper.width !=
+            gizmo_layer.example_viewport.extent.width ||
+        framebuffer_wrapper.height !=
+            gizmo_layer.example_viewport.extent.height) {
       recreate_resources();
     }
 
@@ -479,6 +329,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
           particle_system.system_size + debug_grid_flood_radius;
       cpu_frametime_stack.set_value("simulation", __timestamp.end());
     }
+    particle_system.particles[0] = gizmo_layer.gizmo_drag_state.pos;
     Packed_UG packed;
     {
       CPU_timestamp __timestamp;
@@ -542,10 +393,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
 
     // Update gpu visible buffers
     {
-      vec3 camera_pos =
-          vec3(sinf(camera_theta) * cosf(camera_phi),
-               sinf(camera_theta) * sinf(camera_phi), cos(camera_theta)) *
-          camera_distance;
+
       {
         void *data = particle_vertex_buffer.map();
         Particle_Vertex *typed_data = (Particle_Vertex *)data;
@@ -570,12 +418,8 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
         void *data = particle_ubo_buffer.map();
         Particle_UBO *typed_data = (Particle_UBO *)data;
         Particle_UBO tmp_ubo;
-        tmp_ubo.proj = glm::perspective(float(M_PI) / 2.0f,
-                                        float(example_viewport.extent.width) /
-                                            example_viewport.extent.height,
-                                        1.0e-3f, 1.0e2f);
-        tmp_ubo.view = glm::lookAt(camera_pos, vec3(0.0f, 0.0f, 0.0f),
-                                   vec3(0.0f, 0.0f, 1.0f));
+        tmp_ubo.proj = gizmo_layer.camera_proj;
+        tmp_ubo.view = gizmo_layer.camera_view;
         tmp_ubo.world = glm::mat4(0.5f);
         *typed_data = tmp_ubo;
         particle_ubo_buffer.unmap();
@@ -603,11 +447,11 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
         void *data = compute_ubo_buffer.map();
         Compute_UBO *typed_data = (Compute_UBO *)data;
         Compute_UBO tmp_ubo;
-        tmp_ubo.camera_fov = float(example_viewport.extent.width) /
-                             example_viewport.extent.height;
+        tmp_ubo.camera_fov = float(gizmo_layer.example_viewport.extent.width) /
+                             gizmo_layer.example_viewport.extent.height;
 
-        tmp_ubo.camera_pos = camera_pos;
-        tmp_ubo.camera_look = normalize(-camera_pos);
+        tmp_ubo.camera_pos = gizmo_layer.camera_pos;
+        tmp_ubo.camera_look = normalize(-gizmo_layer.camera_pos);
         tmp_ubo.camera_right =
             normalize(cross(tmp_ubo.camera_look, vec3(0.0f, 0.0f, 1.0f)));
         tmp_ubo.camera_up =
@@ -653,8 +497,8 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
       storage_image_wrapper.transition_layout_to_write(device_wrapper, cmd);
       compute_pipeline_wrapped.bind_pipeline(device.get(), cmd);
       raymarch_timestamp_graph.query_begin(cmd, device_wrapper);
-      cmd.dispatch((example_viewport.extent.width + 15) / 16,
-                   (example_viewport.extent.height + 15) / 16, 1);
+      cmd.dispatch((gizmo_layer.example_viewport.extent.width + 15) / 16,
+                   (gizmo_layer.example_viewport.extent.height + 15) / 16, 1);
       raymarch_timestamp_graph.query_end(cmd, device_wrapper);
       storage_image_wrapper.transition_layout_to_read(device_wrapper, cmd);
     }
@@ -663,12 +507,13 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     /*----------------------------------*/
     framebuffer_wrapper.transition_layout_to_write(device_wrapper, cmd);
     framebuffer_wrapper.begin_render_pass(cmd);
-    cmd.setViewport(0,
-                    {vk::Viewport(0, 0, example_viewport.extent.width,
-                                  example_viewport.extent.height, 0.0f, 1.0f)});
-    cmd.setScissor(
-        0, {{{0, 0},
-             {example_viewport.extent.width, example_viewport.extent.height}}});
+    cmd.setViewport(
+        0,
+        {vk::Viewport(0, 0, gizmo_layer.example_viewport.extent.width,
+                      gizmo_layer.example_viewport.extent.height, 0.0f, 1.0f)});
+    cmd.setScissor(0, {{{0, 0},
+                        {gizmo_layer.example_viewport.extent.width,
+                         gizmo_layer.example_viewport.extent.height}}});
     if (render_raymarch) {
       fullscreen_pipeline.bind_pipeline(device.get(), cmd);
       fullscreen_pipeline.update_sampled_image_descriptor(
@@ -686,6 +531,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
       cmd.bindVertexBuffers(0, {links_vertex_buffer.buffer}, {0});
       cmd.draw(particle_system.links.size() * 2, 1, 0, 0);
     }
+    gizmo_layer.draw(device_wrapper, cmd);
     framebuffer_wrapper.end_render_pass(cmd);
     framebuffer_wrapper.transition_layout_to_read(device_wrapper, cmd);
     fullframe_gpu_graph.query_end(cmd, device_wrapper);
@@ -732,60 +578,13 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     ImGui::SetNextWindowBgAlpha(-1.0f);
     ImGui::Begin("dummy window");
 
-    /*---------------------------------------*/
-    /* Update the viewport for the rendering */
-    /*---------------------------------------*/
-    auto wpos = ImGui::GetWindowPos();
-    example_viewport.offset.x = wpos.x;
-    example_viewport.offset.y = wpos.y;
-    auto wsize = ImGui::GetWindowSize();
-    example_viewport.extent.width = wsize.x;
-    float height_diff = 40;
-    if (wsize.y < height_diff) {
-      example_viewport.extent.height = 1;
-
-    } else {
-      example_viewport.extent.height = wsize.y - height_diff;
-    }
-    /*-------------------*/
-    /* Update the camera */
-    /*-------------------*/
-    if (ImGui::IsWindowHovered()) {
-      static ImVec2 old_mpos{};
-      auto eps = 1.0e-4f;
-      auto mpos = ImGui::GetMousePos();
-      if (ImGui::GetIO().MouseDown[0]) {
-        if (mpos.x != old_mpos.x || mpos.y != old_mpos.y) {
-          auto dx = mpos.x - old_mpos.x;
-          auto dy = mpos.y - old_mpos.y;
-
-          camera_phi -= dx * 1.0e-2f;
-          camera_theta -= dy * 1.0e-2f;
-          if (camera_phi > M_PI * 2.0f) {
-            camera_phi -= M_PI * 2.0f;
-          } else if (camera_phi < 0.0f) {
-            camera_phi += M_PI * 2.0;
-          }
-          if (camera_theta > M_PI - eps) {
-            camera_theta = M_PI - eps;
-          } else if (camera_theta < eps) {
-            camera_theta = eps;
-          }
-        }
-      }
-      old_mpos = mpos;
-      auto scroll_y = ImGui::GetIO().MouseWheel;
-      camera_distance += camera_distance * 1.e-1 * scroll_y;
-      camera_distance = clamp(camera_distance, eps, 100.0f);
-    }
-    // ImGui::Button("Press me");
-
-    ImGui::Image(
-        ImGui_ImplVulkan_AddTexture(
-            sampler.get(), framebuffer_wrapper.image_view.get(),
-            VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
-        ImVec2(example_viewport.extent.width, example_viewport.extent.height),
-        ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+    gizmo_layer.on_imgui_viewport();
+    ImGui::Image(ImGui_ImplVulkan_AddTexture(
+                     sampler.get(), framebuffer_wrapper.image_view.get(),
+                     VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+                 ImVec2(gizmo_layer.example_viewport.extent.width,
+                        gizmo_layer.example_viewport.extent.height),
+                 ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
 
     ImGui::End();
     ImGui::ShowDemoWindow(&show_demo);
