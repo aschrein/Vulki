@@ -86,16 +86,17 @@ vec3 eval_norm(vec3 pos, uint item_start, uint item_end) {
 }
 
 bool iterate(vec3 ray_dir, vec3 ray_invdir, vec3 camera_pos, float hit_min,
-             float hit_max, out uint iter, out vec3 out_val) {
-  vec3 ray_origin = camera_pos + ray_dir * hit_min;
+             float hit_max, out uint iter, out vec3 hit_normal,
+             out vec3 hit_pos) {
+  hit_pos = camera_pos + ray_dir * hit_min;
   ivec3 exit, step, cell_id;
   vec3 axis_delta, axis_distance;
   for (uint i = 0; i < 3; ++i) {
     // convert ray starting point to cell_id coordinates
-    float ray_offset = ray_origin[i] + g_ubo.ug_size;
+    float ray_offset = hit_pos[i] + g_ubo.ug_size;
     cell_id[i] = int(clamp(floor(ray_offset / g_ubo.ug_bin_size), 0,
                            float(g_ubo.ug_bins_count) - 1.0));
-    // out_val[i] = cell_id[i];
+    // hit_normal[i] = cell_id[i];
     if (ray_dir[i] < 0) {
       axis_delta[i] = -g_ubo.ug_bin_size * ray_invdir[i];
       axis_distance[i] =
@@ -111,7 +112,7 @@ bool iterate(vec3 ray_dir, vec3 ray_invdir, vec3 camera_pos, float hit_min,
     }
   }
   iter = 0;
-  out_val = vec3(0.0);
+  hit_normal = vec3(0.0);
   uint cell_id_offset = cell_id[2] * g_ubo.ug_bins_count * g_ubo.ug_bins_count +
                         cell_id[1] * g_ubo.ug_bins_count + cell_id[0];
   int cell_id_cur = int(cell_id_offset);
@@ -136,54 +137,69 @@ bool iterate(vec3 ray_dir, vec3 ray_invdir, vec3 camera_pos, float hit_min,
 
       // Try to intersect with bounding sphere first
       // To improve convergence speed
-      for (uint item_id = bin_offset; item_id < bin_offset + pnt_cnt;
-           item_id++) {
-        iter++;
-        // Restore the particle position
-        vec3 pos = vec3(g_particles.data[item_id * 3],
-                        g_particles.data[item_id * 3 + 1],
-                        g_particles.data[item_id * 3 + 2]);
-        // Simple ray-sphere intersection test
-        vec3 dr = pos - camera_pos;
-        float dr_dot_v = dot(dr, ray_dir);
-        float c = dot(dr, dr) - dr_dot_v * dr_dot_v;
-        // Bounding sphere radius==particle radius + smooth step distance
-        // Is it right?
-        float radius2 = (g_ubo.hull_radius + g_ubo.step_radius);
-        radius2 = radius2 * radius2;
-        if (c < radius2) {
-          float t = dr_dot_v - sqrt(radius2 - c);
-          if (t < min_dist && t < hit_min + axis_distance[axis] + 1.0e-3) {
-            vec3 norm = normalize(camera_pos + ray_dir * t - pos);
-            hit = true;
-            // out_val = vec3(max(0.0, dot(norm, vec3(1.4, 0.0, 1.4))));
-            min_dist = t;
-          }
-        }
-      }
+      hit = true;
+      min_dist = 0.0;
+      // for (uint item_id = bin_offset; item_id < bin_offset + pnt_cnt;
+      //      item_id++) {
+      //   iter++;
+      //   // Restore the particle position
+      //   vec3 pos = vec3(g_particles.data[item_id * 3],
+      //                   g_particles.data[item_id * 3 + 1],
+      //                   g_particles.data[item_id * 3 + 2]);
+      //   // Simple ray-sphere intersection test
+      //   vec3 dr = pos - camera_pos;
+      //   float dr_dot_v = dot(dr, ray_dir);
+      //   float c = dot(dr, dr) - dr_dot_v * dr_dot_v;
+      //   // Bounding sphere radius==particle radius + smooth step distance
+      //   // Is it right?
+      //   float radius2 = (g_ubo.hull_radius + g_ubo.step_radius);
+      //   radius2 = radius2 * radius2;
+      //   if (c < radius2) {
+      //     float t = dr_dot_v;
+      //     if (t < -1.0e-3)
+      //       continue;
+      //     float dt = sqrt(radius2 - c);
+          
+      //     if (t > dt) {
+      //       t -= dt;
+      //     } else {
+      //       t += dt;
+      //     }
+      //     if (t < min_dist && t < hit_min + axis_distance[axis] + 1.0e-3) {
+      //       vec3 norm = normalize(camera_pos + ray_dir * t - pos);
+      //       hit = true;
+      //       // hit_normal = vec3(max(0.0, dot(norm, vec3(1.4, 0.0, 1.4))));
+      //       min_dist = t;
+      //     }
+      //   }
+      // }
       if (hit) {
-        ray_origin = camera_pos + ray_dir * min_dist;
+        hit_pos = camera_pos + ray_dir * min_dist;
         float ray_delta = min_dist;
         float dist = 0.0;
         uint iter_id = 0;
-        float ITERATION_LIMIT = 1.0e-2;
+        float ITERATION_LIMIT = 1.0e-3;
         for (iter_id = 0; iter_id < g_ubo.raymarch_iterations; iter_id++) {
           iter++;
-          dist = eval_dist(ray_origin, bin_offset, bin_offset + pnt_cnt);
+          dist = eval_dist(hit_pos, bin_offset, bin_offset + pnt_cnt);
+          if (dist < ITERATION_LIMIT) {
+            break;
+          }
           ray_delta += dist;
           if (ray_delta > hit_min + axis_distance[axis] + 1.0e-2) {
             dist = 1.0f;
             break;
           }
-          ray_origin += ray_dir * dist;
-          if (dist < ITERATION_LIMIT) {
-            break;
-          }
+          hit_pos += ray_dir * dist;
+          
         }
+        // if (dist < 0.0) {
+        //   return true;
+        // }
         if (dist < ITERATION_LIMIT) {
-          vec3 norm = eval_norm(ray_origin, bin_offset, bin_offset + pnt_cnt);
-          out_val = norm;
-          // vec3(abs(dot(norm, out_val = norm * 0.1 + 0.1 + 0.9 *
+          vec3 norm = eval_norm(hit_pos, bin_offset, bin_offset + pnt_cnt);
+          hit_normal = norm;
+          // vec3(abs(dot(norm, hit_normal = norm * 0.1 + 0.1 + 0.9 *
           // vec3(1.0 + dot(ray_dir, norm));
           return true;
         }
@@ -222,7 +238,7 @@ bool iterate(vec3 ray_dir, vec3 ray_invdir, vec3 camera_pos, float hit_min,
       break;
     cell_id_cur += cell_delta[axis];
     axis_distance[axis] += axis_delta[axis];
-    // ray_origin = ray_origin + ray_dir * max_march;
+    // hit_pos = hit_pos + ray_dir * max_march;
     // cell_id[axis] += step[axis];
     // if (
     //     cell_id_cur <= -1 ||
@@ -230,7 +246,7 @@ bool iterate(vec3 ray_dir, vec3 ray_invdir, vec3 camera_pos, float hit_min,
     //     g_ubo.ug_bins_count
     // ) break;
 
-    // out_val.x += axis_delta[axis];
+    // hit_normal.x += axis_delta[axis];
   }
   return false;
 }
@@ -240,7 +256,6 @@ void main() {
   vec2 uv = vec2(gl_GlobalInvocationID.xy) / dim;
   if (gl_GlobalInvocationID.x > dim.x || gl_GlobalInvocationID.y > dim.y)
     return;
-  vec3 ray_origin = g_ubo.camera_pos;
   vec2 xy = (-1.0 + 2.0 * uv) * vec2(g_ubo.camera_fov, 1.0);
   vec3 ray_dir = normalize(g_ubo.camera_look + g_ubo.camera_up * xy.y +
                            g_ubo.camera_right * xy.x);
@@ -250,26 +265,39 @@ void main() {
   vec3 ray_invdir = 1.0 / ray_dir;
   vec3 color = vec3(0.0, 0.0, 0.0);
   if (intersect_box(vec3(-g_ubo.ug_size), vec3(g_ubo.ug_size), ray_invdir,
-                    ray_origin, hit_min, hit_max)) {
+                    g_ubo.camera_pos, hit_min, hit_max)) {
 
     uint iter = 0;
     hit_min = max(0.0, hit_min);
-    // vec3 ray_box_hit = ray_origin + ray_dir * hit_min;
-    vec3 out_val = vec3(0);
-    if (iterate(ray_dir, ray_invdir, ray_origin, hit_min, hit_max, iter,
-                out_val)) {
-      // vec3 ray_vox_hit = ray_box_hit + ray_dir * out_val.x;
+    // vec3 ray_box_hit = hit_pos + ray_dir * hit_min;
+    vec3 hit_normal = vec3(0);
+    vec3 hit_pos = vec3(0);
+    vec3 light_dir = normalize(vec3(1.0, 1.0, 1.0));
+    if (iterate(ray_dir, ray_invdir, g_ubo.camera_pos, hit_min, hit_max, iter,
+                hit_normal, hit_pos)) {
+      vec3 light = vec3(1.0, 1.0, 1.0);
 
-      // ray_box_hit/g_ubo.ug_bin_size/128.0;
-      // ray_vox_hit*0.1 + 0.1;
-      //
-      // vec3(-hit_min);
+      // if (dot(hit_normal, light_dir) > 0.0) {
+      //   vec3 hit_normal_1 = vec3(0);
+      //   vec3 hit_pos_1 = vec3(0);
+      //   vec3 light_ray_invdir = 1.0 / light_dir;
+      //   hit_pos += hit_normal * 2.0e-2;
+      //   intersect_box(vec3(-g_ubo.ug_size), vec3(g_ubo.ug_size),
+      //                 light_ray_invdir, hit_pos, hit_min, hit_max);
+      //   if (iterate(light_dir, light_ray_invdir, hit_pos, hit_min, hit_max,
+      //               iter, hit_normal_1, hit_pos_1)) {
+      //     light = vec3(0.1, 0.1, 0.2);
+      //   }
+      // } else {
+      //   light = vec3(0.1, 0.1, 0.2);
+      // }
+      if ((g_ubo.rendering_flags & RENDER_HULL) != 0) {
+        float k = dot(hit_normal, light_dir);
+
+        color += abs(k) * light;
+      }
     }
-    if ((g_ubo.rendering_flags & RENDER_HULL) != 0) {
-      float k = dot(out_val, vec3(0.0, 0.0, 1.0));
-      
-      color += abs(k) * mix(vec3(1.0), vec3(0.1, 0.0, 0.2), -k * 0.5 + 0.5);
-    }
+
     if ((g_ubo.rendering_flags & RENDER_CELLS) != 0)
       color += vec3(float(iter) / float(g_ubo.ug_bins_count) / 1.73205 /
                     float(g_ubo.raymarch_iterations));

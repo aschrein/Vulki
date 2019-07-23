@@ -101,6 +101,7 @@ bool iterate(vec3 ray_dir, vec3 ray_invdir, vec3 camera_pos, float hit_min,
     if (bin_offset > 0) {
       uint pnt_cnt = g_bins.data[2 * o + 1];
       iter += pnt_cnt;
+      return true;
     }
     if (hit_max - hit_min < axis_distance[axis] + 1.0e-3)
       break;

@@ -12,39 +12,6 @@ using namespace glm;
 
 #include "imgui.h"
 
-struct Raw_Mesh_3p16i_Wrapper {
-  RAW_MOVABLE(Raw_Mesh_3p16i_Wrapper)
-  VmaBuffer vertex_buffer;
-  VmaBuffer index_buffer;
-  u32 vertex_count;
-  static Raw_Mesh_3p16i_Wrapper create(Device_Wrapper &device,
-                                       Raw_Mesh_3p16i const &in) {
-    Raw_Mesh_3p16i_Wrapper out{};
-    out.vertex_count = in.indices.size() * 3;
-    out.vertex_buffer = device.alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(sizeof(vec3) * in.positions.size())
-            .setUsage(vk::BufferUsageFlagBits::eVertexBuffer),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-    out.index_buffer = device.alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(sizeof(u16_face) * in.indices.size())
-            .setUsage(vk::BufferUsageFlagBits::eIndexBuffer),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-    {
-      void *data = out.vertex_buffer.map();
-      memcpy(data, &in.positions[0], sizeof(vec3) * in.positions.size());
-      out.vertex_buffer.unmap();
-    }
-    {
-      void *data = out.index_buffer.map();
-      memcpy(data, &in.indices[0], sizeof(u16_face) * in.indices.size());
-      out.index_buffer.unmap();
-    }
-    return out;
-  }
-};
-
 struct Gizmo_Drag_State {
   RAW_MOVABLE(Gizmo_Drag_State)
   float size = 1.0f;

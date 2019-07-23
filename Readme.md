@@ -2,7 +2,7 @@
 ```console
 ## Install Lunarg-SDK and set up enviroment variables
 ## Arch Linux setup
-sudo pacman -S sparsehash glfw glslang gtest boost
+sudo pacman -S cmake gcc unzip sparsehash glfw glslang gtest boost
 ```
 ## Build
 ```console
@@ -29,3 +29,6 @@ cmake --build . --target all
   * Distance field compression
 * Secondary rays
   * AO, GI
+
+## References
+Models downloaded from Morgan McGuire's [Computer Graphics Archive](https://casual-effects.com/data)
