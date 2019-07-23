@@ -1,0 +1,8 @@
+commit d8e95e48155c015e585dbba58ec752627442f2a9
+Merge: 80d2ded d0195db
+Author: Syoyo Fujita <syoyo@lighttransport.com>
+Date:   Tue Jul 2 16:39:54 2019 +0900
+
+    Merge pull request #214 from tim37021/master
+    
+    Add numpy_indices method
