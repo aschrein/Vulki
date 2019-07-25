@@ -2,12 +2,12 @@
 #include "error_handling.hpp"
 #include "random.hpp"
 #include <algorithm>
+#include <fstream>
 #include <glm/glm.hpp>
 #include <memory>
 #include <sparsehash/dense_hash_set>
-#include <vector>
 #include <string>
-#include <fstream>
+#include <vector>
 using namespace glm;
 
 struct Packed_UG {
@@ -23,13 +23,24 @@ struct Packed_UG {
 // |____|}size
 //
 struct UG {
-  float size;
-  uint bin_count;
+  vec3 size;
+  uvec3 bin_count;
+  u32 total_bin_count;
+  f32 bin_size;
   std::vector<std::vector<uint>> bins;
   std::vector<uint> bins_indices;
-  UG(float size, u32 bin_count) : size(size), bin_count(bin_count) {
+  UG(float size, u32 bin_count)
+      : UG({size, size, size}, 2.0f * size / bin_count) {}
+  UG(vec3 size, f32 bin_size) : size(size), bin_size(bin_size) {
+    vec3 fbin_count = size / bin_size;
+    fbin_count = vec3(std::ceil(fbin_count.x + 1.0e-7f),
+                      std::ceil(fbin_count.y + 1.0e-7f),
+                      std::ceil(fbin_count.z + 1.0e-7f));
+    this->bin_count = uvec3(fbin_count * 2.0f);
+    this->size = fbin_count * bin_size;
     bins.push_back({});
-    for (u32 i = 0; i < bin_count * bin_count * bin_count; i++)
+    this->total_bin_count = bin_count.x * bin_count.y * bin_count.z;
+    for (u32 i = 0; i < total_bin_count; i++)
       bins_indices.push_back(0);
   }
   Packed_UG pack() {
@@ -51,29 +62,28 @@ struct UG {
     return out;
   }
   void put(vec3 const &pos, float radius, uint index) {
-    if (pos.x > this->size + radius || pos.y > this->size + radius ||
-        pos.z > this->size + radius || pos.x < -this->size - radius ||
-        pos.y < -this->size - radius || pos.z < -this->size - radius) {
+    if (pos.x > this->size.x + radius || pos.y > this->size.y + radius ||
+        pos.z > this->size.z + radius || pos.x < -this->size.x - radius ||
+        pos.y < -this->size.y - radius || pos.z < -this->size.z - radius) {
       panic("");
       return;
     }
-    const auto bin_size = (2.0f * this->size) / float(this->bin_count);
     ivec3 min_ids =
-        ivec3((pos + vec3(size, size, size) - vec3(radius, radius, radius)) /
+        ivec3((pos + size - vec3(radius, radius, radius)) /
               bin_size);
     ivec3 max_ids =
-        ivec3((pos + vec3(size, size, size) + vec3(radius, radius, radius)) /
+        ivec3((pos + size + vec3(radius, radius, radius)) /
               bin_size);
     for (int ix = min_ids.x; ix <= max_ids.x; ix++) {
       for (int iy = min_ids.y; iy <= max_ids.y; iy++) {
         for (int iz = min_ids.z; iz <= max_ids.z; iz++) {
           // Boundary check
-          if (ix < 0 || iy < 0 || iz < 0 || ix >= int(this->bin_count) ||
-              iy >= int(this->bin_count) || iz >= int(this->bin_count)) {
+          if (ix < 0 || iy < 0 || iz < 0 || ix >= int(this->bin_count.x) ||
+              iy >= int(this->bin_count.y) || iz >= int(this->bin_count.z)) {
             continue;
           }
-          u32 flat_id = ix + iy * this->bin_count +
-                        iz * this->bin_count * this->bin_count;
+          u32 flat_id = ix + iy * this->bin_count.x +
+                        iz * this->bin_count.x * this->bin_count.y;
           auto *bin_id = &this->bins_indices[flat_id];
           if (*bin_id == 0) {
             this->bins.push_back({});
@@ -132,17 +142,17 @@ struct UG {
   //     }
   // }
   std::vector<u32> traverse(vec3 const &pos, f32 radius) {
-    if (pos.x > this->size + radius || pos.y > this->size + radius ||
-        pos.z > this->size + radius || pos.x < -this->size - radius ||
-        pos.y < -this->size - radius || pos.z < -this->size - radius) {
-      return {};
+    if (pos.x > this->size.x + radius || pos.y > this->size.y + radius ||
+        pos.z > this->size.z + radius || pos.x < -this->size.x - radius ||
+        pos.y < -this->size.y - radius || pos.z < -this->size.z - radius) {
+      panic("");
+      return;
     }
-    const auto bin_size = (2.0f * this->size) / float(this->bin_count);
     ivec3 min_ids =
-        ivec3((pos + vec3(size, size, size) - vec3(radius, radius, radius)) /
+        ivec3((pos + size - vec3(radius, radius, radius)) /
               bin_size);
     ivec3 max_ids =
-        ivec3((pos + vec3(size, size, size) + vec3(radius, radius, radius)) /
+        ivec3((pos + size + vec3(radius, radius, radius)) /
               bin_size);
     google::dense_hash_set<u32> set;
     set.set_empty_key(UINT32_MAX);
@@ -150,12 +160,12 @@ struct UG {
       for (int iy = min_ids.y; iy <= max_ids.y; iy++) {
         for (int iz = min_ids.z; iz <= max_ids.z; iz++) {
           // Boundary check
-          if (ix < 0 || iy < 0 || iz < 0 || ix >= int(this->bin_count) ||
-              iy >= int(this->bin_count) || iz >= int(this->bin_count)) {
+          if (ix < 0 || iy < 0 || iz < 0 || ix >= int(this->bin_count.x) ||
+              iy >= int(this->bin_count.y) || iz >= int(this->bin_count.z)) {
             continue;
           }
-          u32 flat_id = ix + iy * this->bin_count +
-                        iz * this->bin_count * this->bin_count;
+          u32 flat_id = ix + iy * this->bin_count.x +
+                        iz * this->bin_count.x * this->bin_count.y;
           auto bin_id = this->bins_indices[flat_id];
           if (bin_id != 0) {
             for (auto const &item : this->bins[bin_id]) {
@@ -280,8 +290,7 @@ struct Simulation_State {
     system_size += rest_length;
   }
   void step(float dt) {
-    auto const M = u32(2.0f * system_size / rest_length);
-    auto ug = UG(system_size, M);
+    auto ug = UG({system_size, system_size, system_size}, rest_length);
     {
       u32 i = 0;
       for (auto const &pnt : particles) {
@@ -289,7 +298,6 @@ struct Simulation_State {
         i++;
       }
     }
-    f32 const bin_size = system_size * 2.0 / M;
     std::vector<f32> force_table(particles.size());
     std::vector<vec3> new_particles = particles;
     // Repell
@@ -403,7 +411,6 @@ struct Simulation_State {
         i++;
       }
     }
-
 
     // Apply the changes
     particles = new_particles;

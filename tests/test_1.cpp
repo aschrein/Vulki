@@ -97,7 +97,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
   bool simulate = false;
   bool raymarch_flag_render_hull = true;
   bool raymarch_flag_render_cells = false;
-  u32 GRID_DIM = 32;
+  f32 GRID_CELL_SIZE = 1.0f;
   uint raymarch_iterations = 32;
   f32 rendering_radius = 0.1f;
   f32 rendering_step = 0.2f;
@@ -358,9 +358,11 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
       particle_system.particles[selected_particle] =
           gizmo_layer.gizmo_drag_state.pos;
     Packed_UG packed;
+    // @TODO: 3dim grid resolution
+    u32 GRID_DIM;
     {
       CPU_timestamp __timestamp;
-      UG ug(rendering_grid_size, GRID_DIM);
+      UG ug({rendering_grid_size,rendering_grid_size,rendering_grid_size} , GRID_CELL_SIZE);
 
       for (u32 i = 0; i < particle_system.particles.size(); i++) {
         ug.put(particle_system.particles[i],
@@ -368,6 +370,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
                                         // * 4.0f,
                i);
       }
+      GRID_DIM = ug.bin_count.x;
       packed = ug.pack();
       cpu_frametime_stack.set_value("grid baking", __timestamp.end());
     }
@@ -662,8 +665,8 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
                      0.025f, 0.0f, 10.0f);
     ImGui::DragFloat("[Debug] rendering grid size", &rendering_grid_size,
                      0.025f, 0.025f, 10.0f);
-    u32 step = 1;
-    ImGui::InputScalar("raymarch grid dimension", ImGuiDataType_U32, &GRID_DIM,
+    f32 step = 0.1f;
+    ImGui::InputScalar("raymarch grid cell size", ImGuiDataType_Float, &GRID_CELL_SIZE,
                        &step);
     ImGui::SliderInt("raymarch max iterations", (i32 *)&raymarch_iterations, 1,
                      64);

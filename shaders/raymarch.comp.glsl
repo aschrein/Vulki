@@ -277,20 +277,20 @@ void main() {
                 hit_normal, hit_pos)) {
       vec3 light = vec3(1.0, 1.0, 1.0);
 
-      // if (dot(hit_normal, light_dir) > 0.0) {
-      //   vec3 hit_normal_1 = vec3(0);
-      //   vec3 hit_pos_1 = vec3(0);
-      //   vec3 light_ray_invdir = 1.0 / light_dir;
-      //   hit_pos += hit_normal * 2.0e-2;
-      //   intersect_box(vec3(-g_ubo.ug_size), vec3(g_ubo.ug_size),
-      //                 light_ray_invdir, hit_pos, hit_min, hit_max);
-      //   if (iterate(light_dir, light_ray_invdir, hit_pos, hit_min, hit_max,
-      //               iter, hit_normal_1, hit_pos_1)) {
-      //     light = vec3(0.1, 0.1, 0.2);
-      //   }
-      // } else {
-      //   light = vec3(0.1, 0.1, 0.2);
-      // }
+      if (dot(hit_normal, light_dir) > 0.0) {
+        vec3 hit_normal_1 = vec3(0);
+        vec3 hit_pos_1 = vec3(0);
+        vec3 light_ray_invdir = 1.0 / light_dir;
+        hit_pos += hit_normal * 2.0e-2;
+        intersect_box(vec3(-g_ubo.ug_size), vec3(g_ubo.ug_size),
+                      light_ray_invdir, hit_pos, hit_min, hit_max);
+        if (iterate(light_dir, light_ray_invdir, hit_pos, hit_min, hit_max,
+                    iter, hit_normal_1, hit_pos_1)) {
+          light = vec3(0.1, 0.1, 0.2);
+        }
+      } else {
+        light = vec3(0.1, 0.1, 0.2);
+      }
       if ((g_ubo.rendering_flags & RENDER_HULL) != 0) {
         float k = dot(hit_normal, light_dir);
 
