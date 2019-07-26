@@ -32,3 +32,4 @@ cmake --build . --target all
 
 ## References
 Models downloaded from Morgan McGuire's [Computer Graphics Archive](https://casual-effects.com/data)
+Models downloaded from [free3d](https://free3d.com/3d-model/low-poly-male-26691.html)

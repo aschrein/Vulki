@@ -34,6 +34,10 @@ using u64 = uint64_t;
 using i32 = int32_t;
 using f32 = float;
 
+#define ito(N) for (u32 i = 0; i < N; i++)
+#define jto(N) for (u32 j = 0; j < N; j++)
+#define kto(N) for (u32 k = 0; k < N; k++)
+
 template <typename T, size_t N>
 constexpr size_t __ARRAY_SIZE(T (&)[N]) { return N; }
 

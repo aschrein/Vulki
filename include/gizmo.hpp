@@ -161,8 +161,10 @@ struct Gizmo_Drag_State {
     vec3 closest_point = ray_origin + ray_dir * t;
     return closest_point[selected_axis_id];
   }
-  void on_mouse_move(vec3 const &ray_origin, vec3 const &ray_dir) {
-    size = distance(pos, ray_origin) / 8;
+  void on_mouse_move(vec3 const &ray_origin, vec3 const &view_dir,
+                     vec3 const &ray_dir) {
+    vec3 dr = pos - ray_origin;
+    size = std::abs(dot(dr, view_dir)) / 8;
     vec3 sphere_pos[] = {
         pos + size * vec3(1.0f, 0.0f, 0.0f),
         pos + size * vec3(0.0f, 1.0f, 0.0f),
@@ -308,7 +310,7 @@ struct Gizmo_Layer {
       my = -2.0f * (float(mpos.y - example_viewport.offset.y) - 0.5f) /
                (example_viewport.extent.height) +
            1.0f;
-      gizmo_drag_state.on_mouse_move(camera_pos, mouse_ray);
+      gizmo_drag_state.on_mouse_move(camera_pos, camera_look, mouse_ray);
       if (ImGui::GetIO().MouseDown[0]) {
         if (!mouse_last_down) {
           if (!gizmo_drag_state.on_mouse_click(camera_pos, mouse_ray) &&

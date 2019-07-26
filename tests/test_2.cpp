@@ -635,10 +635,39 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   auto &device = device_wrapper.device;
 
   Simple_Monitor simple_monitor("../shaders");
-  auto test_model = load_obj_raw("models/dragon.obj");
+  auto test_model = load_obj_raw("models/MaleLow.obj");
+  // swap z-y
+  for (auto &vertex : test_model.vertices) {
+    std::swap(vertex.position.y, vertex.position.z);
+    std::swap(vertex.normal.y, vertex.normal.z);
+  }
   Raw_Mesh_3p3n2t32i_Wrapper test_model_wrapper =
       Raw_Mesh_3p3n2t32i_Wrapper::create(device_wrapper, test_model);
+  vec3 test_model_min(0.0f, 0.0f, 0.0f), test_model_max(0.0f, 0.0f, 0.0f);
 
+  for (auto face : test_model.indices) {
+    vec3 v0 = test_model.vertices[face.v0].position;
+    vec3 v1 = test_model.vertices[face.v1].position;
+    vec3 v2 = test_model.vertices[face.v2].position;
+    vec3 triangle_min, triangle_max;
+    get_aabb(v0, v1, v2, triangle_min, triangle_max);
+    union_aabb(triangle_min, triangle_max, test_model_min, test_model_max);
+  }
+
+  UG test_model_ug(test_model_max - test_model_min, 1.0f);
+  {
+    u32 triangle_id = 0;
+    for (auto face : test_model.indices) {
+      vec3 v0 = test_model.vertices[face.v0].position;
+      vec3 v1 = test_model.vertices[face.v1].position;
+      vec3 v2 = test_model.vertices[face.v2].position;
+      vec3 triangle_min, triangle_max;
+      get_aabb(v0, v1, v2, triangle_min, triangle_max);
+      test_model_ug.put((triangle_min + triangle_max) * 0.5f,
+                        (triangle_max - triangle_min) * 0.5f, triangle_id);
+      triangle_id++;
+    }
+  }
   // Some shader data structures
   struct Test_Model_Vertex {
     vec3 in_position;
@@ -655,12 +684,20 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     mat4 view;
     mat4 proj;
   };
+  struct Particle_UBO {
+    mat4 world;
+    mat4 view;
+    mat4 proj;
+  };
+  struct Particle_Vertex {
+    vec3 position;
+  };
   auto test_model_instance_buffer = device_wrapper.alloc_state->allocate_buffer(
       vk::BufferCreateInfo()
           .setSize(1 * sizeof(Test_Model_Instance_Data))
           .setUsage(vk::BufferUsageFlagBits::eVertexBuffer),
       VMA_MEMORY_USAGE_CPU_TO_GPU);
-
+  VmaBuffer ug_lines_gpu_buffer;
   Gizmo_Layer gizmo_layer{};
 
   ///////////////////////////
@@ -669,6 +706,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   Framebuffer_Wrapper framebuffer_wrapper{};
   Pipeline_Wrapper fullscreen_pipeline;
   Pipeline_Wrapper test_model_pipeline;
+  Pipeline_Wrapper lines_pipeline;
 
   auto recreate_resources = [&] {
     framebuffer_wrapper = Framebuffer_Wrapper::create(
@@ -685,6 +723,26 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                     vk::PrimitiveTopology::eTriangleList))
             .setRenderPass(framebuffer_wrapper.render_pass.get()),
         {}, {}, {});
+    lines_pipeline = Pipeline_Wrapper::create_graphics(
+        device_wrapper, "../shaders/ug_debug.vert.glsl",
+        "../shaders/ug_debug.frag.glsl",
+        vk::GraphicsPipelineCreateInfo()
+
+            .setPInputAssemblyState(
+                &vk::PipelineInputAssemblyStateCreateInfo().setTopology(
+                    // We want lines here
+                    vk::PrimitiveTopology::eLineList))
+
+            .setRenderPass(framebuffer_wrapper.render_pass.get()),
+        {
+            REG_VERTEX_ATTRIB(Particle_Vertex, position, 0,
+                              vk::Format::eR32G32B32Sfloat),
+        },
+        {vk::VertexInputBindingDescription()
+             .setBinding(0)
+             .setStride(12)
+             .setInputRate(vk::VertexInputRate::eVertex)},
+        {}, sizeof(Test_Model_Push_Constants));
     test_model_pipeline = Pipeline_Wrapper::create_graphics(
         device_wrapper, "../shaders/3p3n2t.vert.glsl",
         "../shaders/lambert.frag.glsl",
@@ -733,6 +791,9 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     device_wrapper.sumbit_and_flush(cmd);
   }
 
+  /*--------------------------*/
+  /* Offscreen rendering loop */
+  /*--------------------------*/
   device_wrapper.pre_tick = [&](vk::CommandBuffer &cmd) {
     // Update backbuffer if the viewport size has changed
     if (simple_monitor.is_updated() ||
@@ -756,13 +817,35 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     cmd.setScissor(0, {{{0, 0},
                         {gizmo_layer.example_viewport.extent.width,
                          gizmo_layer.example_viewport.extent.height}}});
+    /*----------------*/
+    /* Update buffers */
+    /*----------------*/
+    u32 ug_debug_lines_count = 0;
+    {
+      std::vector<vec3> lines;
+      test_model_ug.fill_lines_render(lines);
+      ug_debug_lines_count = lines.size();
+      ug_lines_gpu_buffer = alloc_state->allocate_buffer(
+          vk::BufferCreateInfo()
+              .setSize(lines.size() * sizeof(vec3))
+              .setUsage(vk::BufferUsageFlagBits::eVertexBuffer |
+                        vk::BufferUsageFlagBits::eTransferDst |
+                        vk::BufferUsageFlagBits::eTransferSrc),
+          VMA_MEMORY_USAGE_CPU_TO_GPU);
+      void *data = ug_lines_gpu_buffer.map();
+      vec3 *typed_data = (vec3 *)data;
+      memcpy(typed_data, &lines[0], lines.size() * sizeof(vec3));
+      ug_lines_gpu_buffer.unmap();
+    }
     {
 
       void *data = test_model_instance_buffer.map();
       Test_Model_Instance_Data *typed_data = (Test_Model_Instance_Data *)data;
       for (u32 i = 0; i < 1; i++) {
-        mat4 translation = glm::translate(vec3(0.0f, 0.0f, 0.0f)) *
-                           glm::rotate(f32(M_PI / 2), vec3(1.0f, 0.0f, 0.0f));
+        mat4 translation = glm::translate(
+            vec3(0.0f, 0.0f,
+                 0.0f)); // *
+                         //  glm::rotate(f32(M_PI / 2), vec3(1.0f, 0.0f, 0.0f));
         typed_data[i].in_model_0 = translation[0];
         typed_data[i].in_model_1 = translation[1];
         typed_data[i].in_model_2 = translation[2];
@@ -770,6 +853,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       }
       test_model_instance_buffer.unmap();
     }
+
     {
       test_model_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
       Test_Model_Push_Constants tmp_pc{};
@@ -784,7 +868,25 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                             {0, 0});
       cmd.bindIndexBuffer(test_model_wrapper.index_buffer.buffer, 0,
                           vk::IndexType::eUint32);
+
       cmd.drawIndexed(test_model_wrapper.vertex_count, 1, 0, 0, 0);
+    }
+
+    {
+      lines_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
+      Test_Model_Push_Constants tmp_pc{};
+
+      tmp_pc.proj = gizmo_layer.camera_proj;
+      tmp_pc.view = gizmo_layer.camera_view;
+      lines_pipeline.push_constants(cmd, &tmp_pc,
+                                    sizeof(Test_Model_Push_Constants));
+      cmd.bindVertexBuffers(0,
+                            {
+                                ug_lines_gpu_buffer.buffer,
+                            },
+                            {0});
+
+      cmd.draw(ug_debug_lines_count, 1, 0, 0);
     }
     gizmo_layer.draw(device_wrapper, cmd);
     fullscreen_pipeline.bind_pipeline(device.get(), cmd);
@@ -837,6 +939,46 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     ImGui::Begin("dummy window");
     ImGui::PopStyleVar(3);
     gizmo_layer.on_imgui_viewport();
+    {
+      test_model_ug.iterate(
+          gizmo_layer.mouse_ray, gizmo_layer.camera_pos,
+          [&](std::vector<u32> const &items) {
+            float min_t = 1.0e10f;
+            for (u32 face_id : items) {
+              auto face = test_model.indices[face_id];
+              vec3 v0 = test_model.vertices[face.v0].position;
+              vec3 v1 = test_model.vertices[face.v1].position;
+              vec3 v2 = test_model.vertices[face.v2].position;
+              Collision col = {};
+
+              // @TODO:
+              // The internet says that woop is faster that moller
+              // but may struggle from certain numerical instability.
+              // So it's better to create a test
+              // Collision col1 = {};
+              // if (ray_triangle_test_moller(gizmo_layer.camera_pos,
+              //                              gizmo_layer.mouse_ray, v0, v1, v2,
+              //                              col1) &&
+              //     !ray_triangle_test_woop(gizmo_layer.camera_pos,
+              //                             gizmo_layer.mouse_ray, v0, v1, v2,
+              //                             col)) {
+              //   ray_triangle_test_woop(gizmo_layer.camera_pos,
+              //                          gizmo_layer.mouse_ray, v0, v1, v2, col);
+              // }
+
+              if (ray_triangle_test_woop(gizmo_layer.camera_pos,
+                                         gizmo_layer.mouse_ray, v0, v1, v2,
+                                         col)) {
+                if (col.t < min_t) {
+                  min_t = col.t;
+                  gizmo_layer.gizmo_drag_state.pos = col.position;
+                }
+                return false;
+              }
+            }
+            return true;
+          });
+    }
     // ImGui::Button("Press me");
 
     ImGui::Image(ImGui_ImplVulkan_AddTexture(

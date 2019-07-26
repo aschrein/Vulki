@@ -62,18 +62,17 @@ struct UG {
     return out;
   }
   void put(vec3 const &pos, float radius, uint index) {
-    if (pos.x > this->size.x + radius || pos.y > this->size.y + radius ||
-        pos.z > this->size.z + radius || pos.x < -this->size.x - radius ||
-        pos.y < -this->size.y - radius || pos.z < -this->size.z - radius) {
+    put(pos, {radius, radius, radius}, index);
+  }
+  void put(vec3 const &pos, vec3 const &extent, uint index) {
+    if (pos.x > this->size.x + extent.x || pos.y > this->size.y + extent.y ||
+        pos.z > this->size.z + extent.z || pos.x < -this->size.x - extent.x ||
+        pos.y < -this->size.y - extent.y || pos.z < -this->size.z - extent.z) {
       panic("");
       return;
     }
-    ivec3 min_ids =
-        ivec3((pos + size - vec3(radius, radius, radius)) /
-              bin_size);
-    ivec3 max_ids =
-        ivec3((pos + size + vec3(radius, radius, radius)) /
-              bin_size);
+    ivec3 min_ids = ivec3((pos + size - extent) / bin_size);
+    ivec3 max_ids = ivec3((pos + size + extent) / bin_size);
     for (int ix = min_ids.x; ix <= max_ids.x; ix++) {
       for (int iy = min_ids.y; iy <= max_ids.y; iy++) {
         for (int iz = min_ids.z; iz <= max_ids.z; iz++) {
@@ -94,53 +93,133 @@ struct UG {
       }
     }
   }
-  // pub fn fill_lines_render(&self, lines: &mut Vec<vec3>) {
-  //     const auto bin_size = this->size * 2.0 / this->bin_count as f32;
-  //     for dz in 0..this->bin_count {
-  //         for dy in 0..this->bin_count {
-  //             for dx in 0..this->bin_count {
-  //                 const auto flat_id = dx + dy * this->bin_count + dz *
-  //                 this->bin_count * this->bin_count; const auto bin_id =
-  //                 &this->bins_indices[flat_id]; if *bin_id != 0 {
-  //                     const auto bin_idx = bin_size * dx as f32 - this->size;
-  //                     const auto bin_idy = bin_size * dy as f32 - this->size;
-  //                     const auto bin_idz = bin_size * dz as f32 - this->size;
-  //                     const auto iter_x = [0, 0, 1, 1, 0, 0, 1, 1, 0, 0];
-  //                     const auto iter_y = [0, 1, 1, 0, 0, 0, 0, 1, 1, 0];
-  //                     const auto iter_z = [0, 0, 0, 0, 0, 1, 1, 1, 1, 1];
-  //                     for i in 0..9 {
-  //                         lines.push(vec3 {
-  //                             x: bin_idx + bin_size * iter_x[i] as f32,
-  //                             y: bin_idy + bin_size * iter_y[i] as f32,
-  //                             z: bin_idz + bin_size * iter_z[i] as f32,
-  //                         });
-  //                         lines.push(vec3 {
-  //                             x: bin_idx + bin_size * iter_x[i + 1] as f32,
-  //                             y: bin_idy + bin_size * iter_y[i + 1] as f32,
-  //                             z: bin_idz + bin_size * iter_z[i + 1] as f32,
-  //                         });
-  //                     }
-  //                     const auto iter_x = [0, 0, 1, 1, 1, 1,];
-  //                     const auto iter_y = [1, 1, 1, 1, 0, 0,];
-  //                     const auto iter_z = [0, 1, 0, 1, 0, 1,];
-  //                     for i in 0..3 {
-  //                         lines.push(vec3 {
-  //                             x: bin_idx + bin_size * iter_x[i * 2] as f32,
-  //                             y: bin_idy + bin_size * iter_y[i * 2] as f32,
-  //                             z: bin_idz + bin_size * iter_z[i * 2] as f32,
-  //                         });
-  //                         lines.push(vec3 {
-  //                             x: bin_idx + bin_size * iter_x[i * 2 + 1] as
-  //                             f32, y: bin_idy + bin_size * iter_y[i * 2 + 1]
-  //                             as f32, z: bin_idz + bin_size * iter_z[i * 2 +
-  //                             1] as f32,
-  //                         });
-  //                     }
-  //                 }
-  //             }
-  //         }
-  //     }
-  // }
+  bool intersect_box(vec3 ray_invdir, vec3 ray_origin, float &hit_min,
+                     float &hit_max) {
+    vec3 tbot = ray_invdir * (-this->size - ray_origin);
+    vec3 ttop = ray_invdir * (this->size - ray_origin);
+    vec3 tmin = glm::min(ttop, tbot);
+    vec3 tmax = glm::max(ttop, tbot);
+    vec2 t = vec2(std::max(tmin.x, tmin.y), std::max(tmin.x, tmin.z));
+    float t0 = std::max(t.x, t.y);
+    t = vec2(std::min(tmax.x, tmax.y), std::min(tmax.x, tmax.z));
+    float t1 = std::min(t.x, t.y);
+    hit_min = t0;
+    hit_max = t1;
+    return t1 > std::max(t0, 0.0f);
+  }
+  // on_hit returns false to early-out the traversal
+  void iterate(vec3 ray_dir, vec3 ray_origin,
+               std::function<bool(std::vector<u32> const &)> on_hit) {
+    vec3 ray_invdir = 1.0f / ray_dir;
+    float hit_min;
+    float hit_max;
+    if (!intersect_box(ray_invdir, ray_origin, hit_min, hit_max))
+      return;
+    vec3 hit_pos = ray_origin + ray_dir * hit_min;
+    ivec3 exit, step, cell_id;
+    vec3 axis_delta, axis_distance;
+    for (uint i = 0; i < 3; ++i) {
+      // convert ray starting point to cell_id coordinates
+      float ray_offset = hit_pos[i] + this->size[i];
+      cell_id[i] = int(glm::clamp(floor(ray_offset / this->bin_size), 0.0f,
+                                  float(this->bin_count[i]) - 1.0f));
+      // hit_normal[i] = cell_id[i];
+      if (ray_dir[i] < 0) {
+        axis_delta[i] = -this->bin_size * ray_invdir[i];
+        axis_distance[i] =
+            (cell_id[i] * this->bin_size - ray_offset) * ray_invdir[i];
+        // exit[i] = -1;
+        step[i] = -1;
+      } else {
+        axis_delta[i] = this->bin_size * ray_invdir[i];
+        axis_distance[i] =
+            ((cell_id[i] + 1) * this->bin_size - ray_offset) * ray_invdir[i];
+        // exit[i] = int();
+        step[i] = 1;
+      }
+    }
+    uint cell_id_offset = cell_id.z * this->bin_count.x * this->bin_count.y +
+                          cell_id.y * this->bin_count.x + cell_id.x;
+    int cell_id_cur = int(cell_id_offset);
+    ivec3 cell_delta = step * ivec3(1, this->bin_count.x,
+                                    this->bin_count.x * this->bin_count.y);
+    while (true) {
+      uint o = cell_id_cur;
+      uint bin_offset = this->bins_indices[o];
+
+      uint k = (uint(axis_distance[0] < axis_distance[1]) << 2) +
+               (uint(axis_distance[0] < axis_distance[2]) << 1) +
+               (uint(axis_distance[1] < axis_distance[2]));
+      const uint map[8] = {2, 1, 2, 1, 2, 2, 0, 0};
+      uint axis = map[k];
+
+      // If the current node has items
+      if (bin_offset > 0) {
+        if (!on_hit(this->bins[bin_offset]))
+          return;
+      }
+      if (hit_max - hit_min < axis_distance[axis] + 1.0e-3)
+        break;
+      cell_id_cur += cell_delta[axis];
+      axis_distance[axis] += axis_delta[axis];
+    }
+  }
+  void fill_lines_render(std::vector<vec3> &lines) {
+    for (int dx = 0; dx < bin_count.x; dx++) {
+      for (int dy = 0; dy < bin_count.y; dy++) {
+        for (int dz = 0; dz < bin_count.z; dz++) {
+          const auto flat_id = dx + dy * this->bin_count.x +
+                               dz * this->bin_count.x * this->bin_count.y;
+          const auto bin_id = this->bins_indices[flat_id];
+          if (bin_id != 0) {
+            const auto bin_idx = bin_size * f32(dx) - this->size.x;
+            const auto bin_idy = bin_size * f32(dy) - this->size.y;
+            const auto bin_idz = bin_size * f32(dz) - this->size.z;
+            {
+              const u32 iter_x[] = {0, 0, 1, 1, 0, 0, 1, 1, 0, 0};
+              const u32 iter_y[] = {0, 1, 1, 0, 0, 0, 0, 1, 1, 0};
+              const u32 iter_z[] = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
+              ito(9) {
+                lines.push_back(vec3{
+                    bin_idx + bin_size * f32(iter_x[i]),
+                    bin_idy + bin_size * f32(iter_y[i]),
+                    bin_idz + bin_size * f32(iter_z[i])
+                });
+                lines.push_back(vec3{
+                    bin_idx + bin_size * f32(iter_x[i + 1]),
+                    bin_idy + bin_size * f32(iter_y[i + 1]),
+                    bin_idz + bin_size * f32(iter_z[i + 1])
+                });
+              }
+            }
+            {
+              const u32 iter_x[] = {
+                  0, 0, 1, 1, 1, 1,
+              };
+              const u32 iter_y[] = {
+                  1, 1, 1, 1, 0, 0,
+              };
+              const u32 iter_z[] = {
+                  0, 1, 0, 1, 0, 1,
+              };
+              ito(3) {
+                lines.push_back(vec3{
+                    bin_idx + bin_size * f32(iter_x[i * 2]),
+                    bin_idy + bin_size * f32(iter_y[i * 2]),
+                    bin_idz + bin_size * f32(iter_z[i * 2])
+                });
+                lines.push_back(vec3{
+                    bin_idx + bin_size * f32(iter_x[i * 2 + 1]),
+                    bin_idy + bin_size * f32(iter_y[i * 2 + 1]),
+                    bin_idz + bin_size * f32(iter_z[i * 2 + 1])
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+  }
   std::vector<u32> traverse(vec3 const &pos, f32 radius) {
     if (pos.x > this->size.x + radius || pos.y > this->size.y + radius ||
         pos.z > this->size.z + radius || pos.x < -this->size.x - radius ||
@@ -149,11 +228,9 @@ struct UG {
       return;
     }
     ivec3 min_ids =
-        ivec3((pos + size - vec3(radius, radius, radius)) /
-              bin_size);
+        ivec3((pos + size - vec3(radius, radius, radius)) / bin_size);
     ivec3 max_ids =
-        ivec3((pos + size + vec3(radius, radius, radius)) /
-              bin_size);
+        ivec3((pos + size + vec3(radius, radius, radius)) / bin_size);
     google::dense_hash_set<u32> set;
     set.set_empty_key(UINT32_MAX);
     for (int ix = min_ids.x; ix <= max_ids.x; ix++) {

@@ -208,3 +208,110 @@ struct Raw_Mesh_3p16i_Wrapper {
     return out;
   }
 };
+struct Collision {
+  vec3 position, normal;
+  float t, u, v;
+};
+// Möller–Trumbore intersection algorithm
+static bool ray_triangle_test_moller(vec3 ray_origin, vec3 ray_dir, vec3 v0,
+                                     vec3 v1, vec3 v2, Collision &out_collision) {
+
+  const float EPSILON = 1.0e-6f;
+  vec3 edge1, edge2, h, s, q;
+  float a, f, u, v;
+  edge1 = v1 - v0;
+  edge2 = v2 - v0;
+  h = glm::cross(ray_dir, edge2);
+  a = glm::dot(edge1, h);
+  if (a > -EPSILON && a < EPSILON)
+    return false; // This ray is parallel to this triangle.
+  f = 1.0 / a;
+  s = ray_origin - v0;
+  u = f * glm::dot(s, h);
+  if (u < 0.0 || u > 1.0)
+    return false;
+  q = glm::cross(s, edge1);
+  v = f * glm::dot(ray_dir, q);
+  if (v < 0.0 || u + v > 1.0)
+    return false;
+  // At this stage we can compute t to find out where the intersection point
+  // is on the line.
+  float t = f * glm::dot(edge2, q);
+  if (t > EPSILON) // ray intersection
+  {
+    out_collision.t = t;
+    out_collision.u = u;
+    out_collision.v = v;
+    out_collision.normal = cross(edge1, edge2);
+    out_collision.position = ray_origin + ray_dir * t;
+
+    return true;
+  } else // This means that there is a line intersection but not a ray
+         // intersection.
+    return false;
+}
+
+// Woop intersection algorithm
+static bool ray_triangle_test_woop(vec3 ray_origin, vec3 ray_dir, vec3 a,
+                                   vec3 b, vec3 c, Collision &out_collision) {
+  const float EPSILON = 1.0e-6f;
+  vec3 ab = b - a;
+  vec3 ac = c - a;
+  vec3 n = cross(ab, ac);
+  mat4 world_to_local = glm::inverse(mat4(
+      //
+      ab.x, ab.y, ab.z, 0.0f,
+      //
+      ac.x, ac.y, ac.z, 0.0f,
+      //
+      n.x, n.y, n.z, 0.0f,
+      //
+      a.x, a.y, a.z, 1.0f
+      //
+      ));
+  vec4 ray_origin_local =
+      (world_to_local * vec4(ray_origin.x, ray_origin.y, ray_origin.z, 1.0f));
+  vec4 ray_dir_local =
+      world_to_local * vec4(ray_dir.x, ray_dir.y, ray_dir.z, 0.0f);
+  if (std::abs(ray_dir_local.z) < EPSILON)
+    return false;
+  float t = -ray_origin_local.z / ray_dir_local.z;
+  if (t < 0.0f)
+    return false;
+  float u = ray_origin_local.x + t * ray_dir_local.x;
+  float v = ray_origin_local.y + t * ray_dir_local.y;
+  if (u > 0.0f && v > 0.0f && u + v < 1.0f) {
+    out_collision.t = t;
+    out_collision.u = u;
+    out_collision.v = v;
+    out_collision.normal = n;
+    out_collision.position = ray_origin + ray_dir * t;
+    return true;
+  }
+  return false;
+}
+
+static void get_aabb(vec3 const &a, vec3 const &b, vec3 const &c, vec3 &out_min,
+                     vec3 &out_max) {
+  ito(3) {
+    out_max[i] = std::max(a[i], std::max(b[i], c[i]));
+    out_min[i] = std::min(a[i], std::min(b[i], c[i]));
+  }
+}
+
+static void get_center_radius(vec3 const &a, vec3 const &b, vec3 const &c,
+                              vec3 &out_center, float out_radius) {
+  vec3 min, max;
+  get_aabb(a, b, c, min, max);
+  out_center = (min + max) * 0.5f;
+  vec3 extent = max - min;
+  out_radius = std::max(extent.x, std::max(extent.y, extent.z)) * 0.5f;
+}
+
+static void union_aabb(vec3 const &min_a, vec3 const &max_a, vec3 &inout_min_b,
+                       vec3 &inout_max_b) {
+  ito(3) {
+    inout_max_b[i] = std::max(inout_max_b[i], max_a[i]);
+    inout_min_b[i] = std::min(inout_min_b[i], min_a[i]);
+  }
+}

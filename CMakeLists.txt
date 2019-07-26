@@ -58,6 +58,7 @@ target_link_libraries(test_2 PRIVATE shaderc_shared)
 if(NOT EXISTS ${CMAKE_BINARY_DIR}/models)
     file(DOWNLOAD https://casual-effects.com/g3d/data10/research/model/bunny/bunny.zip models/bunny.zip SHOW_PROGRESS)
     file(DOWNLOAD https://casual-effects.com/g3d/data10/research/model/dragon/dragon.zip models/dragon.zip SHOW_PROGRESS)
+    file(DOWNLOAD https://static.free3d.com/models/cyctff9ijn-Newmalelow.zip models/Newmalelow.zip SHOW_PROGRESS)
     execute_process(
         COMMAND unzip -o *.zip
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/models/
