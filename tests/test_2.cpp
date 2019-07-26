@@ -631,43 +631,62 @@ TEST(graphics, vulkan_graphics_test_gizmo) {
 }
 
 TEST(graphics, vulkan_graphics_test_3d_models) {
+
+  // @TODO:
+  // * Make UG varying origin
+  //   * Most models have v[i].z>0.0f so it doesn't make sense to keep z<0.0f
+  //   * Proposal is to keep (min, max) pair instead to define the domain
+
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;
 
   Simple_Monitor simple_monitor("../shaders");
-  auto test_model = load_obj_raw("models/MaleLow.obj");
-  // swap z-y
-  for (auto &vertex : test_model.vertices) {
-    std::swap(vertex.position.y, vertex.position.z);
-    std::swap(vertex.normal.y, vertex.normal.z);
-  }
-  Raw_Mesh_3p3n2t32i_Wrapper test_model_wrapper =
-      Raw_Mesh_3p3n2t32i_Wrapper::create(device_wrapper, test_model);
-  vec3 test_model_min(0.0f, 0.0f, 0.0f), test_model_max(0.0f, 0.0f, 0.0f);
+  Raw_Mesh_3p3n2t32i test_model;
+  Raw_Mesh_3p3n2t32i_Wrapper test_model_wrapper;
+  UG test_model_ug(1.0f, 1.0f);
+  const char *model_filenames[] = {
+      "models/MaleLow.obj",
+      "models/bunny.obj",
+      "models/dragon.obj",
+  };
+  i32 current_model = 0;
+  float test_ug_size = 1.0f;
+  auto load_model = [&]() {
+    test_model = load_obj_raw(model_filenames[current_model]);
+    // swap z-y
+    for (auto &vertex : test_model.vertices) {
+      std::swap(vertex.position.y, vertex.position.z);
+      std::swap(vertex.normal.y, vertex.normal.z);
+    }
+    test_model_wrapper =
+        Raw_Mesh_3p3n2t32i_Wrapper::create(device_wrapper, test_model);
+    vec3 test_model_min(0.0f, 0.0f, 0.0f), test_model_max(0.0f, 0.0f, 0.0f);
 
-  for (auto face : test_model.indices) {
-    vec3 v0 = test_model.vertices[face.v0].position;
-    vec3 v1 = test_model.vertices[face.v1].position;
-    vec3 v2 = test_model.vertices[face.v2].position;
-    vec3 triangle_min, triangle_max;
-    get_aabb(v0, v1, v2, triangle_min, triangle_max);
-    union_aabb(triangle_min, triangle_max, test_model_min, test_model_max);
-  }
-
-  UG test_model_ug(test_model_max - test_model_min, 1.0f);
-  {
-    u32 triangle_id = 0;
     for (auto face : test_model.indices) {
       vec3 v0 = test_model.vertices[face.v0].position;
       vec3 v1 = test_model.vertices[face.v1].position;
       vec3 v2 = test_model.vertices[face.v2].position;
       vec3 triangle_min, triangle_max;
       get_aabb(v0, v1, v2, triangle_min, triangle_max);
-      test_model_ug.put((triangle_min + triangle_max) * 0.5f,
-                        (triangle_max - triangle_min) * 0.5f, triangle_id);
-      triangle_id++;
+      union_aabb(triangle_min, triangle_max, test_model_min, test_model_max);
     }
-  }
+
+    test_model_ug = UG(test_model_max - test_model_min, test_ug_size);
+    {
+      u32 triangle_id = 0;
+      for (auto face : test_model.indices) {
+        vec3 v0 = test_model.vertices[face.v0].position;
+        vec3 v1 = test_model.vertices[face.v1].position;
+        vec3 v2 = test_model.vertices[face.v2].position;
+        vec3 triangle_min, triangle_max;
+        get_aabb(v0, v1, v2, triangle_min, triangle_max);
+        test_model_ug.put((triangle_min + triangle_max) * 0.5f,
+                          (triangle_max - triangle_min) * 0.5f, triangle_id);
+        triangle_id++;
+      }
+    }
+  };
+  load_model();
   // Some shader data structures
   struct Test_Model_Vertex {
     vec3 in_position;
@@ -963,7 +982,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
               //                             gizmo_layer.mouse_ray, v0, v1, v2,
               //                             col)) {
               //   ray_triangle_test_woop(gizmo_layer.camera_pos,
-              //                          gizmo_layer.mouse_ray, v0, v1, v2, col);
+              //                          gizmo_layer.mouse_ray, v0, v1, v2,
+              //                          col);
               // }
 
               if (ray_triangle_test_woop(gizmo_layer.camera_pos,
@@ -995,6 +1015,15 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     ImGui::End();
     ImGui::Begin("Rendering configuration");
 
+    if (ImGui::ListBox("test models", &current_model, model_filenames,
+                       __ARRAY_SIZE(model_filenames)))
+      load_model();
+    // ImGui::InputText("test model filename", test_model_filename,
+    //                  sizeof(test_model_filename));
+    // if (ImGui::Button("load test model")) {
+    //   load_model(test_model_filename);
+    // }
+    ImGui::SliderFloat("UG cell size", &test_ug_size, 0.05f, 10.0f);
     ImGui::End();
     ImGui::Begin("Metrics");
     // ImGui::InputFloat("mx", &mx, 0.1f, 0.1f, 2);

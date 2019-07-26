@@ -165,6 +165,44 @@ struct UG {
     }
   }
   void fill_lines_render(std::vector<vec3> &lines) {
+    auto push_cube = [&lines](float bin_idx, float bin_idy, float bin_idz,
+                              float bin_size_x, float bin_size_y,
+                              float bin_size_z) {
+      {
+        const u32 iter_x[] = {0, 0, 1, 1, 0, 0, 1, 1, 0, 0};
+        const u32 iter_y[] = {0, 1, 1, 0, 0, 0, 0, 1, 1, 0};
+        const u32 iter_z[] = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
+        ito(9) {
+          lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i]),
+                               bin_idy + bin_size_y * f32(iter_y[i]),
+                               bin_idz + bin_size_z * f32(iter_z[i])});
+          lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i + 1]),
+                               bin_idy + bin_size_y * f32(iter_y[i + 1]),
+                               bin_idz + bin_size_z * f32(iter_z[i + 1])});
+        }
+      }
+      {
+        const u32 iter_x[] = {
+            0, 0, 1, 1, 1, 1,
+        };
+        const u32 iter_y[] = {
+            1, 1, 1, 1, 0, 0,
+        };
+        const u32 iter_z[] = {
+            0, 1, 0, 1, 0, 1,
+        };
+        ito(3) {
+          lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i * 2]),
+                               bin_idy + bin_size_y * f32(iter_y[i * 2]),
+                               bin_idz + bin_size_z * f32(iter_z[i * 2])});
+          lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i * 2 + 1]),
+                               bin_idy + bin_size_y * f32(iter_y[i * 2 + 1]),
+                               bin_idz + bin_size_z * f32(iter_z[i * 2 + 1])});
+        }
+      }
+    };
+    push_cube(-size.x, -size.y, -size.z, 2.0f * size.x, 2.0f * size.y,
+              2.0f * size.z);
     for (int dx = 0; dx < bin_count.x; dx++) {
       for (int dy = 0; dy < bin_count.y; dy++) {
         for (int dz = 0; dz < bin_count.z; dz++) {
@@ -175,46 +213,7 @@ struct UG {
             const auto bin_idx = bin_size * f32(dx) - this->size.x;
             const auto bin_idy = bin_size * f32(dy) - this->size.y;
             const auto bin_idz = bin_size * f32(dz) - this->size.z;
-            {
-              const u32 iter_x[] = {0, 0, 1, 1, 0, 0, 1, 1, 0, 0};
-              const u32 iter_y[] = {0, 1, 1, 0, 0, 0, 0, 1, 1, 0};
-              const u32 iter_z[] = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
-              ito(9) {
-                lines.push_back(vec3{
-                    bin_idx + bin_size * f32(iter_x[i]),
-                    bin_idy + bin_size * f32(iter_y[i]),
-                    bin_idz + bin_size * f32(iter_z[i])
-                });
-                lines.push_back(vec3{
-                    bin_idx + bin_size * f32(iter_x[i + 1]),
-                    bin_idy + bin_size * f32(iter_y[i + 1]),
-                    bin_idz + bin_size * f32(iter_z[i + 1])
-                });
-              }
-            }
-            {
-              const u32 iter_x[] = {
-                  0, 0, 1, 1, 1, 1,
-              };
-              const u32 iter_y[] = {
-                  1, 1, 1, 1, 0, 0,
-              };
-              const u32 iter_z[] = {
-                  0, 1, 0, 1, 0, 1,
-              };
-              ito(3) {
-                lines.push_back(vec3{
-                    bin_idx + bin_size * f32(iter_x[i * 2]),
-                    bin_idy + bin_size * f32(iter_y[i * 2]),
-                    bin_idz + bin_size * f32(iter_z[i * 2])
-                });
-                lines.push_back(vec3{
-                    bin_idx + bin_size * f32(iter_x[i * 2 + 1]),
-                    bin_idy + bin_size * f32(iter_y[i * 2 + 1]),
-                    bin_idz + bin_size * f32(iter_z[i * 2 + 1])
-                });
-              }
-            }
+            push_cube(bin_idx, bin_idy, bin_idz, bin_size, bin_size, bin_size);
           }
         }
       }
