@@ -15,6 +15,9 @@ struct Packed_UG {
   std::vector<uint> arena_table;
   // [point_id..]
   std::vector<uint> ids;
+  vec3 min, max;
+  uvec3 bin_count;
+  f32 bin_size;
 };
 
 // Uniform Grid
@@ -47,6 +50,10 @@ struct UG {
   }
   Packed_UG pack() {
     Packed_UG out;
+    out.min = min;
+    out.max = max;
+    out.bin_count = bin_count;
+    out.bin_size = bin_size;
     out.ids.push_back(0);
     for (auto &bin_index : bins_indices) {
       if (bin_index > 0) {

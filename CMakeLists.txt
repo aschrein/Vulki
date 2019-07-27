@@ -34,8 +34,11 @@ file(GLOB SOURCE "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widge
 # file(GLOB 3RD_SOURCE 3rdparty/SPIRV-Reflect/spirv_reflect.c)
 # message(${SOURCE})
 # message(${SOURCE})
+add_custom_command(OUTPUT kernel.o
+                   COMMAND ispc --pic -O0 -g ${CMAKE_SOURCE_DIR}/"src/kernel.ispc" -o kernel.o
+                   DEPENDS "src/kernel.ispc")
 set(LIBS meshoptimizer tinyobjloader glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util pthread boost_system boost_filesystem boost_thread)
-add_executable(GRAPHICS_EXPERIMENTS main.cpp ${SOURCE} ${3RD_SOURCE})
+add_executable(GRAPHICS_EXPERIMENTS main.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
 target_include_directories(GRAPHICS_EXPERIMENTS PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
 target_link_libraries(GRAPHICS_EXPERIMENTS ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(GRAPHICS_EXPERIMENTS PRIVATE shaderc_shared)
@@ -50,7 +53,7 @@ target_include_directories(test_1 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
 target_link_libraries(test_1 ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(test_1 PRIVATE shaderc_shared)
 
-add_executable(test_2 tests/test_2.cpp ${SOURCE} ${3RD_SOURCE})
+add_executable(test_2 tests/test_2.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
 target_include_directories(test_2 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
 target_link_libraries(test_2 ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(test_2 PRIVATE shaderc_shared)

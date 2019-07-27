@@ -630,6 +630,17 @@ TEST(graphics, vulkan_graphics_test_gizmo) {
   device_wrapper.window_loop();
 }
 
+struct ISPC_Packed_UG {
+  uint *bins_indices;
+  uint *ids;
+  float _min[3], _max[3];
+  uint bin_count[3];
+  float bin_size;
+};
+extern "C" void ispc_trace(ISPC_Packed_UG *ug, void *vertices, uint *faces,
+                           vec3 *ray_dir, vec3 *ray_origin,
+                           Collision *out_collision, uint *ray_count);
+
 TEST(graphics, vulkan_graphics_test_3d_models) {
 
   // @TODO:
@@ -642,8 +653,10 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
 
   Simple_Monitor simple_monitor("../shaders");
   Raw_Mesh_3p3n2t32i test_model;
+  Raw_Mesh_3p32i_AOSOA test_model_aosoa;
   Raw_Mesh_3p3n2t32i_Wrapper test_model_wrapper;
   UG test_model_ug(1.0f, 1.0f);
+  Packed_UG test_model_packed_ug;
   const char *model_filenames[] = {
       "models/MaleLow.obj",
       "models/bunny.obj",
@@ -651,9 +664,11 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   };
   i32 current_model = 0;
   f32 test_ug_size = 1.0f;
+  bool trace_ispc = true;
   bool draw_test_model_ug = false;
   auto load_model = [&]() {
     test_model = load_obj_raw(model_filenames[current_model]);
+    test_model_aosoa = test_model.convert_to_aosoa();
     // swap z-y
     for (auto &vertex : test_model.vertices) {
       std::swap(vertex.position.y, vertex.position.z);
@@ -673,6 +688,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     }
 
     test_model_ug = UG(test_model_min, test_model_max, test_ug_size);
+    test_model_packed_ug = test_model_ug.pack();
     {
       u32 triangle_id = 0;
       for (auto face : test_model.indices) {
@@ -763,6 +779,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     }
     void enqueue(Path_Tracing_Job job) { job_queue.push_front(job); }
     bool has_job() { return !job_queue.empty(); }
+    void reset() { job_queue.clear(); }
   } path_tracing_queue;
   CPU_Image path_tracing_gpu_image;
   bool trace_paths = false;
@@ -776,6 +793,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   };
   auto reset_path_tracing_state = [&](u32 width, u32 height) {
     grab_path_tracing_cam();
+    path_tracing_queue.reset();
     path_tracing_image.init(width, height);
     path_tracing_gpu_image = CPU_Image::create(device_wrapper, width, height,
                                                vk::Format::eR8G8B8A8Unorm);
@@ -796,71 +814,85 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   };
 
   auto path_tracing_iteration = [&] {
-    u32 max_jobs_per_iter = 1000;
-    u32 jobs_sofar = 0;
-    while (path_tracing_queue.has_job()) {
-      jobs_sofar++;
-      if (jobs_sofar == max_jobs_per_iter)
-        break;
-      auto job = path_tracing_queue.dequeue();
-      bool col_found = false;
-      Collision min_col{.t = 1.0e10f};
-      test_model_ug.iterate(
-          job.ray_dir, job.ray_origin, [&](std::vector<u32> const &items) {
-            for (u32 face_id : items) {
-              auto face = test_model.indices[face_id];
-              vec3 v0 = test_model.vertices[face.v0].position;
-              vec3 v1 = test_model.vertices[face.v1].position;
-              vec3 v2 = test_model.vertices[face.v2].position;
-              Collision col = {};
+    if (trace_ispc) {
+      struct ISPC_Packed_UG {
+        uint *bins_indices;
+        uint *ids;
+        float _min[3], _max[3];
+        uint bin_count[3];
+        float bin_size;
+      };
+      extern void trace(Packed_UG * ug, void *vertices, uint *faces,
+                        vec3 *ray_dir, vec3 *ray_origin,
+                        Collision *out_collision, uint ray_count);
+    } else {
+      u32 max_jobs_per_iter = 1000;
+      u32 jobs_sofar = 0;
+      while (path_tracing_queue.has_job()) {
+        jobs_sofar++;
+        if (jobs_sofar == max_jobs_per_iter)
+          break;
+        auto job = path_tracing_queue.dequeue();
+        bool col_found = false;
+        Collision min_col{.t = 1.0e10f};
+        test_model_ug.iterate(
+            job.ray_dir, job.ray_origin, [&](std::vector<u32> const &items) {
+              for (u32 face_id : items) {
+                auto face = test_model.indices[face_id];
+                vec3 v0 = test_model.vertices[face.v0].position;
+                vec3 v1 = test_model.vertices[face.v1].position;
+                vec3 v2 = test_model.vertices[face.v2].position;
+                Collision col = {};
 
-              if (ray_triangle_test_woop(job.ray_origin, job.ray_dir, v0, v1,
-                                         v2, col)) {
-                if (col.t < min_col.t) {
-                  min_col = col;
-                  col_found = true;
+                if (ray_triangle_test_woop(job.ray_origin, job.ray_dir, v0, v1,
+                                           v2, col)) {
+                  if (col.t < min_col.t) {
+                    min_col = col;
+                    col_found = true;
+                  }
                 }
               }
-            }
 
-            return !col_found;
-          });
-      if (col_found) {
-        if (job.depth == 1) {
-          // Terminate
-          path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-                                       vec4(0.0f, 0.0f, 0.0f, job.weight));
-        } else {
-          vec3 tangent =
-              glm::normalize(glm::cross(job.ray_dir, min_col.normal));
-          vec3 binormal = glm::cross(tangent, min_col.normal);
-          u32 secondary_N = 16;
-          ito(secondary_N) {
-            vec3 rand = frand.rand_unit_sphere();
-            auto new_job = job;
-            new_job.ray_dir =
-                glm::normalize(min_col.normal * (1.0f + rand.z) +
-                               tangent * rand.x + binormal * rand.y);
-            new_job.ray_origin = min_col.position;
-            new_job.weight *= 1.0f / secondary_N;
-            new_job.depth += 1;
-            path_tracing_queue.enqueue(new_job);
+              return !col_found;
+            });
+        if (col_found) {
+          if (job.depth == 1) {
+            // Terminate
+            path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+                                         vec4(0.0f, 0.0f, 0.0f, job.weight));
+          } else {
+            vec3 tangent =
+                glm::normalize(glm::cross(job.ray_dir, min_col.normal));
+            vec3 binormal = glm::cross(tangent, min_col.normal);
+            u32 secondary_N = 16;
+            ito(secondary_N) {
+              vec3 rand = frand.rand_unit_sphere();
+              auto new_job = job;
+              new_job.ray_dir =
+                  glm::normalize(min_col.normal * (1.0f + rand.z) +
+                                 tangent * rand.x + binormal * rand.y);
+              new_job.ray_origin = min_col.position;
+              new_job.weight *= 1.0f / secondary_N;
+              new_job.depth += 1;
+              path_tracing_queue.enqueue(new_job);
+            }
           }
+          // f32 ldotn = std::max(0.3f,
+          //     glm::dot(min_col.normal, glm::normalize(vec3(1.0f,
+          //     -1.0f, 1.0f))));
+          // path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+          //                              vec4(ldotn, ldotn, ldotn, 1.0f));
+        } else {
+          path_tracing_image.add_value(
+              job.pixel_x, job.pixel_y,
+              vec4(job.weight * std::abs(job.ray_dir.z) * 0.5f,
+                   job.weight * std::abs(job.ray_dir.z),
+                   job.weight * std::abs(job.ray_dir.z), job.weight));
         }
-        // f32 ldotn = std::max(0.3f,
-        //     glm::dot(min_col.normal, glm::normalize(vec3(1.0f,
-        //     -1.0f, 1.0f))));
-        // path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-        //                              vec4(ldotn, ldotn, ldotn, 1.0f));
-      } else {
-        path_tracing_image.add_value(
-            job.pixel_x, job.pixel_y,
-            vec4(job.weight * std::abs(job.ray_dir.z) * 0.5f,
-                 job.weight * std::abs(job.ray_dir.z),
-                 job.weight * std::abs(job.ray_dir.z), job.weight));
       }
     }
   };
+
   struct Path_Tracing_Plane_Push {
     mat4 viewprojmodel;
   };
@@ -1142,47 +1174,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     ImGui::Begin("dummy window");
     ImGui::PopStyleVar(3);
     gizmo_layer.on_imgui_viewport();
-    {
-      test_model_ug.iterate(
-          gizmo_layer.mouse_ray, gizmo_layer.camera_pos,
-          [&](std::vector<u32> const &items) {
-            f32 min_t = 1.0e10f;
-            for (u32 face_id : items) {
-              auto face = test_model.indices[face_id];
-              vec3 v0 = test_model.vertices[face.v0].position;
-              vec3 v1 = test_model.vertices[face.v1].position;
-              vec3 v2 = test_model.vertices[face.v2].position;
-              Collision col = {};
-
-              // @TODO:
-              // The internet says that woop is faster that moller
-              // but may struggle from certain numerical instability.
-              // So it's better to create a test
-              // Collision col1 = {};
-              // if (ray_triangle_test_moller(gizmo_layer.camera_pos,
-              //                              gizmo_layer.mouse_ray, v0, v1, v2,
-              //                              col1) &&
-              //     !ray_triangle_test_woop(gizmo_layer.camera_pos,
-              //                             gizmo_layer.mouse_ray, v0, v1, v2,
-              //                             col)) {
-              //   ray_triangle_test_woop(gizmo_layer.camera_pos,
-              //                          gizmo_layer.mouse_ray, v0, v1, v2,
-              //                          col);
-              // }
-
-              if (ray_triangle_test_woop(gizmo_layer.camera_pos,
-                                         gizmo_layer.mouse_ray, v0, v1, v2,
-                                         col)) {
-                if (col.t < min_t) {
-                  min_t = col.t;
-                  gizmo_layer.gizmo_drag_state.pos = col.position;
-                }
-                return false;
-              }
-            }
-            return true;
-          });
-    }
+    
     // ImGui::Button("Press me");
 
     ImGui::Image(ImGui_ImplVulkan_AddTexture(
@@ -1198,7 +1190,66 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
 
     ImGui::End();
     ImGui::Begin("Rendering configuration");
+    {
+      if (trace_ispc) {
+        ISPC_Packed_UG ispc_packed_ug;
+        ispc_packed_ug.ids = &test_model_packed_ug.ids[0];
+        ispc_packed_ug.bins_indices = &test_model_packed_ug.arena_table[0];
+        memcpy(ispc_packed_ug._min, &test_model_packed_ug.min, 12);
+        memcpy(ispc_packed_ug._max, &test_model_packed_ug.max, 12);
+        memcpy(ispc_packed_ug.bin_count, &test_model_packed_ug.bin_count, 12);
+        ispc_packed_ug.bin_size = test_model_packed_ug.bin_size;
+        Collision col = {.t = FLT_MAX};
+        uint _tmp = 1;
+        ispc_trace(&ispc_packed_ug, (void *)&test_model_aosoa.positions[0],
+                   (uint *)&test_model_aosoa.indices[0], &gizmo_layer.mouse_ray,
+                   &gizmo_layer.camera_pos, &col, &_tmp);
+        ImGui::InputFloat("collisin dist", &col.t);
+        if (col.t < FLT_MAX) {
+          gizmo_layer.gizmo_drag_state.pos = col.position;
+        }
+      } else {
+        test_model_ug.iterate(
+            gizmo_layer.mouse_ray, gizmo_layer.camera_pos,
+            [&](std::vector<u32> const &items) {
+              f32 min_t = 1.0e10f;
+              for (u32 face_id : items) {
+                auto face = test_model.indices[face_id];
+                vec3 v0 = test_model.vertices[face.v0].position;
+                vec3 v1 = test_model.vertices[face.v1].position;
+                vec3 v2 = test_model.vertices[face.v2].position;
+                Collision col = {};
 
+                // @TODO:
+                // The internet says that woop is faster that moller
+                // but may struggle from certain numerical instability.
+                // So it's better to create a test
+                // Collision col1 = {};
+                // if (ray_triangle_test_moller(gizmo_layer.camera_pos,
+                //                              gizmo_layer.mouse_ray, v0, v1,
+                //                              v2, col1) &&
+                //     !ray_triangle_test_woop(gizmo_layer.camera_pos,
+                //                             gizmo_layer.mouse_ray, v0, v1,
+                //                             v2, col)) {
+                //   ray_triangle_test_woop(gizmo_layer.camera_pos,
+                //                          gizmo_layer.mouse_ray, v0, v1, v2,
+                //                          col);
+                // }
+
+                if (ray_triangle_test_woop(gizmo_layer.camera_pos,
+                                           gizmo_layer.mouse_ray, v0, v1, v2,
+                                           col)) {
+                  if (col.t < min_t) {
+                    min_t = col.t;
+                    gizmo_layer.gizmo_drag_state.pos = col.position;
+                  }
+                  return false;
+                }
+              }
+              return true;
+            });
+      }
+    }
     if (ImGui::ListBox("test models", &current_model, model_filenames,
                        __ARRAY_SIZE(model_filenames)))
       load_model();

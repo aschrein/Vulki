@@ -41,6 +41,15 @@ struct Raw_Mesh_3p32i {
   std::vector<vec3> positions;
   std::vector<u32_face> indices;
 };
+struct vec3_aos8 {
+  f32 x[8];
+  f32 y[8];
+  f32 z[8];
+};
+struct Raw_Mesh_3p32i_AOSOA {
+  std::vector<vec3_aos8> positions;
+  std::vector<u32_face> indices;
+};
 struct Vertex_3p3n2t {
   vec3 position;
   vec3 normal;
@@ -49,6 +58,20 @@ struct Vertex_3p3n2t {
 struct Raw_Mesh_3p3n2t32i {
   std::vector<Vertex_3p3n2t> vertices;
   std::vector<u32_face> indices;
+  Raw_Mesh_3p32i_AOSOA convert_to_aosoa() {
+    Raw_Mesh_3p32i_AOSOA out;
+    u32 chunks_count = (vertices.size() + 7)/8;
+    out.positions.resize(chunks_count);
+    out.indices = indices;
+    u32 i = 0;
+    for (auto const &vertex : vertices) {
+      out.positions[i/8].x[i%8] = vertex.position.x;
+      out.positions[i/8].y[i%8] = vertex.position.y;
+      out.positions[i/8].y[i%8] = vertex.position.z;
+      i++;
+    }
+    return out;
+  }
 };
 
 static Raw_Mesh_3p16i subdivide_cylinder(uint32_t level, float radius,

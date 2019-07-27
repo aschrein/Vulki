@@ -29,16 +29,28 @@
 #include <glm/ext.hpp>
 #include <glm/glm.hpp>
 using namespace glm;
-
+struct ISPC_Packed_UG {
+  uint *bins_indices;
+  uint *ids;
+  float _min[3], _max[3];
+  uint bin_count[3];
+  float bin_size;
+};
+extern "C" void ispc_trace(ISPC_Packed_UG *ug, void *vertices, uint *faces,
+                           vec3 *ray_dir, vec3 *ray_origin,
+                           Collision *out_collision, uint *ray_count);
 
 int main(void) {
+  std::cout << "[CWD]: " << std::filesystem::current_path() << "\n";
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;
 
   Simple_Monitor simple_monitor("../shaders");
   Raw_Mesh_3p3n2t32i test_model;
+  Raw_Mesh_3p32i_AOSOA test_model_aosoa;
   Raw_Mesh_3p3n2t32i_Wrapper test_model_wrapper;
   UG test_model_ug(1.0f, 1.0f);
+  Packed_UG test_model_packed_ug;
   const char *model_filenames[] = {
       "models/MaleLow.obj",
       "models/bunny.obj",
@@ -46,8 +58,11 @@ int main(void) {
   };
   i32 current_model = 0;
   f32 test_ug_size = 1.0f;
+  bool trace_ispc = true;
+  bool draw_test_model_ug = false;
   auto load_model = [&]() {
     test_model = load_obj_raw(model_filenames[current_model]);
+    test_model_aosoa = test_model.convert_to_aosoa();
     // swap z-y
     for (auto &vertex : test_model.vertices) {
       std::swap(vertex.position.y, vertex.position.z);
@@ -67,6 +82,7 @@ int main(void) {
     }
 
     test_model_ug = UG(test_model_min, test_model_max, test_ug_size);
+    test_model_packed_ug = test_model_ug.pack();
     {
       u32 triangle_id = 0;
       for (auto face : test_model.indices) {
@@ -117,12 +133,16 @@ int main(void) {
   ////////////////////////
   // Path tracing state //
   ////////////////////////
+  Random_Factory frand;
   struct Path_Tracing_Camera {
     vec3 pos;
     vec3 look;
     vec3 up;
     vec3 right;
-    vec3 gen_ray(f32 u, f32 v) { return normalize(look + up * v + right * u); }
+    f32 fov;
+    vec3 gen_ray(f32 u, f32 v) {
+      return normalize(look + up * v + right * u * fov);
+    }
   } path_tracing_camera;
   struct Path_Tracing_Image {
     std::vector<vec4> data;
@@ -142,16 +162,18 @@ int main(void) {
     u32 pixel_x, pixel_y;
     f32 weight;
     u32 media_material_id;
+    u32 depth;
   };
   struct Path_Tracing_Queue {
-    std::vector<Path_Tracing_Job> job_queue;
+    std::deque<Path_Tracing_Job> job_queue;
     Path_Tracing_Job dequeue() {
       auto back = job_queue.back();
       job_queue.pop_back();
       return back;
     }
-    void enqueue(Path_Tracing_Job job) { job_queue.push_back(job); }
+    void enqueue(Path_Tracing_Job job) { job_queue.push_front(job); }
     bool has_job() { return !job_queue.empty(); }
+    void reset() { job_queue.clear(); }
   } path_tracing_queue;
   CPU_Image path_tracing_gpu_image;
   bool trace_paths = false;
@@ -160,9 +182,12 @@ int main(void) {
     path_tracing_camera.look = gizmo_layer.camera_look;
     path_tracing_camera.up = gizmo_layer.camera_up;
     path_tracing_camera.right = gizmo_layer.camera_right;
+    path_tracing_camera.fov = float(gizmo_layer.example_viewport.extent.width) /
+                              gizmo_layer.example_viewport.extent.height;
   };
   auto reset_path_tracing_state = [&](u32 width, u32 height) {
     grab_path_tracing_cam();
+    path_tracing_queue.reset();
     path_tracing_image.init(width, height);
     path_tracing_gpu_image = CPU_Image::create(device_wrapper, width, height,
                                                vk::Format::eR8G8B8A8Unorm);
@@ -176,41 +201,92 @@ int main(void) {
         job.pixel_x = j;
         job.pixel_y = i;
         job.weight = 1.0f;
+        job.depth = 0;
         path_tracing_queue.enqueue(job);
       }
     }
   };
-  auto path_tracing_iteration = [&] {
-    Path_Tracing_Queue new_queue;
-    while (path_tracing_queue.has_job()) {
-      auto job = path_tracing_queue.dequeue();
-      test_model_ug.iterate(
-          job.ray_dir, job.ray_origin, [&](std::vector<u32> const &items) {
-            Collision min_col{.t = 1.0e10f};
-            bool col_found = false;
-            for (u32 face_id : items) {
-              auto face = test_model.indices[face_id];
-              vec3 v0 = test_model.vertices[face.v0].position;
-              vec3 v1 = test_model.vertices[face.v1].position;
-              vec3 v2 = test_model.vertices[face.v2].position;
-              Collision col = {};
 
-              if (ray_triangle_test_woop(job.ray_origin, job.ray_dir, v0, v1,
-                                         v2, col)) {
-                if (col.t < min_col.t) {
-                  min_col = col;
-                  col_found = true;
+  auto path_tracing_iteration = [&] {
+    if (trace_ispc) {
+      struct ISPC_Packed_UG {
+        uint *bins_indices;
+        uint *ids;
+        float _min[3], _max[3];
+        uint bin_count[3];
+        float bin_size;
+      };
+      extern void trace(Packed_UG * ug, void *vertices, uint *faces,
+                        vec3 *ray_dir, vec3 *ray_origin,
+                        Collision *out_collision, uint ray_count);
+    } else {
+      u32 max_jobs_per_iter = 1000;
+      u32 jobs_sofar = 0;
+      while (path_tracing_queue.has_job()) {
+        jobs_sofar++;
+        if (jobs_sofar == max_jobs_per_iter)
+          break;
+        auto job = path_tracing_queue.dequeue();
+        bool col_found = false;
+        Collision min_col{.t = 1.0e10f};
+        test_model_ug.iterate(
+            job.ray_dir, job.ray_origin, [&](std::vector<u32> const &items) {
+              for (u32 face_id : items) {
+                auto face = test_model.indices[face_id];
+                vec3 v0 = test_model.vertices[face.v0].position;
+                vec3 v1 = test_model.vertices[face.v1].position;
+                vec3 v2 = test_model.vertices[face.v2].position;
+                Collision col = {};
+
+                if (ray_triangle_test_woop(job.ray_origin, job.ray_dir, v0, v1,
+                                           v2, col)) {
+                  if (col.t < min_col.t) {
+                    min_col = col;
+                    col_found = true;
+                  }
                 }
               }
+
+              return !col_found;
+            });
+        if (col_found) {
+          if (job.depth == 1) {
+            // Terminate
+            path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+                                         vec4(0.0f, 0.0f, 0.0f, job.weight));
+          } else {
+            vec3 tangent =
+                glm::normalize(glm::cross(job.ray_dir, min_col.normal));
+            vec3 binormal = glm::cross(tangent, min_col.normal);
+            u32 secondary_N = 16;
+            ito(secondary_N) {
+              vec3 rand = frand.rand_unit_sphere();
+              auto new_job = job;
+              new_job.ray_dir =
+                  glm::normalize(min_col.normal * (1.0f + rand.z) +
+                                 tangent * rand.x + binormal * rand.y);
+              new_job.ray_origin = min_col.position;
+              new_job.weight *= 1.0f / secondary_N;
+              new_job.depth += 1;
+              path_tracing_queue.enqueue(new_job);
             }
-            if (col_found) {
-              path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-                                           vec4(1.0f, 0.0f, 0.0f, 1.0f));
-            }
-            return !col_found;
-          });
+          }
+          // f32 ldotn = std::max(0.3f,
+          //     glm::dot(min_col.normal, glm::normalize(vec3(1.0f,
+          //     -1.0f, 1.0f))));
+          // path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+          //                              vec4(ldotn, ldotn, ldotn, 1.0f));
+        } else {
+          path_tracing_image.add_value(
+              job.pixel_x, job.pixel_y,
+              vec4(job.weight * std::abs(job.ray_dir.z) * 0.5f,
+                   job.weight * std::abs(job.ray_dir.z),
+                   job.weight * std::abs(job.ray_dir.z), job.weight));
+        }
+      }
     }
   };
+
   struct Path_Tracing_Plane_Push {
     mat4 viewprojmodel;
   };
@@ -389,15 +465,24 @@ int main(void) {
       path_tracing_plane_pipeline.bind_pipeline(device_wrapper.device.get(),
                                                 cmd);
       Path_Tracing_Plane_Push tmp_pc{};
-
-      tmp_pc.viewprojmodel = gizmo_layer.camera_proj * gizmo_layer.camera_view *
-                             glm::scale(vec3(16.0f, 16.0f, 1.0f));
+      f32 dist = 2.0f;
+      vec3 pos = path_tracing_camera.pos + path_tracing_camera.look * dist;
+      vec3 up = path_tracing_camera.up * dist;
+      vec3 right = path_tracing_camera.right * dist * path_tracing_camera.fov;
+      vec3 look = path_tracing_camera.look;
+      mat4 transform;
+      transform[0] = vec4(right.x, right.y, right.z, 0.0f);
+      transform[1] = vec4(up.x, up.y, up.z, 0.0f);
+      transform[2] = vec4(look.x, look.y, look.z, 0.0f);
+      transform[3] = vec4(pos.x, pos.y, pos.z, 1.0f);
+      tmp_pc.viewprojmodel =
+          gizmo_layer.camera_proj * gizmo_layer.camera_view * transform;
       path_tracing_plane_pipeline.push_constants(
           cmd, &tmp_pc, sizeof(Path_Tracing_Plane_Push));
       path_tracing_plane_pipeline.update_sampled_image_descriptor(
           device.get(), "tex", path_tracing_gpu_image.image_view.get(),
           nearest_sampler.get());
-      cmd.draw(3, 1, 0, 0);
+      cmd.draw(6, 1, 0, 0);
     }
     {
       test_model_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
@@ -416,8 +501,7 @@ int main(void) {
 
       cmd.drawIndexed(test_model_wrapper.vertex_count, 1, 0, 0, 0);
     }
-
-    {
+    if (draw_test_model_ug) {
       lines_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
       Test_Model_Push_Constants tmp_pc{};
 
@@ -485,45 +569,64 @@ int main(void) {
     ImGui::PopStyleVar(3);
     gizmo_layer.on_imgui_viewport();
     {
-      test_model_ug.iterate(
-          gizmo_layer.mouse_ray, gizmo_layer.camera_pos,
-          [&](std::vector<u32> const &items) {
-            f32 min_t = 1.0e10f;
-            for (u32 face_id : items) {
-              auto face = test_model.indices[face_id];
-              vec3 v0 = test_model.vertices[face.v0].position;
-              vec3 v1 = test_model.vertices[face.v1].position;
-              vec3 v2 = test_model.vertices[face.v2].position;
-              Collision col = {};
+      if (trace_ispc) {
+        ISPC_Packed_UG ispc_packed_ug;
+        ispc_packed_ug.ids = &test_model_packed_ug.ids[0];
+        ispc_packed_ug.bins_indices = &test_model_packed_ug.arena_table[0];
+        memcpy(ispc_packed_ug._min, &test_model_packed_ug.min, 12);
+        memcpy(ispc_packed_ug._max, &test_model_packed_ug.max, 12);
+        memcpy(ispc_packed_ug.bin_count, &test_model_packed_ug.bin_count, 12);
+        ispc_packed_ug.bin_size = test_model_packed_ug.bin_size;
+        Collision col = {.t = FLT_MAX};
+        uint _tmp = 1;
+        ispc_trace(&ispc_packed_ug, (void *)&test_model_aosoa.positions[0],
+                   (uint *)&test_model_aosoa.indices[0], &gizmo_layer.mouse_ray,
+                   &gizmo_layer.camera_pos, &col, &_tmp);
+        ImGui::InputFloat("collisin dist", &col.t);
+        if (col.t < FLT_MAX) {
+          gizmo_layer.gizmo_drag_state.pos = col.position;
+        }
+      } else {
+        test_model_ug.iterate(
+            gizmo_layer.mouse_ray, gizmo_layer.camera_pos,
+            [&](std::vector<u32> const &items) {
+              f32 min_t = 1.0e10f;
+              for (u32 face_id : items) {
+                auto face = test_model.indices[face_id];
+                vec3 v0 = test_model.vertices[face.v0].position;
+                vec3 v1 = test_model.vertices[face.v1].position;
+                vec3 v2 = test_model.vertices[face.v2].position;
+                Collision col = {};
 
-              // @TODO:
-              // The internet says that woop is faster that moller
-              // but may struggle from certain numerical instability.
-              // So it's better to create a test
-              // Collision col1 = {};
-              // if (ray_triangle_test_moller(gizmo_layer.camera_pos,
-              //                              gizmo_layer.mouse_ray, v0, v1, v2,
-              //                              col1) &&
-              //     !ray_triangle_test_woop(gizmo_layer.camera_pos,
-              //                             gizmo_layer.mouse_ray, v0, v1, v2,
-              //                             col)) {
-              //   ray_triangle_test_woop(gizmo_layer.camera_pos,
-              //                          gizmo_layer.mouse_ray, v0, v1, v2,
-              //                          col);
-              // }
+                // @TODO:
+                // The internet says that woop is faster that moller
+                // but may struggle from certain numerical instability.
+                // So it's better to create a test
+                // Collision col1 = {};
+                // if (ray_triangle_test_moller(gizmo_layer.camera_pos,
+                //                              gizmo_layer.mouse_ray, v0, v1,
+                //                              v2, col1) &&
+                //     !ray_triangle_test_woop(gizmo_layer.camera_pos,
+                //                             gizmo_layer.mouse_ray, v0, v1,
+                //                             v2, col)) {
+                //   ray_triangle_test_woop(gizmo_layer.camera_pos,
+                //                          gizmo_layer.mouse_ray, v0, v1, v2,
+                //                          col);
+                // }
 
-              if (ray_triangle_test_woop(gizmo_layer.camera_pos,
-                                         gizmo_layer.mouse_ray, v0, v1, v2,
-                                         col)) {
-                if (col.t < min_t) {
-                  min_t = col.t;
-                  gizmo_layer.gizmo_drag_state.pos = col.position;
+                if (ray_triangle_test_woop(gizmo_layer.camera_pos,
+                                           gizmo_layer.mouse_ray, v0, v1, v2,
+                                           col)) {
+                  if (col.t < min_t) {
+                    min_t = col.t;
+                    gizmo_layer.gizmo_drag_state.pos = col.position;
+                  }
+                  return false;
                 }
-                return false;
               }
-            }
-            return true;
-          });
+              return true;
+            });
+      }
     }
     // ImGui::Button("Press me");
 
@@ -549,26 +652,30 @@ int main(void) {
     // if (ImGui::Button("load test model")) {
     //   load_model(test_model_filename);
     // }
-    ImGui::SliderFloat("UG cell size", &test_ug_size, 0.05f, 10.0f);
+    ImGui::SliderFloat("UG cell size", &test_ug_size, 0.01f, 1.0f);
+    ImGui::Checkbox("Draw test model UG", &draw_test_model_ug);
     if (ImGui::Checkbox("trace paths", &trace_paths)) {
       if (trace_paths) {
-        reset_path_tracing_state(128, 128);
-        path_tracing_iteration();
+        reset_path_tracing_state(512, 512);
       }
     }
     if (ImGui::Button("update path tracing")) {
       if (trace_paths) {
-        reset_path_tracing_state(128, 128);
-        path_tracing_iteration();
+        reset_path_tracing_state(512, 512);
       }
     }
     if (trace_paths) {
+      path_tracing_iteration();
       void *data = path_tracing_gpu_image.image.map();
       u32 *typed_data = (u32 *)data;
+
       auto color_to_int = [](vec4 color) {
-        return u8(255.0f * color.x / color.w) |
-               (u8(255.0f * color.y / color.w) << 8) |
-               (u8(255.0f * color.z / color.w) << 16) | (0xff << 24);
+        auto saturate = [](f32 val) {
+          return val < 0.0f ? 0.0f : (val > 1.0f ? 1.0f : val);
+        };
+        return u8(255.0f * saturate(color.x / color.w)) |
+               (u8(255.0f * saturate(color.y / color.w)) << 8) |
+               (u8(255.0f * saturate(color.z / color.w)) << 16) | (0xff << 24);
       };
       ito(path_tracing_image.height) {
         jto(path_tracing_image.width) {
