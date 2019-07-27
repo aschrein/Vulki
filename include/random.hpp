@@ -1,6 +1,6 @@
 #pragma once
 #include "../3rdparty/pcg.hpp"
-#include "glm/vec3.hpp"
+#include "glm/glm.hpp"
 using namespace glm;
 
 class Random_Factory {
@@ -28,6 +28,22 @@ public:
       return (rand % range) + begin;
     }
   }
+  vec3 rand_unit_sphere() {
+    while (true) {
+      vec3 pos = rand_unit_cube();
+      if (glm::dot(pos, pos) <= 1.0f)
+        return pos;
+    }
+  }
+  vec3 rand_unit_sphere_surface() {
+    while (true) {
+      vec3 pos = rand_unit_cube();
+      f32 length = glm::length(pos);
+      if (length <= 1.0f)
+        return pos / length;
+    }
+  }
+
 private:
   pcg m_pcg;
 };

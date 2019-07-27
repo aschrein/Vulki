@@ -30,7 +30,8 @@ struct UG {
   std::vector<std::vector<uint>> bins;
   std::vector<uint> bins_indices;
   UG(float size, u32 bin_count)
-      : UG(-vec3{size, size, size}, {size, size, size}, 2.0f * size / bin_count) {}
+      : UG(-vec3{size, size, size}, {size, size, size},
+           2.0f * size / bin_count) {}
   UG(vec3 _min, vec3 _max, f32 _bin_size) : bin_size(_bin_size) {
     vec3 fbin_count = (_max - _min) / bin_size;
     fbin_count = vec3(std::ceil(fbin_count.x + 1.0e-7f),
@@ -125,7 +126,12 @@ struct UG {
       cell_id[i] = int(glm::clamp(floor(ray_offset / this->bin_size), 0.0f,
                                   float(this->bin_count[i]) - 1.0f));
       // hit_normal[i] = cell_id[i];
-      if (ray_dir[i] < 0) {
+      if (std::abs(ray_dir[i]) < 1.0e-4f) {
+        axis_delta[i] = 0.0f;
+        axis_distance[i] =
+            1.0e10f;
+        step[i] = 0;
+      } else if (ray_dir[i] < 0) {
         axis_delta[i] = -this->bin_size * ray_invdir[i];
         axis_distance[i] =
             (cell_id[i] * this->bin_size - ray_offset) * ray_invdir[i];
@@ -366,7 +372,7 @@ struct Simulation_State {
     system_size += rest_length;
   }
   void step(float dt) {
-    auto ug = UG(system_size, system_size/rest_length);
+    auto ug = UG(system_size, system_size / rest_length);
     {
       u32 i = 0;
       for (auto const &pnt : particles) {

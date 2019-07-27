@@ -214,7 +214,8 @@ struct Collision {
 };
 // Möller–Trumbore intersection algorithm
 static bool ray_triangle_test_moller(vec3 ray_origin, vec3 ray_dir, vec3 v0,
-                                     vec3 v1, vec3 v2, Collision &out_collision) {
+                                     vec3 v1, vec3 v2,
+                                     Collision &out_collision) {
 
   const float EPSILON = 1.0e-6f;
   vec3 edge1, edge2, h, s, q;
@@ -242,7 +243,8 @@ static bool ray_triangle_test_moller(vec3 ray_origin, vec3 ray_dir, vec3 v0,
     out_collision.t = t;
     out_collision.u = u;
     out_collision.v = v;
-    out_collision.normal = cross(edge1, edge2);
+    out_collision.normal = glm::normalize(cross(edge1, edge2));
+    out_collision.normal *= sign(-glm::dot(ray_dir, out_collision.normal));
     out_collision.position = ray_origin + ray_dir * t;
 
     return true;
@@ -254,7 +256,7 @@ static bool ray_triangle_test_moller(vec3 ray_origin, vec3 ray_dir, vec3 v0,
 // Woop intersection algorithm
 static bool ray_triangle_test_woop(vec3 ray_origin, vec3 ray_dir, vec3 a,
                                    vec3 b, vec3 c, Collision &out_collision) {
-  const float EPSILON = 1.0e-6f;
+  const float EPSILON = 1.0e-4f;
   vec3 ab = b - a;
   vec3 ac = c - a;
   vec3 n = cross(ab, ac);
@@ -276,7 +278,7 @@ static bool ray_triangle_test_woop(vec3 ray_origin, vec3 ray_dir, vec3 a,
   if (std::abs(ray_dir_local.z) < EPSILON)
     return false;
   float t = -ray_origin_local.z / ray_dir_local.z;
-  if (t < 0.0f)
+  if (t < EPSILON)
     return false;
   float u = ray_origin_local.x + t * ray_dir_local.x;
   float v = ray_origin_local.y + t * ray_dir_local.y;
@@ -284,7 +286,7 @@ static bool ray_triangle_test_woop(vec3 ray_origin, vec3 ray_dir, vec3 a,
     out_collision.t = t;
     out_collision.u = u;
     out_collision.v = v;
-    out_collision.normal = n;
+    out_collision.normal = glm::normalize(n) * sign(-ray_dir_local.z);
     out_collision.position = ray_origin + ray_dir * t;
     return true;
   }

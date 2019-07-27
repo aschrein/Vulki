@@ -723,6 +723,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   ////////////////////////
   // Path tracing state //
   ////////////////////////
+  Random_Factory frand;
   struct Path_Tracing_Camera {
     vec3 pos;
     vec3 look;
@@ -751,15 +752,16 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     u32 pixel_x, pixel_y;
     f32 weight;
     u32 media_material_id;
+    u32 depth;
   };
   struct Path_Tracing_Queue {
-    std::vector<Path_Tracing_Job> job_queue;
+    std::deque<Path_Tracing_Job> job_queue;
     Path_Tracing_Job dequeue() {
       auto back = job_queue.back();
       job_queue.pop_back();
       return back;
     }
-    void enqueue(Path_Tracing_Job job) { job_queue.push_back(job); }
+    void enqueue(Path_Tracing_Job job) { job_queue.push_front(job); }
     bool has_job() { return !job_queue.empty(); }
   } path_tracing_queue;
   CPU_Image path_tracing_gpu_image;
@@ -787,13 +789,19 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         job.pixel_x = j;
         job.pixel_y = i;
         job.weight = 1.0f;
+        job.depth = 0;
         path_tracing_queue.enqueue(job);
       }
     }
   };
+
   auto path_tracing_iteration = [&] {
-    Path_Tracing_Queue new_queue;
+    u32 max_jobs_per_iter = 1000;
+    u32 jobs_sofar = 0;
     while (path_tracing_queue.has_job()) {
+      jobs_sofar++;
+      if (jobs_sofar == max_jobs_per_iter)
+        break;
       auto job = path_tracing_queue.dequeue();
       bool col_found = false;
       Collision min_col{.t = 1.0e10f};
@@ -818,13 +826,38 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
             return !col_found;
           });
       if (col_found) {
-        path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-                                     vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        if (job.depth == 1) {
+          // Terminate
+          path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+                                       vec4(0.0f, 0.0f, 0.0f, job.weight));
+        } else {
+          vec3 tangent =
+              glm::normalize(glm::cross(job.ray_dir, min_col.normal));
+          vec3 binormal = glm::cross(tangent, min_col.normal);
+          u32 secondary_N = 16;
+          ito(secondary_N) {
+            vec3 rand = frand.rand_unit_sphere();
+            auto new_job = job;
+            new_job.ray_dir =
+                glm::normalize(min_col.normal * (1.0f + rand.z) +
+                               tangent * rand.x + binormal * rand.y);
+            new_job.ray_origin = min_col.position;
+            new_job.weight *= 1.0f / secondary_N;
+            new_job.depth += 1;
+            path_tracing_queue.enqueue(new_job);
+          }
+        }
+        // f32 ldotn = std::max(0.3f,
+        //     glm::dot(min_col.normal, glm::normalize(vec3(1.0f,
+        //     -1.0f, 1.0f))));
+        // path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+        //                              vec4(ldotn, ldotn, ldotn, 1.0f));
       } else {
-        path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-                                     vec4(std::abs(job.ray_dir.z) * 0.5f,
-                                          std::abs(job.ray_dir.z),
-                                          std::abs(job.ray_dir.z), 1.0f));
+        path_tracing_image.add_value(
+            job.pixel_x, job.pixel_y,
+            vec4(job.weight * std::abs(job.ray_dir.z) * 0.5f,
+                 job.weight * std::abs(job.ray_dir.z),
+                 job.weight * std::abs(job.ray_dir.z), job.weight));
       }
     }
   };
@@ -1174,27 +1207,30 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     // if (ImGui::Button("load test model")) {
     //   load_model(test_model_filename);
     // }
-    ImGui::SliderFloat("UG cell size", &test_ug_size, 0.05f, 10.0f);
+    ImGui::SliderFloat("UG cell size", &test_ug_size, 0.01f, 1.0f);
     ImGui::Checkbox("Draw test model UG", &draw_test_model_ug);
     if (ImGui::Checkbox("trace paths", &trace_paths)) {
       if (trace_paths) {
-        reset_path_tracing_state(128, 128);
-        path_tracing_iteration();
+        reset_path_tracing_state(512, 512);
       }
     }
     if (ImGui::Button("update path tracing")) {
       if (trace_paths) {
-        reset_path_tracing_state(128, 128);
-        path_tracing_iteration();
+        reset_path_tracing_state(512, 512);
       }
     }
     if (trace_paths) {
+      path_tracing_iteration();
       void *data = path_tracing_gpu_image.image.map();
       u32 *typed_data = (u32 *)data;
+
       auto color_to_int = [](vec4 color) {
-        return u8(255.0f * color.x / color.w) |
-               (u8(255.0f * color.y / color.w) << 8) |
-               (u8(255.0f * color.z / color.w) << 16) | (0xff << 24);
+        auto saturate = [](f32 val) {
+          return val < 0.0f ? 0.0f : (val > 1.0f ? 1.0f : val);
+        };
+        return u8(255.0f * saturate(color.x / color.w)) |
+               (u8(255.0f * saturate(color.y / color.w)) << 8) |
+               (u8(255.0f * saturate(color.z / color.w)) << 16) | (0xff << 24);
       };
       ito(path_tracing_image.height) {
         jto(path_tracing_image.width) {
