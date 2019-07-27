@@ -505,6 +505,8 @@ struct CPU_Image {
   }
   void transition_layout_to_general(Device_Wrapper &device,
                                     vk::CommandBuffer &cmd) {
+    if (this->cur_layout == vk::ImageLayout::eGeneral)
+      return;
     cmd.pipelineBarrier(
         vk::PipelineStageFlagBits::eAllCommands,
         vk::PipelineStageFlagBits::eAllCommands,

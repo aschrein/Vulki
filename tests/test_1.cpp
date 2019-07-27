@@ -362,7 +362,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     u32 GRID_DIM;
     {
       CPU_timestamp __timestamp;
-      UG ug({rendering_grid_size,rendering_grid_size,rendering_grid_size} , GRID_CELL_SIZE);
+      UG ug(rendering_grid_size , rendering_grid_size/GRID_CELL_SIZE);
 
       for (u32 i = 0; i < particle_system.particles.size(); i++) {
         ug.put(particle_system.particles[i],

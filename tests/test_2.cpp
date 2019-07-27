@@ -41,14 +41,14 @@ TEST(graphics, vulkan_graphics_test_1) {
     vec3 camera_up;
     int pad_2;
     vec3 camera_right;
-    float camera_fov;
-    float ug_size;
+    f32 camera_fov;
+    f32 ug_size;
     uint ug_bins_count;
-    float ug_bin_size;
+    f32 ug_bin_size;
     uint rendering_flags;
     uint raymarch_iterations;
-    float hull_radius;
-    float step_radius;
+    f32 hull_radius;
+    f32 step_radius;
   };
   struct Particle_UBO {
     mat4 world;
@@ -242,7 +242,7 @@ TEST(graphics, vulkan_graphics_test_1) {
         void *data = compute_ubo_buffer.map();
         Compute_UBO *typed_data = (Compute_UBO *)data;
         Compute_UBO tmp_ubo;
-        tmp_ubo.camera_fov = float(gizmo_layer.example_viewport.extent.width) /
+        tmp_ubo.camera_fov = f32(gizmo_layer.example_viewport.extent.width) /
                              gizmo_layer.example_viewport.extent.height;
 
         tmp_ubo.camera_pos = gizmo_layer.camera_pos;
@@ -275,7 +275,7 @@ TEST(graphics, vulkan_graphics_test_1) {
           vk::DescriptorType::eStorageBuffer);
       compute_pipeline_wrapped.update_descriptor(
           device.get(), "Particles", particles_buffer.buffer, 0,
-          sizeof(float) * 3 * packed.ids.size());
+          sizeof(f32) * 3 * packed.ids.size());
       compute_pipeline_wrapped.update_descriptor(
           device.get(), "UBO", compute_ubo_buffer.buffer, 0,
           sizeof(Compute_UBO), vk::DescriptorType::eUniformBuffer);
@@ -448,10 +448,10 @@ TEST(graphics, vulkan_graphics_test_1) {
         }
       }
       auto int_to_color = [](u32 color) {
-        return ImVec4(float((color >> 24) & 0xff) / 255.0f,
-                      float((color >> 16) & 0xff) / 255.0f,
-                      float((color >> 8) & 0xff) / 255.0f,
-                      float((color >> 0) & 0xff) / 255.0f);
+        return ImVec4(f32((color >> 24) & 0xff) / 255.0f,
+                      f32((color >> 16) & 0xff) / 255.0f,
+                      f32((color >> 8) & 0xff) / 255.0f,
+                      f32((color >> 0) & 0xff) / 255.0f);
       };
       for (auto const &item : cpu_frametime_stack.legend) {
         ImGui::SameLine();
@@ -650,7 +650,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       "models/dragon.obj",
   };
   i32 current_model = 0;
-  float test_ug_size = 1.0f;
+  f32 test_ug_size = 1.0f;
+  bool draw_test_model_ug = false;
   auto load_model = [&]() {
     test_model = load_obj_raw(model_filenames[current_model]);
     // swap z-y
@@ -671,7 +672,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       union_aabb(triangle_min, triangle_max, test_model_min, test_model_max);
     }
 
-    test_model_ug = UG(test_model_max - test_model_min, test_ug_size);
+    test_model_ug = UG(test_model_min, test_model_max, test_ug_size);
     {
       u32 triangle_id = 0;
       for (auto face : test_model.indices) {
@@ -719,6 +720,117 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   VmaBuffer ug_lines_gpu_buffer;
   Gizmo_Layer gizmo_layer{};
 
+  ////////////////////////
+  // Path tracing state //
+  ////////////////////////
+  struct Path_Tracing_Camera {
+    vec3 pos;
+    vec3 look;
+    vec3 up;
+    vec3 right;
+    f32 fov;
+    vec3 gen_ray(f32 u, f32 v) {
+      return normalize(look + up * v + right * u * fov);
+    }
+  } path_tracing_camera;
+  struct Path_Tracing_Image {
+    std::vector<vec4> data;
+    u32 width, height;
+    void init(u32 _width, u32 _height) {
+      width = _width;
+      height = _height;
+      // Pitch less flat array
+      data.clear();
+      data.resize(width * height);
+    }
+    void add_value(u32 x, u32 y, vec4 val) { data[x + y * width] += val; }
+    vec4 get_value(u32 x, u32 y) { return data[x + y * width]; }
+  } path_tracing_image;
+  struct Path_Tracing_Job {
+    vec3 ray_origin, ray_dir;
+    u32 pixel_x, pixel_y;
+    f32 weight;
+    u32 media_material_id;
+  };
+  struct Path_Tracing_Queue {
+    std::vector<Path_Tracing_Job> job_queue;
+    Path_Tracing_Job dequeue() {
+      auto back = job_queue.back();
+      job_queue.pop_back();
+      return back;
+    }
+    void enqueue(Path_Tracing_Job job) { job_queue.push_back(job); }
+    bool has_job() { return !job_queue.empty(); }
+  } path_tracing_queue;
+  CPU_Image path_tracing_gpu_image;
+  bool trace_paths = false;
+  auto grab_path_tracing_cam = [&] {
+    path_tracing_camera.pos = gizmo_layer.camera_pos;
+    path_tracing_camera.look = gizmo_layer.camera_look;
+    path_tracing_camera.up = gizmo_layer.camera_up;
+    path_tracing_camera.right = gizmo_layer.camera_right;
+    path_tracing_camera.fov = float(gizmo_layer.example_viewport.extent.width) /
+                              gizmo_layer.example_viewport.extent.height;
+  };
+  auto reset_path_tracing_state = [&](u32 width, u32 height) {
+    grab_path_tracing_cam();
+    path_tracing_image.init(width, height);
+    path_tracing_gpu_image = CPU_Image::create(device_wrapper, width, height,
+                                               vk::Format::eR8G8B8A8Unorm);
+    ito(height) {
+      jto(width) {
+        f32 u = (f32(j) + 0.5f) / width * 2.0f - 1.0f;
+        f32 v = -(f32(i) + 0.5f) / height * 2.0f + 1.0f;
+        Path_Tracing_Job job;
+        job.ray_dir = path_tracing_camera.gen_ray(u, v);
+        job.ray_origin = path_tracing_camera.pos;
+        job.pixel_x = j;
+        job.pixel_y = i;
+        job.weight = 1.0f;
+        path_tracing_queue.enqueue(job);
+      }
+    }
+  };
+  auto path_tracing_iteration = [&] {
+    Path_Tracing_Queue new_queue;
+    while (path_tracing_queue.has_job()) {
+      auto job = path_tracing_queue.dequeue();
+      bool col_found = false;
+      Collision min_col{.t = 1.0e10f};
+      test_model_ug.iterate(
+          job.ray_dir, job.ray_origin, [&](std::vector<u32> const &items) {
+            for (u32 face_id : items) {
+              auto face = test_model.indices[face_id];
+              vec3 v0 = test_model.vertices[face.v0].position;
+              vec3 v1 = test_model.vertices[face.v1].position;
+              vec3 v2 = test_model.vertices[face.v2].position;
+              Collision col = {};
+
+              if (ray_triangle_test_woop(job.ray_origin, job.ray_dir, v0, v1,
+                                         v2, col)) {
+                if (col.t < min_col.t) {
+                  min_col = col;
+                  col_found = true;
+                }
+              }
+            }
+
+            return !col_found;
+          });
+      if (col_found) {
+        path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+                                     vec4(0.0f, 0.0f, 0.0f, 1.0f));
+      } else {
+        path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+                                     vec4(std::abs(job.ray_dir.z) * 0.5f,
+                                          std::abs(job.ray_dir.z),
+                                          std::abs(job.ray_dir.z), 1.0f));
+      }
+    }
+  };
+  struct Path_Tracing_Plane_Push {
+    mat4 viewprojmodel;
+  };
   ///////////////////////////
   // Particle system state //
   ///////////////////////////
@@ -726,6 +838,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   Pipeline_Wrapper fullscreen_pipeline;
   Pipeline_Wrapper test_model_pipeline;
   Pipeline_Wrapper lines_pipeline;
+  Pipeline_Wrapper path_tracing_plane_pipeline;
 
   auto recreate_resources = [&] {
     framebuffer_wrapper = Framebuffer_Wrapper::create(
@@ -742,6 +855,15 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                     vk::PrimitiveTopology::eTriangleList))
             .setRenderPass(framebuffer_wrapper.render_pass.get()),
         {}, {}, {});
+    path_tracing_plane_pipeline = Pipeline_Wrapper::create_graphics(
+        device_wrapper, "../shaders/path_tracing_plane.vert.glsl",
+        "../shaders/path_tracing_plane.frag.glsl",
+        vk::GraphicsPipelineCreateInfo()
+            .setPInputAssemblyState(
+                &vk::PipelineInputAssemblyStateCreateInfo().setTopology(
+                    vk::PrimitiveTopology::eTriangleList))
+            .setRenderPass(framebuffer_wrapper.render_pass.get()),
+        {}, {}, {}, sizeof(Path_Tracing_Plane_Push));
     lines_pipeline = Pipeline_Wrapper::create_graphics(
         device_wrapper, "../shaders/ug_debug.vert.glsl",
         "../shaders/ug_debug.frag.glsl",
@@ -800,6 +922,11 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   // Shared sampler
   vk::UniqueSampler sampler =
       device->createSamplerUnique(vk::SamplerCreateInfo().setMaxLod(1));
+  vk::UniqueSampler nearest_sampler =
+      device->createSamplerUnique(vk::SamplerCreateInfo()
+                                      .setMinFilter(vk::Filter::eNearest)
+                                      .setMagFilter(vk::Filter::eNearest)
+                                      .setMaxLod(1));
   // Init device stuff
   {
 
@@ -826,6 +953,9 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     /*----------------------------------*/
     /* Update the offscreen framebuffer */
     /*----------------------------------*/
+    if (trace_paths) {
+      path_tracing_gpu_image.transition_layout_to_general(device_wrapper, cmd);
+    }
     framebuffer_wrapper.transition_layout_to_write(device_wrapper, cmd);
     framebuffer_wrapper.begin_render_pass(cmd);
     cmd.setViewport(
@@ -872,7 +1002,29 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       }
       test_model_instance_buffer.unmap();
     }
-
+    if (trace_paths) {
+      path_tracing_plane_pipeline.bind_pipeline(device_wrapper.device.get(),
+                                                cmd);
+      Path_Tracing_Plane_Push tmp_pc{};
+      f32 dist = 2.0f;
+      vec3 pos = path_tracing_camera.pos + path_tracing_camera.look * dist;
+      vec3 up = path_tracing_camera.up * dist;
+      vec3 right = path_tracing_camera.right * dist * path_tracing_camera.fov;
+      vec3 look = path_tracing_camera.look;
+      mat4 transform;
+      transform[0] = vec4(right.x, right.y, right.z, 0.0f);
+      transform[1] = vec4(up.x, up.y, up.z, 0.0f);
+      transform[2] = vec4(look.x, look.y, look.z, 0.0f);
+      transform[3] = vec4(pos.x, pos.y, pos.z, 1.0f);
+      tmp_pc.viewprojmodel =
+          gizmo_layer.camera_proj * gizmo_layer.camera_view * transform;
+      path_tracing_plane_pipeline.push_constants(
+          cmd, &tmp_pc, sizeof(Path_Tracing_Plane_Push));
+      path_tracing_plane_pipeline.update_sampled_image_descriptor(
+          device.get(), "tex", path_tracing_gpu_image.image_view.get(),
+          nearest_sampler.get());
+      cmd.draw(6, 1, 0, 0);
+    }
     {
       test_model_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
       Test_Model_Push_Constants tmp_pc{};
@@ -890,8 +1042,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
 
       cmd.drawIndexed(test_model_wrapper.vertex_count, 1, 0, 0, 0);
     }
-
-    {
+    if (draw_test_model_ug) {
       lines_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
       Test_Model_Push_Constants tmp_pc{};
 
@@ -962,7 +1113,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       test_model_ug.iterate(
           gizmo_layer.mouse_ray, gizmo_layer.camera_pos,
           [&](std::vector<u32> const &items) {
-            float min_t = 1.0e10f;
+            f32 min_t = 1.0e10f;
             for (u32 face_id : items) {
               auto face = test_model.indices[face_id];
               vec3 v0 = test_model.vertices[face.v0].position;
@@ -1024,6 +1175,40 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     //   load_model(test_model_filename);
     // }
     ImGui::SliderFloat("UG cell size", &test_ug_size, 0.05f, 10.0f);
+    ImGui::Checkbox("Draw test model UG", &draw_test_model_ug);
+    if (ImGui::Checkbox("trace paths", &trace_paths)) {
+      if (trace_paths) {
+        reset_path_tracing_state(128, 128);
+        path_tracing_iteration();
+      }
+    }
+    if (ImGui::Button("update path tracing")) {
+      if (trace_paths) {
+        reset_path_tracing_state(128, 128);
+        path_tracing_iteration();
+      }
+    }
+    if (trace_paths) {
+      void *data = path_tracing_gpu_image.image.map();
+      u32 *typed_data = (u32 *)data;
+      auto color_to_int = [](vec4 color) {
+        return u8(255.0f * color.x / color.w) |
+               (u8(255.0f * color.y / color.w) << 8) |
+               (u8(255.0f * color.z / color.w) << 16) | (0xff << 24);
+      };
+      ito(path_tracing_image.height) {
+        jto(path_tracing_image.width) {
+          typed_data[i * path_tracing_image.width + j] =
+              color_to_int(path_tracing_image.get_value(j, i));
+        }
+      }
+      path_tracing_gpu_image.image.unmap();
+      ImGui::Image(ImGui_ImplVulkan_AddTexture(
+                       sampler.get(), path_tracing_gpu_image.image_view.get(),
+                       VkImageLayout::VK_IMAGE_LAYOUT_GENERAL),
+                   ImVec2(path_tracing_image.width, path_tracing_image.height),
+                   ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
+    }
     ImGui::End();
     ImGui::Begin("Metrics");
     // ImGui::InputFloat("mx", &mx, 0.1f, 0.1f, 2);

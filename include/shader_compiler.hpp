@@ -178,9 +178,10 @@ Shader_Parsed create_shader_module(
     for (auto &item : res.uniform_buffers) {
       pushResource(vk::DescriptorType::eUniformBuffer, item);
     }
-    for (auto &item : res.push_constant_buffers) {
-      pushResource(vk::DescriptorType::eUniformBuffer, item);
-    }
+    // @TODO: Do something with push constants
+    // for (auto &item : res.push_constant_buffers) {
+    //   pushResource(vk::DescriptorType::eUniformBuffer, item);
+    // }
     for (auto &item : res.stage_inputs) {
       auto location =
           comp.get_decoration(item.id, spv::Decoration::DecorationLocation);
