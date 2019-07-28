@@ -168,7 +168,7 @@ bool invert_matrix(const float m[16], float invOut[16])
     return true;
 }
 float sign(float a) {
-  return -2.0f * (float)signbits(a) + 1.0f;
+  return -2.0f * (float)(signbits(a) >> 31) + 1.0f;
 }
 vec4 mat4_mul_vec4(const float m[16], vec4 a) {
   vec4 result;
@@ -205,8 +205,8 @@ vec3 cross(vec3 a, vec3 b) {
     );
 }
 vec3 normalize(vec3 a) {
-  float length = sqrt(dot(a, a));
-  return make_vec3(a.x / length, a.y / length, a.z / length);
+  float invlength = 1.0f / sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
+  return make_vec3(a.x * invlength, a.y * invlength, a.z * invlength);
 }
 bool ray_triangle_test_woop(vec3 ray_origin, vec3 ray_dir, vec3 a,
                                    vec3 b, vec3 c, Collision &out_collision) {
@@ -281,7 +281,7 @@ bool ray_triangle_test_moller(vec3 ray_origin, vec3 ray_dir, vec3 v0,
     out_collision.v = v;
     out_collision.normal = normalize(cross(edge1, edge2));
     out_collision.normal = mul_k(out_collision.normal,
-                        (float)signbits(-dot(ray_dir, out_collision.normal)));
+                        (float)sign(-dot(ray_dir, out_collision.normal)));
     out_collision.position = add(ray_origin, mul_k(ray_dir, t));
 
     return true;

@@ -10,6 +10,7 @@
 #include <glm/glm.hpp>
 using namespace glm;
 
+#include "gelf.h"
 #include "imgui.h"
 
 struct Gizmo_Drag_State {
@@ -233,6 +234,7 @@ struct Gizmo_Layer {
   float camera_theta = M_PI / 2.0f;
   float camera_distance = 10.0f;
   float mx = 0.0f, my = 0.0f;
+  vec3 camera_look_at = vec3(0.0f, 0.0f, 0.0f);
 
   ImVec2 old_mpos{};
   float old_cpa{};
@@ -249,6 +251,8 @@ struct Gizmo_Layer {
   // Viewport for this sample's rendering
   vk::Rect2D example_viewport = vk::Rect2D({0, 0}, {32, 32});
 
+  clock_t last_time = clock();
+
   // Gizmos
   Gizmo_Drag_State gizmo_drag_state;
   void init_vulkan_state(Device_Wrapper &device_wrapper,
@@ -261,6 +265,9 @@ struct Gizmo_Layer {
   }
 
   void on_imgui_viewport() {
+    auto cur_time = clock();
+    auto dt = float(double(cur_time - last_time) / CLOCKS_PER_SEC);
+    last_time = cur_time;
     /*---------------------------------------*/
     /* Update the viewport for the rendering */
     /*---------------------------------------*/
@@ -281,8 +288,9 @@ struct Gizmo_Layer {
     camera_pos =
         vec3(sinf(camera_theta) * cosf(camera_phi),
              sinf(camera_theta) * sinf(camera_phi), cos(camera_theta)) *
-        camera_distance;
-    camera_look = normalize(-camera_pos);
+            camera_distance +
+        camera_look_at;
+    camera_look = normalize(camera_look_at - camera_pos);
     camera_right = normalize(cross(camera_look, vec3(0.0f, 0.0f, 1.0f)));
     camera_up = normalize(cross(camera_right, camera_look));
     mouse_ray =
@@ -295,12 +303,14 @@ struct Gizmo_Layer {
                                        example_viewport.extent.height,
                                    1.0e-1f, 1.0e2f);
     camera_view =
-        glm::lookAt(camera_pos, vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, 1.0f));
+        glm::lookAt(camera_pos, camera_look_at, vec3(0.0f, 0.0f, 1.0f));
     if (ImGui::GetIO().MouseReleased[0]) {
       gizmo_drag_state.on_mouse_release();
     }
     if (ImGui::IsWindowHovered()) {
-
+      ///////// Low precision timer
+      
+      ///////////////////////
       auto eps = 1.0e-4f;
       auto mpos = ImGui::GetMousePos();
       auto cr = ImGui::GetWindowContentRegionMax();
@@ -311,6 +321,25 @@ struct Gizmo_Layer {
                (example_viewport.extent.height) +
            1.0f;
       gizmo_drag_state.on_mouse_move(camera_pos, camera_look, mouse_ray);
+      // Normalize camera motion so that diagonal moves are not bigger
+      float camera_speed = 20.0f;
+      vec3 camera_diff = vec3(0.0f, 0.0f, 0.0f);
+      if (ImGui::GetIO().KeysDown[GLFW_KEY_W]) {
+        camera_diff += camera_look;
+      }
+      if (ImGui::GetIO().KeysDown[GLFW_KEY_S]) {
+        camera_diff -= camera_look;
+      }
+      if (ImGui::GetIO().KeysDown[GLFW_KEY_A]) {
+        camera_diff -= camera_right;
+      }
+      if (ImGui::GetIO().KeysDown[GLFW_KEY_D]) {
+        camera_diff += camera_right;
+      }
+      // It's always of length of 0.0 or 1.0 so just check 
+      if (glm::dot(camera_diff, camera_diff) > 1.0e-3f)
+        camera_look_at += glm::normalize(camera_diff) * camera_speed * dt;
+
       if (ImGui::GetIO().MouseDown[0]) {
         if (!mouse_last_down) {
           if (!gizmo_drag_state.on_mouse_click(camera_pos, mouse_ray) &&

@@ -701,11 +701,13 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       "models/dragon.obj",
   };
   i32 current_model = 0;
-  f32 test_ug_size = 1.0f;
+  f32 test_ug_size = 0.1f;
   bool trace_ispc = true;
-  u32 jobs_per_item = 10;
+  u32 jobs_per_item = 1000;
   bool use_jobs = true;
   bool draw_test_model_ug = false;
+  bool trace_paths = false;
+  u32 max_jobs_per_iter = 50000;
   auto load_model = [&]() {
     test_model = load_obj_raw(model_filenames[current_model]);
 
@@ -834,8 +836,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     void reset() { job_queue.clear(); }
   } path_tracing_queue;
   CPU_Image path_tracing_gpu_image;
-  bool trace_paths = false;
-  u32 max_jobs_per_iter = 1000;
+
   auto grab_path_tracing_cam = [&] {
     path_tracing_camera.pos = gizmo_layer.camera_pos;
     path_tracing_camera.look = gizmo_layer.camera_look;
@@ -867,6 +868,11 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   };
 
   auto path_tracing_iteration = [&] {
+    auto light_value = [](vec3 ray_dir) {
+      float brightness = (0.1f + 0.9f * (0.5f + 0.5f * ray_dir.z));
+      float backlight = (0.1f * std::pow(0.5f - 0.5f * ray_dir.z, 2.0f));
+      return vec4(brightness, brightness + backlight, brightness, 1.0f);
+    };
     if (trace_ispc) {
 
       u32 jobs_sofar = 0;
@@ -955,16 +961,35 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         }
         ito(ray_jobs.size()) {
           auto job = ray_jobs[i];
-          if (ray_collisions[i].t < FLT_MAX) {
+          auto min_col = ray_collisions[i];
+          if (min_col.t < FLT_MAX) {
 
-            path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-                                         vec4(1.0f, 1.0f, 1.0f, 1.0f));
+            // path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+            //                              vec4(1.0f, 1.0f, 1.0f, 1.0f));
+            if (job.depth == 3) {
+              // Terminate
+              path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+                                           vec4(0.0f, 0.0f, 0.0f, job.weight));
+            } else {
+              vec3 tangent =
+                  glm::normalize(glm::cross(job.ray_dir, min_col.normal));
+              vec3 binormal = glm::cross(tangent, min_col.normal);
+              u32 secondary_N = 16 / (job.depth + 1);
+              ito(secondary_N) {
+                vec3 rand = frand.rand_unit_sphere();
+                auto new_job = job;
+                new_job.ray_dir =
+                    glm::normalize(min_col.normal * (1.0f + rand.z) +
+                                   tangent * rand.x + binormal * rand.y);
+                new_job.ray_origin = min_col.position;
+                new_job.weight *= 1.0f / secondary_N * 0.9f;
+                new_job.depth += 1;
+                path_tracing_queue.enqueue(new_job);
+              }
+            }
           } else {
-            path_tracing_image.add_value(
-                job.pixel_x, job.pixel_y,
-                vec4(job.weight * std::abs(job.ray_dir.z) * 0.5f,
-                     job.weight * std::abs(job.ray_dir.z),
-                     job.weight * std::abs(job.ray_dir.z), job.weight));
+            path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+                                         job.weight * light_value(job.ray_dir));
           }
         }
       }
@@ -999,40 +1024,32 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
               return !col_found;
             });
         if (col_found) {
-          path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-                                       vec4(1.0f, 1.0f, 1.0f, 1.0f));
-          // if (job.depth == 1) {
-          //   // Terminate
-          //   path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-          //                                vec4(0.0f, 0.0f, 0.0f, job.weight));
-          // } else {
-          //   vec3 tangent =
-          //       glm::normalize(glm::cross(job.ray_dir, min_col.normal));
-          //   vec3 binormal = glm::cross(tangent, min_col.normal);
-          //   u32 secondary_N = 16;
-          //   ito(secondary_N) {
-          //     vec3 rand = frand.rand_unit_sphere();
-          //     auto new_job = job;
-          //     new_job.ray_dir =
-          //         glm::normalize(min_col.normal * (1.0f + rand.z) +
-          //                        tangent * rand.x + binormal * rand.y);
-          //     new_job.ray_origin = min_col.position;
-          //     new_job.weight *= 1.0f / secondary_N;
-          //     new_job.depth += 1;
-          //     path_tracing_queue.enqueue(new_job);
-          //   }
-          // }
-          // // f32 ldotn = std::max(0.3f,
-          // //     glm::dot(min_col.normal, glm::normalize(vec3(1.0f,
-          // //     -1.0f, 1.0f))));
-          // // path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-          // //                              vec4(ldotn, ldotn, ldotn, 1.0f));
+          // path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+          //                              vec4(1.0f, 1.0f, 1.0f, 1.0f));
+          if (job.depth == 1) {
+            // Terminate
+            path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+                                         vec4(0.0f, 0.0f, 0.0f, job.weight));
+          } else {
+            vec3 tangent =
+                glm::normalize(glm::cross(job.ray_dir, min_col.normal));
+            vec3 binormal = glm::cross(tangent, min_col.normal);
+            u32 secondary_N = 16;
+            ito(secondary_N) {
+              vec3 rand = frand.rand_unit_sphere();
+              auto new_job = job;
+              new_job.ray_dir =
+                  glm::normalize(min_col.normal * (1.0f + rand.z) +
+                                 tangent * rand.x + binormal * rand.y);
+              new_job.ray_origin = min_col.position;
+              new_job.weight *= 1.0f / secondary_N * 0.9f;
+              new_job.depth += 1;
+              path_tracing_queue.enqueue(new_job);
+            }
+          }
         } else {
-          path_tracing_image.add_value(
-              job.pixel_x, job.pixel_y,
-              vec4(job.weight * std::abs(job.ray_dir.z) * 0.5f,
-                   job.weight * std::abs(job.ray_dir.z),
-                   job.weight * std::abs(job.ray_dir.z), job.weight));
+          path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+                                       job.weight * light_value(job.ray_dir));
         }
       }
     }
@@ -1216,7 +1233,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       path_tracing_plane_pipeline.bind_pipeline(device_wrapper.device.get(),
                                                 cmd);
       Path_Tracing_Plane_Push tmp_pc{};
-      f32 dist = 2.0f;
+      f32 dist = 1.0f;
       vec3 pos = path_tracing_camera.pos + path_tracing_camera.look * dist;
       vec3 up = path_tracing_camera.up * dist;
       vec3 right = path_tracing_camera.right * dist * path_tracing_camera.fov;
@@ -1393,6 +1410,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
             return true;
           });
 
+      // @Debug
       // if (col_found) {
       //   ISPC_Packed_UG ispc_packed_ug;
       //   ispc_packed_ug.ids = &test_model_packed_ug.ids[0];
@@ -1408,15 +1426,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       //              (uint *)&test_model_simplified.indices[0],
       //              &gizmo_layer.mouse_ray, &gizmo_layer.camera_pos, &col,
       //              &_tmp);
-      //   // ImGui::InputFloat("collisin dist", &col.t);
-      //   if (col.t < FLT_MAX) {
-      //     ispc_trace(
-      //         &ispc_packed_ug, (void *)&test_model_simplified.positions[0],
-      //         (uint *)&test_model_simplified.indices[0],
-      //         &gizmo_layer.mouse_ray, &gizmo_layer.camera_pos, &col, &_tmp);
-
-      //   }
-      // } else {
+      //   ImGui::InputFloat3("col.normal", (float*)&col.normal, 3);
       // }
     }
     if (ImGui::ListBox("test models", &current_model, model_filenames,
@@ -1451,7 +1461,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
 
       auto color_to_int = [](vec4 color) {
         auto saturate = [](f32 val) {
-          return val < 0.0f ? 0.0f : (val > 1.0f ? 1.0f : val);
+          return std::pow(val < 0.0f ? 0.0f : (val > 1.0f ? 1.0f : val), 2.2f);
         };
         return u8(255.0f * saturate(color.x / color.w)) |
                (u8(255.0f * saturate(color.y / color.w)) << 8) |
