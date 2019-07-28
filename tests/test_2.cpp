@@ -644,9 +644,9 @@ extern "C" void ispc_trace(ISPC_Packed_UG *ug, void *vertices, uint *faces,
 TEST(graphics, vulkan_graphics_test_3d_models) {
 
   // @TODO:
-  // * Make UG varying origin
-  //   * Most models have v[i].z>0.0f so it doesn't make sense to keep z<0.0f
-  //   * Proposal is to keep (min, max) pair instead to define the domain
+  // Fix moller and woop algorithms
+  //  * They have some error checking which is not relative
+  //    It explodes at small triangles
 
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;
@@ -654,6 +654,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   Simple_Monitor simple_monitor("../shaders");
   Raw_Mesh_3p3n2t32i test_model;
   Raw_Mesh_3p32i_AOSOA test_model_aosoa;
+  Raw_Mesh_3p32i test_model_simplified;
   Raw_Mesh_3p3n2t32i_Wrapper test_model_wrapper;
   UG test_model_ug(1.0f, 1.0f);
   Packed_UG test_model_packed_ug;
@@ -668,16 +669,14 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   bool draw_test_model_ug = false;
   auto load_model = [&]() {
     test_model = load_obj_raw(model_filenames[current_model]);
-    test_model_aosoa = test_model.convert_to_aosoa();
+
     // swap z-y
     for (auto &vertex : test_model.vertices) {
       std::swap(vertex.position.y, vertex.position.z);
       std::swap(vertex.normal.y, vertex.normal.z);
     }
-    test_model_wrapper =
-        Raw_Mesh_3p3n2t32i_Wrapper::create(device_wrapper, test_model);
+    // Scale the model
     vec3 test_model_min(0.0f, 0.0f, 0.0f), test_model_max(0.0f, 0.0f, 0.0f);
-
     for (auto face : test_model.indices) {
       vec3 v0 = test_model.vertices[face.v0].position;
       vec3 v1 = test_model.vertices[face.v1].position;
@@ -686,9 +685,23 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       get_aabb(v0, v1, v2, triangle_min, triangle_max);
       union_aabb(triangle_min, triangle_max, test_model_min, test_model_max);
     }
+    vec3 dim = test_model_max - test_model_min;
+    float max_axis = std::max(dim.x, std::max(dim.y, dim.z));
+    float normalization_size = 4.0f;
+    for (auto &vertex : test_model.vertices) {
+      vertex.position *= normalization_size/max_axis;
+    }
+    test_model_min *= normalization_size/max_axis;
+    test_model_max *= normalization_size/max_axis;
+
+    test_model_aosoa = test_model.convert_to_aosoa();
+    test_model_simplified = test_model.convert_to_simplified();
+    test_model_wrapper =
+        Raw_Mesh_3p3n2t32i_Wrapper::create(device_wrapper, test_model);
+    
 
     test_model_ug = UG(test_model_min, test_model_max, test_ug_size);
-    test_model_packed_ug = test_model_ug.pack();
+
     {
       u32 triangle_id = 0;
       for (auto face : test_model.indices) {
@@ -702,6 +715,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         triangle_id++;
       }
     }
+    test_model_packed_ug = test_model_ug.pack();
   };
   load_model();
   // Some shader data structures
@@ -815,16 +829,31 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
 
   auto path_tracing_iteration = [&] {
     if (trace_ispc) {
-      struct ISPC_Packed_UG {
-        uint *bins_indices;
-        uint *ids;
-        float _min[3], _max[3];
-        uint bin_count[3];
-        float bin_size;
-      };
-      extern void trace(Packed_UG * ug, void *vertices, uint *faces,
-                        vec3 *ray_dir, vec3 *ray_origin,
-                        Collision *out_collision, uint ray_count);
+      u32 max_jobs_per_iter = 1000;
+      u32 jobs_sofar = 0;
+      while (path_tracing_queue.has_job()) {
+        jobs_sofar++;
+        if (jobs_sofar == max_jobs_per_iter)
+          break;
+        auto job = path_tracing_queue.dequeue();
+        bool col_found = false;
+        ISPC_Packed_UG ispc_packed_ug;
+        ispc_packed_ug.ids = &test_model_packed_ug.ids[0];
+        ispc_packed_ug.bins_indices = &test_model_packed_ug.arena_table[0];
+        memcpy(ispc_packed_ug._min, &test_model_packed_ug.min, 12);
+        memcpy(ispc_packed_ug._max, &test_model_packed_ug.max, 12);
+        memcpy(ispc_packed_ug.bin_count, &test_model_packed_ug.bin_count, 12);
+        ispc_packed_ug.bin_size = test_model_packed_ug.bin_size;
+        Collision col;
+        uint _tmp = 1;
+        ispc_trace(&ispc_packed_ug, (void *)&test_model_simplified.positions[0],
+                   (uint *)&test_model_simplified.indices[0], &job.ray_dir,
+                   &job.ray_origin, &col, &_tmp);
+        if (col.t < FLT_MAX) {
+          path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+                                       vec4(1.0f, 1.0f, 1.0f, 1.0f));
+        }
+      }
     } else {
       u32 max_jobs_per_iter = 1000;
       u32 jobs_sofar = 0;
@@ -1174,7 +1203,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     ImGui::Begin("dummy window");
     ImGui::PopStyleVar(3);
     gizmo_layer.on_imgui_viewport();
-    
+
     // ImGui::Button("Press me");
 
     ImGui::Image(ImGui_ImplVulkan_AddTexture(
@@ -1191,7 +1220,58 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     ImGui::End();
     ImGui::Begin("Rendering configuration");
     {
-      if (trace_ispc) {
+      Collision min_col{.t = 1.0e10f};
+      bool col_found = false;
+      test_model_ug.iterate(
+          gizmo_layer.mouse_ray, gizmo_layer.camera_pos,
+          [&](std::vector<u32> const &items) {
+            f32 min_t = 1.0e10f;
+            for (u32 face_id : items) {
+              auto face = test_model.indices[face_id];
+              vec3 v0 = test_model.vertices[face.v0].position;
+              vec3 v1 = test_model.vertices[face.v1].position;
+              vec3 v2 = test_model.vertices[face.v2].position;
+              Collision col = {};
+              // @TODO:
+              // The internet says that woop is faster that moller
+              // but may struggle from certain numerical instability.
+              // So it's better to create a test
+              // Collision col1 = {};
+              // if (ray_triangle_test_moller(gizmo_layer.camera_pos,
+              //                              gizmo_layer.mouse_ray, v0, v1,
+              //                              v2, col1) &&
+              //     !ray_triangle_test_woop(gizmo_layer.camera_pos,
+              //                             gizmo_layer.mouse_ray, v0, v1,
+              //                             v2, col)) {
+              //   ray_triangle_test_woop(gizmo_layer.camera_pos,
+              //                          gizmo_layer.mouse_ray, v0, v1, v2,
+              //                          col);
+              // }
+
+              if (ray_triangle_test_woop(gizmo_layer.camera_pos,
+                                         gizmo_layer.mouse_ray, v0, v1, v2,
+                                         col)) {
+                if (col.t < min_col.t) {
+                  std::cout << "[FACE_ID] = " << face_id << "\n";
+                  std::cout << "[i0, i1, i2] = " << face.v0 << " " << face.v1
+                            << " " << face.v2 << "\n";
+                  std::cout << "[v0.x, v0.y, v0.z] = " << v0.x << " " << v0.y
+                            << " " << v0.z << "\n";
+                  std::cout << "[v1.x, v1.y, v1.z] = " << v1.x << " " << v1.y
+                            << " " << v1.z << "\n";
+                  std::cout << "[v2.x, v2.y, v2.z] = " << v2.x << " " << v2.y
+                            << " " << v2.z << "\n";
+
+                  min_col = col;
+                  col_found = true;
+                }
+                return false;
+              }
+            }
+            return true;
+          });
+
+      if (col_found) {
         ISPC_Packed_UG ispc_packed_ug;
         ispc_packed_ug.ids = &test_model_packed_ug.ids[0];
         ispc_packed_ug.bins_indices = &test_model_packed_ug.arena_table[0];
@@ -1199,55 +1279,21 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         memcpy(ispc_packed_ug._max, &test_model_packed_ug.max, 12);
         memcpy(ispc_packed_ug.bin_count, &test_model_packed_ug.bin_count, 12);
         ispc_packed_ug.bin_size = test_model_packed_ug.bin_size;
-        Collision col = {.t = FLT_MAX};
+        Collision col;
         uint _tmp = 1;
-        ispc_trace(&ispc_packed_ug, (void *)&test_model_aosoa.positions[0],
-                   (uint *)&test_model_aosoa.indices[0], &gizmo_layer.mouse_ray,
-                   &gizmo_layer.camera_pos, &col, &_tmp);
+        ispc_trace(&ispc_packed_ug, (void *)&test_model_simplified.positions[0],
+                   (uint *)&test_model_simplified.indices[0],
+                   &gizmo_layer.mouse_ray, &gizmo_layer.camera_pos, &col,
+                   &_tmp);
         ImGui::InputFloat("collisin dist", &col.t);
         if (col.t < FLT_MAX) {
+          ispc_trace(
+              &ispc_packed_ug, (void *)&test_model_simplified.positions[0],
+              (uint *)&test_model_simplified.indices[0], &gizmo_layer.mouse_ray,
+              &gizmo_layer.camera_pos, &col, &_tmp);
           gizmo_layer.gizmo_drag_state.pos = col.position;
         }
       } else {
-        test_model_ug.iterate(
-            gizmo_layer.mouse_ray, gizmo_layer.camera_pos,
-            [&](std::vector<u32> const &items) {
-              f32 min_t = 1.0e10f;
-              for (u32 face_id : items) {
-                auto face = test_model.indices[face_id];
-                vec3 v0 = test_model.vertices[face.v0].position;
-                vec3 v1 = test_model.vertices[face.v1].position;
-                vec3 v2 = test_model.vertices[face.v2].position;
-                Collision col = {};
-
-                // @TODO:
-                // The internet says that woop is faster that moller
-                // but may struggle from certain numerical instability.
-                // So it's better to create a test
-                // Collision col1 = {};
-                // if (ray_triangle_test_moller(gizmo_layer.camera_pos,
-                //                              gizmo_layer.mouse_ray, v0, v1,
-                //                              v2, col1) &&
-                //     !ray_triangle_test_woop(gizmo_layer.camera_pos,
-                //                             gizmo_layer.mouse_ray, v0, v1,
-                //                             v2, col)) {
-                //   ray_triangle_test_woop(gizmo_layer.camera_pos,
-                //                          gizmo_layer.mouse_ray, v0, v1, v2,
-                //                          col);
-                // }
-
-                if (ray_triangle_test_woop(gizmo_layer.camera_pos,
-                                           gizmo_layer.mouse_ray, v0, v1, v2,
-                                           col)) {
-                  if (col.t < min_t) {
-                    min_t = col.t;
-                    gizmo_layer.gizmo_drag_state.pos = col.position;
-                  }
-                  return false;
-                }
-              }
-              return true;
-            });
       }
     }
     if (ImGui::ListBox("test models", &current_model, model_filenames,

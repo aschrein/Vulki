@@ -27,8 +27,8 @@ vec4 make_vec4(float x, float y, float z, float w) {
   return result;
 }
 struct Packed_UG {
-  uint *bins_indices;
-  uint *ids;
+  uint * uniform bins_indices;
+  uint * uniform ids;
   float min[3], max[3];
   uint bin_count[3];
   float bin_size;
@@ -249,7 +249,46 @@ bool ray_triangle_test_woop(vec3 ray_origin, vec3 ray_dir, vec3 a,
   }
   return false;
 }
+bool ray_triangle_test_moller(vec3 ray_origin, vec3 ray_dir, vec3 v0,
+                                     vec3 v1, vec3 v2,
+                                     Collision &out_collision) {
 
+  const float EPSILON = 1.0e-6f;
+  vec3 edge1, edge2, h, s, q;
+  float a, f, u, v;
+  edge1 = sub(v1, v0);
+  edge2 = sub(v2, v0);
+  h = cross(ray_dir, edge2);
+  a = dot(edge1, h);
+  if (a > -EPSILON && a < EPSILON)
+    return false; // This ray is parallel to this triangle.
+  f = 1.0 / a;
+  s = sub(ray_origin, v0);
+  u = f * dot(s, h);
+  if (u < -EPSILON || u > 1.0 + EPSILON)
+    return false;
+  q = cross(s, edge1);
+  v = f * dot(ray_dir, q);
+  if (v < -EPSILON || u + v > 1.0 + EPSILON)
+    return false;
+  // At this stage we can compute t to find out where the intersection point
+  // is on the line.
+  float t = f * dot(edge2, q);
+  if (t > EPSILON) // ray intersection
+  {
+    out_collision.t = t;
+    out_collision.u = u;
+    out_collision.v = v;
+    out_collision.normal = normalize(cross(edge1, edge2));
+    out_collision.normal = mul_k(out_collision.normal,
+                        (float)signbits(-dot(ray_dir, out_collision.normal)));
+    out_collision.position = add(ray_origin, mul_k(ray_dir, t));
+
+    return true;
+  } else // This means that there is a line intersection but not a ray
+         // intersection.
+    return false;
+}
 vec3 vec3_min(vec3 a, vec3 b) {
   return make_vec3(min(a.x, b.x), min(a.y, b.y), min(a.z, b.z));
 }
@@ -276,8 +315,9 @@ bool ispc_iterate(Packed_UG * uniform ug,
   vec3 ray_invdir = make_vec3(1.0f / ray_dir.x, 1.0f / ray_dir.y, 1.0f / ray_dir.z);
   float hit_min;
   float hit_max;
+  out_collision[ray_id].t = __FLT_MAX__;
   if (!intersect_box(ug, ray_invdir, ray_origin, hit_min, hit_max)) {
-  out_collision[ray_id].t = 777.0f;
+    // out_collision[ray_id].t = 777.0f;
     return false;
   }
   vec3 _hit_pos = add(ray_origin, mul_k(ray_dir, hit_min));
@@ -315,22 +355,27 @@ bool ispc_iterate(Packed_UG * uniform ug,
   int cell_delta[3] = {step[0], step[1] * ug->bin_count[0],
                                   step[2] * ug->bin_count[0] * ug->bin_count[1]};
   while (true) {
+  // out_collision[ray_id].t = 666.0f;
     uint o = cell_id_cur;
     uint bin_offset = ug->bins_indices[2 * o];
 
     // If the current node has items
     if (bin_offset > 0) {
+      // out_collision[ray_id].t = 555.0f;
       Collision min_collision;
-      min_collision.t = 1.0e10f;
+      min_collision.t = __FLT_MAX__;
       bool found = false;
       uint items_count = ug->bins_indices[2 * o + 1];
       for (uint i = bin_offset; i < bin_offset + items_count; i++) {
         uint face_id = ug->ids[i] * 3;
-        vec3 v0 = vertices[face_id];
-        vec3 v1 = vertices[face_id + 1];
-        vec3 v2 = vertices[face_id + 2];
+        uint i0 = faces[face_id];
+        uint i1 = faces[face_id + 1];
+        uint i2 = faces[face_id + 2];
+        vec3 v0 = vertices[i0];
+        vec3 v1 = vertices[i1];
+        vec3 v2 = vertices[i2];
         Collision col;
-        if (ray_triangle_test_woop(ray_origin, ray_dir, v0,
+        if (ray_triangle_test_moller(ray_origin, ray_dir, v0,
                                    v1, v2, col))
         {
           if (col.t < min_collision.t) {

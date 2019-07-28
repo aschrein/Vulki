@@ -72,6 +72,15 @@ struct Raw_Mesh_3p3n2t32i {
     }
     return out;
   }
+  Raw_Mesh_3p32i convert_to_simplified() {
+    Raw_Mesh_3p32i out;
+    out.indices = indices;
+    out.positions.reserve(vertices.size());
+    for (auto const &vertex : vertices) {
+      out.positions.push_back(vertex.position);
+    }
+    return out;
+  }
 };
 
 static Raw_Mesh_3p16i subdivide_cylinder(uint32_t level, float radius,
