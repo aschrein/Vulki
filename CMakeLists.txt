@@ -29,6 +29,10 @@ set(SPIRV_CROSS_SHARED ON)
 add_subdirectory(3rdparty/SPIRV-Cross)
 add_subdirectory(3rdparty/tinyobjloader)
 add_subdirectory(3rdparty/meshoptimizer)
+set(sewing_use_cxx_11 ON)
+include_directories(3rdparty/sewing/include)
+add_subdirectory(3rdparty/sewing)
+
 
 file(GLOB SOURCE "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widgets.cpp 3rdparty/imgui/imgui_draw.cpp 3rdparty/imgui/imgui_demo.cpp 3rdparty/imgui/examples/imgui_impl_vulkan.cpp 3rdparty/imgui/examples/imgui_impl_glfw.cpp)
 # file(GLOB 3RD_SOURCE 3rdparty/SPIRV-Reflect/spirv_reflect.c)
@@ -37,7 +41,7 @@ file(GLOB SOURCE "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widge
 add_custom_command(OUTPUT kernel.o
                    COMMAND ispc --pic -O0 -g ${CMAKE_SOURCE_DIR}/"src/kernel.ispc" -o kernel.o
                    DEPENDS "src/kernel.ispc")
-set(LIBS meshoptimizer tinyobjloader glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util pthread boost_system boost_filesystem boost_thread)
+set(LIBS sewing meshoptimizer tinyobjloader glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util pthread boost_system boost_filesystem boost_thread)
 add_executable(GRAPHICS_EXPERIMENTS main.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
 target_include_directories(GRAPHICS_EXPERIMENTS PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
 target_link_libraries(GRAPHICS_EXPERIMENTS ${Vulkan_LIBRARY} ${LIBS})

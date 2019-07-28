@@ -38,8 +38,9 @@ using f32 = float;
 #define jto(N) for (u32 j = 0; j < N; j++)
 #define kto(N) for (u32 k = 0; k < N; k++)
 
-template <typename T, size_t N>
-constexpr size_t __ARRAY_SIZE(T (&)[N]) { return N; }
+template <typename T, size_t N> constexpr size_t __ARRAY_SIZE(T (&)[N]) {
+  return N;
+}
 
 // No pointer to the object should persist
 // @Cleanup: Do something better
@@ -54,3 +55,22 @@ constexpr size_t __ARRAY_SIZE(T (&)[N]) { return N; }
     return *this;                                                              \
   }                                                                            \
   CLASS &operator=(CLASS const &) = delete;
+
+template <typename T> struct ExitScope {
+  T lambda;
+  ExitScope(T lambda) : lambda(lambda) {}
+  ~ExitScope() { lambda(); }
+  ExitScope(const ExitScope &);
+
+private:
+  ExitScope &operator=(const ExitScope &);
+};
+
+class ExitScopeHelp {
+public:
+  template <typename T> ExitScope<T> operator+(T t) { return t; }
+};
+
+#define CONCAT_INTERNAL(x,y) x##y
+#define CONCAT(x,y) CONCAT_INTERNAL(x,y)
+#define defer const auto &CONCAT(defer__, __LINE__) = ExitScopeHelp() + [&]()
