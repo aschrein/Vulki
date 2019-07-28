@@ -1,0 +1,104 @@
+# Copyright (c) 2016 Richard Maxwell
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+# Use Ubuntu 14.04
+sudo: required
+dist: trusty
+
+language: c
+
+# Supporting non-standard gcc/clang taken from
+# http://genbattle.bitbucket.org/blog/2016/01/17/c++-travis-ci/
+
+matrix:
+  include:
+    - os: osx
+      osx_image: xcode7.3
+      compiler: clang
+      env: MY_CC=clang MY_CXX=clang++
+      before_install:
+      - brew update
+      - brew install ninja
+
+    - os: osx
+      osx_image: xcode7.3
+      compiler: clang
+      env: MY_CC=clang MY_CXX=clang++ CMAKE_OPTIONS="-DCMAKE_TOOLCHAIN_FILE=../cmake/unix_i386_toolchain.cmake"
+      before_install:
+      - brew update
+      - brew install ninja
+
+    - os: linux
+      compiler: gcc
+      addons:
+        apt:
+          sources:
+            - ubuntu-toolchain-r-test
+          packages:
+            - gcc-5
+            - g++-5
+            - ninja-build
+      env: MY_CC=gcc-5 MY_CXX=g++-5
+
+    - os: linux
+      compiler: gcc
+      addons:
+        apt:
+          sources:
+            - ubuntu-toolchain-r-test
+          packages:
+            - gcc-5-multilib
+            - g++-5-multilib
+            - ninja-build
+      env: MY_CC=gcc-5 MY_CXX=g++-5 CMAKE_OPTIONS="-DCMAKE_TOOLCHAIN_FILE=../cmake/unix_i386_toolchain.cmake"
+
+    - os: linux
+      compiler: clang
+      addons:
+        apt:
+          sources:
+            - ubuntu-toolchain-r-test
+            - llvm-toolchain-precise-3.7
+          packages:
+            - clang-3.7
+            - ninja-build
+      env: MY_CC=clang-3.7 MY_CXX=clang++-3.7
+
+    - os: linux
+      compiler: clang
+      addons:
+        apt:
+          sources:
+            - ubuntu-toolchain-r-test
+            - llvm-toolchain-precise-3.7
+          packages:
+            - clang-3.7
+            - ninja-build
+            - gcc-multilib
+            - g++-multilib
+      env: MY_CC=clang-3.7 MY_CXX=clang++-3.7 CMAKE_OPTIONS="-DCMAKE_TOOLCHAIN_FILE=../cmake/unix_i386_toolchain.cmake"
+
+script:
+  - mkdir build
+  - cd build
+  - CC=$MY_CC CXX=$MY_CXX cmake ../ -G Ninja $CMAKE_OPTIONS
+  - ninja
+  - file ./sewing_test
+  - ctest --timeout 60
