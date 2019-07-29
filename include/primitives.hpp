@@ -111,10 +111,10 @@ static Raw_Mesh_3p16i subdivide_cylinder(uint32_t level, float radius,
   out.positions.resize(level * 2);
   for (u32 i = 0; i < level; i++) {
     float angle = step * i;
-    out.positions[i] = {0.0f, radius * std::cos(angle),
-                        radius * std::sin(angle)};
-    out.positions[i + level] = {length, radius * std::cos(angle),
-                                radius * std::sin(angle)};
+    out.positions[i] = {radius * std::cos(angle), radius * std::sin(angle),
+                        0.0f};
+    out.positions[i + level] = {radius * std::cos(angle),
+                                radius * std::sin(angle), length};
   }
   for (u32 i = 0; i < level; i++) {
     out.indices.push_back({i, i + level, (i + 1) % level});
@@ -191,6 +191,26 @@ static Raw_Mesh_3p16i subdivide_icosahedron(uint32_t level) {
   };
   for (uint i = 0; i < level; i++) {
     out = subdivide(out);
+  }
+  return out;
+}
+
+static Raw_Mesh_3p16i subdivide_cone(uint32_t level, float radius,
+                                     float length) {
+  Raw_Mesh_3p16i out;
+  level += 4;
+  float step = M_PI * 2.0f / level;
+  out.positions.resize(level * 2 + 2);
+  out.positions[0] = {0.0f, 0.0f, 0.0f};
+  out.positions[1] = {0.0f, 0.0f, length};
+  for (u32 i = 0; i < level; i++) {
+    float angle = step * i;
+    out.positions[i] = {radius * std::cos(angle), radius * std::sin(angle),
+                        0.0f};
+  }
+  for (u32 i = 0; i < level; i++) {
+    out.indices.push_back({i + 2, 2 + (i + 1) % level, 0});
+    out.indices.push_back({i + 2, 2 + (i + 1) % level, 1});
   }
   return out;
 }

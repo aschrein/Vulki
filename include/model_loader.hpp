@@ -94,7 +94,9 @@ std::vector<Raw_Mesh_Obj> load_obj_raw(char const *filename) {
         sizeof(Vertex_3p3n3c2t_mat));
     std::vector<u32> indices(index_count);
     std::vector<Vertex_3p3n3c2t_mat> vertices(vertex_count);
-
+    // For normal calculation
+    std::vector<std::vector<u32>> vertices_use(vertex_count);
+    // Now optimize the mesh
     meshopt_remapIndexBuffer(&indices[0], NULL, index_count, &remap[0]);
     meshopt_remapVertexBuffer(&vertices[0], &raw_vertices[0], index_count,
                               sizeof(Vertex_3p3n3c2t_mat), &remap[0]);
@@ -103,10 +105,31 @@ std::vector<Raw_Mesh_Obj> load_obj_raw(char const *filename) {
     meshopt_optimizeVertexFetch(&vertices[0], &indices[0], index_count,
                                 &vertices[0], vertex_count,
                                 sizeof(Vertex_3p3n3c2t_mat));
+    // EOF optimization  
     std::vector<u32_face> faces(index_count / 3);
-    for (u32 i = 0; i < index_count / 3; i++)
+    for (u32 i = 0; i < index_count / 3; i++) {
+      vertices_use[indices[i * 3]].push_back(i);
+      vertices_use[indices[i * 3 + 1]].push_back(i);
+      vertices_use[indices[i * 3 + 2]].push_back(i);
       faces[i] = {indices[i * 3], indices[i * 3 + 1], indices[i * 3 + 2]};
-
+    }
+    ito(vertices.size()) {
+      auto &vertex = vertices[i];
+      // Fix the normal
+      if (glm::length2(vertex.normal) < FLT_EPSILON) {
+        auto const &uses = vertices_use[i];
+        vec3 avg_normal = vec3(0.0f, 0.0f, 0.0f);
+        for (auto use : uses) {
+          vec3 v0 = vertices[faces[use].v0].position;
+          vec3 v1 = vertices[faces[use].v1].position;
+          vec3 v2 = vertices[faces[use].v2].position;
+          vec3 normal = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+          avg_normal += normal;
+        }
+        vertex.normal = glm::normalize(avg_normal);
+      }
+      
+    }
     out.push_back(Raw_Mesh_Obj{
       name : shapes[s].name,
       materials : materials,

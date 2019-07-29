@@ -14,6 +14,9 @@ cmake --build . --target all
 ## Features
 * Vulkan framework skeleton
 * Shader reload with inotify/dir_update
+* Gizmos
+  * Translation
+* ISPC/Naive path tracing
 ## TODO
 * Asset pipeline
   * Proper serialization framework
@@ -24,6 +27,7 @@ cmake --build . --target all
 * Vulkan framework skeleton
   * Try bindless resources
 * Gizmos
+  * Rotation
 * Try different raymarching optimizations
   * Marching simplices
   * Distance field compression
@@ -31,5 +35,5 @@ cmake --build . --target all
   * AO, GI
 
 ## References
-Models downloaded from Morgan McGuire's [Computer Graphics Archive](https://casual-effects.com/data)
-Models downloaded from [free3d](https://free3d.com/3d-model/low-poly-male-26691.html)
+Models downloaded from Morgan McGuire's [Computer Graphics Archive](https://casual-effects.com/data)  
+Models downloaded from [free3d](https://free3d.com/3d-model/low-poly-male-26691.html)  

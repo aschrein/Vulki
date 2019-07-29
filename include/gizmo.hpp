@@ -13,134 +13,95 @@ using namespace glm;
 #include "gelf.h"
 #include "imgui.h"
 
+struct Gizmo_Vertex {
+  vec3 in_position;
+};
+struct Gizmo_Instance_Data_CPU {
+  mat4 transform;
+  vec3 color;
+};
+struct Gizmo_Push_Constants {
+  mat4 view;
+  mat4 proj;
+};
+enum class Gizmo_Geometry_Type { CYLINDER, SPHERE, CONE };
+struct Gizmo_Draw_Cmd {
+  Gizmo_Geometry_Type type;
+  Gizmo_Instance_Data_CPU data;
+};
+
 struct Gizmo_Drag_State {
   RAW_MOVABLE(Gizmo_Drag_State)
   float size = 1.0f;
+  float grab_radius = 0.2f;
   vec3 pos;
+  // Normalized and orthogonal
+  vec3 x_axis = vec3(1.0f, 0.0f, 0.0f), y_axis = vec3(0.0f, 1.0f, 0.0f),
+       z_axis = vec3(0.0f, 0.0f, 1.0f);
   bool selected;
   bool selected_axis[3];
   bool hovered_axis[3];
   int selected_axis_id = -1;
   float old_cpa, cpa;
-  // Vulkan State
-  struct Gizmo_Vertex {
-    vec3 in_position;
-  };
-  struct Gizmo_Instance_Data_CPU {
-    vec3 offset;
-    float scale;
-    vec3 color;
-    vec3 rotation;
-  };
-  struct Gizmo_Instance_Data {
-    vec4 in_model_0;
-    vec4 in_model_1;
-    vec4 in_model_2;
-    vec4 in_model_3;
-    vec3 in_color;
-  };
-  struct Gizmo_Push_Constants {
-    mat4 view;
-    mat4 proj;
-  };
-  Pipeline_Wrapper gizmo_pipeline;
-  Raw_Mesh_3p16i_Wrapper icosahedron_wrapper;
-  Raw_Mesh_3p16i_Wrapper cylinder_wrapper;
-  VmaBuffer gizmo_instance_buffer;
-
-  void init_vulkan_state(Device_Wrapper &device_wrapper,
-                         vk::RenderPass &render_pass) {
-    icosahedron_wrapper = Raw_Mesh_3p16i_Wrapper::create(
-        device_wrapper, subdivide_icosahedron(2));
-    cylinder_wrapper = Raw_Mesh_3p16i_Wrapper::create(
-        device_wrapper, subdivide_cylinder(8, 0.025f, 1.0f));
-    gizmo_instance_buffer = device_wrapper.alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(6 * sizeof(Gizmo_Instance_Data))
-            .setUsage(vk::BufferUsageFlagBits::eVertexBuffer),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-    gizmo_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "../shaders/gizmo.vert.glsl",
-        "../shaders/gizmo.frag.glsl",
-        vk::GraphicsPipelineCreateInfo().setRenderPass(render_pass),
-        {REG_VERTEX_ATTRIB(Gizmo_Vertex, in_position, 0,
-                           vk::Format::eR32G32B32Sfloat),
-         REG_VERTEX_ATTRIB(Gizmo_Instance_Data, in_model_0, 1,
-                           vk::Format::eR32G32B32A32Sfloat),
-         REG_VERTEX_ATTRIB(Gizmo_Instance_Data, in_model_1, 1,
-                           vk::Format::eR32G32B32A32Sfloat),
-         REG_VERTEX_ATTRIB(Gizmo_Instance_Data, in_model_2, 1,
-                           vk::Format::eR32G32B32A32Sfloat),
-         REG_VERTEX_ATTRIB(Gizmo_Instance_Data, in_model_3, 1,
-                           vk::Format::eR32G32B32A32Sfloat),
-         REG_VERTEX_ATTRIB(Gizmo_Instance_Data, in_color, 1,
-                           vk::Format::eR32G32B32Sfloat)},
-        {vk::VertexInputBindingDescription()
-             .setBinding(0)
-             .setStride(sizeof(Gizmo_Vertex))
-             .setInputRate(vk::VertexInputRate::eVertex),
-         vk::VertexInputBindingDescription()
-             .setBinding(1)
-             .setStride(sizeof(Gizmo_Instance_Data))
-             .setInputRate(vk::VertexInputRate::eInstance)},
-        {}, sizeof(Gizmo_Push_Constants));
-  }
-  void draw(Device_Wrapper &device_wrapper, vk::CommandBuffer &cmd,
-            mat4 const &view, mat4 const &proj) {
-    std::vector<Gizmo_Instance_Data_CPU> gizmo_instances = {
-        {size * vec3(1.0f, 0.0f, 0.0f), size * 0.2f, vec3(1.0f, 0.0f, 0.0f)},
-        {size * vec3(0.0f, 1.0f, 0.0f), size * 0.2f, vec3(0.0f, 1.0f, 0.0f)},
-        {size * vec3(0.0f, 0.0f, 1.0f), size * 0.2f, vec3(0.0f, 0.0f, 1.0f)},
-        {vec3(0.0f, 0.0f, 0.0f), size * 1.0f, vec3(1.0f, 0.0f, 0.0f),
-         vec3(0.0f, 0.0f, 0.0f)},
-        {vec3(0.0f, 0.0f, 0.0f), size * 1.0f, vec3(0.0f, 1.0f, 0.0f),
-         vec3(0.0f, 0.0f, M_PI_2)},
-        {vec3(0.0f, 0.0f, 0.0f), size * 1.0f, vec3(0.0f, 0.0f, 1.0f),
-         vec3(0.0f, -M_PI_2, 0.0f)},
-    };
-    {
-
-      void *data = gizmo_instance_buffer.map();
-      Gizmo_Instance_Data *typed_data = (Gizmo_Instance_Data *)data;
-      for (u32 i = 0; i < gizmo_instances.size(); i++) {
-        mat4 translation =
-            glm::translate(pos + gizmo_instances[i].offset) *
-            glm::rotate(gizmo_instances[i].rotation.x, vec3(1.0f, 0.0f, 0.0f)) *
-            glm::rotate(gizmo_instances[i].rotation.y, vec3(0.0f, 1.0f, 0.0f)) *
-            glm::rotate(gizmo_instances[i].rotation.z, vec3(0.0f, 0.0f, 1.0f)) *
-            glm::scale(vec3(gizmo_instances[i].scale));
-        typed_data[i].in_model_0 = translation[0];
-        typed_data[i].in_model_1 = translation[1];
-        typed_data[i].in_model_2 = translation[2];
-        typed_data[i].in_model_3 = translation[3];
-
-        float k = hovered_axis[i % 3] ? 1.0f : 0.5f;
-        typed_data[i].in_color = gizmo_instances[i].color * k;
-      }
-      gizmo_instance_buffer.unmap();
-    }
-    {
-      gizmo_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
-      Gizmo_Push_Constants tmp_pc{};
-
-      tmp_pc.proj = proj;
-      tmp_pc.view = view;
-      gizmo_pipeline.push_constants(cmd, &tmp_pc, sizeof(Gizmo_Push_Constants));
-      cmd.bindVertexBuffers(0,
-                            {icosahedron_wrapper.vertex_buffer.buffer,
-                             gizmo_instance_buffer.buffer},
-                            {0, 0});
-      cmd.bindIndexBuffer(icosahedron_wrapper.index_buffer.buffer, 0,
-                          vk::IndexType::eUint16);
-      cmd.drawIndexed(icosahedron_wrapper.vertex_count, 3, 0, 0, 0);
-      cmd.bindVertexBuffers(
-          0,
-          {cylinder_wrapper.vertex_buffer.buffer, gizmo_instance_buffer.buffer},
-          {0, 0});
-      cmd.bindIndexBuffer(cylinder_wrapper.index_buffer.buffer, 0,
-                          vk::IndexType::eUint16);
-      cmd.drawIndexed(cylinder_wrapper.vertex_count, 3, 0, 0, 3);
-    }
+  void push_draw(std::vector<Gizmo_Draw_Cmd> &cmd) {
+    mat4 tranform = mat4(x_axis.x, x_axis.y, x_axis.z, 0.0f, y_axis.x, y_axis.y,
+                         y_axis.z, 0.0f, z_axis.x, z_axis.y, z_axis.z, 0.0f,
+                         pos.x, pos.y, pos.z, 1.0f);
+    // std::vector<Gizmo_Instance_Data_CPU> gizmo_instances = {
+    //     {size * x_axis, size * 0.2f, vec3(1.0f, 0.0f, 0.0f)},
+    //     {size * vec3(0.0f, 1.0f, 0.0f), size * 0.2f, vec3(0.0f, 1.0f, 0.0f)},
+    //     {size * vec3(0.0f, 0.0f, 1.0f), size * 0.2f, vec3(0.0f, 0.0f, 1.0f)},
+    //     {vec3(0.0f, 0.0f, 0.0f), size * 1.0f, vec3(1.0f, 0.0f, 0.0f),
+    //      vec3(0.0f, 0.0f, 0.0f)},
+    //     {vec3(0.0f, 0.0f, 0.0f), size * 1.0f, vec3(0.0f, 1.0f, 0.0f),
+    //      vec3(0.0f, 0.0f, M_PI_2)},
+    //     {vec3(0.0f, 0.0f, 0.0f), size * 1.0f, vec3(0.0f, 0.0f, 1.0f),
+    //      vec3(0.0f, -M_PI_2, 0.0f)},
+    // };
+    float x_k = hovered_axis[0] ? 1.0f : 0.5f;
+    float y_k = hovered_axis[1] ? 1.0f : 0.5f;
+    float z_k = hovered_axis[2] ? 1.0f : 0.5f;
+    cmd.push_back(Gizmo_Draw_Cmd{
+        .type = Gizmo_Geometry_Type::CYLINDER,
+        .data = Gizmo_Instance_Data_CPU{
+            .transform = tranform *
+                         glm::rotate(float(M_PI_2), vec3(0.0f, 1.0f, 0.0f)) *
+                         glm::scale(size * vec3(0.025f, 0.025f, 1.0f)),
+            .color = vec3(x_k, 0.0f, 0.0f)}});
+    cmd.push_back(Gizmo_Draw_Cmd{
+        .type = Gizmo_Geometry_Type::CYLINDER,
+        .data = Gizmo_Instance_Data_CPU{
+            .transform = tranform *
+                         glm::rotate(-float(M_PI_2), vec3(1.0f, 0.0f, 0.0f)) *
+                         glm::scale(size * vec3(0.025f, 0.025f, 1.0f)),
+            .color = vec3(0.0f, y_k, 0.0f)}});
+    cmd.push_back(Gizmo_Draw_Cmd{
+        .type = Gizmo_Geometry_Type::CYLINDER,
+        .data = Gizmo_Instance_Data_CPU{
+            .transform =
+                tranform *
+                //  glm::rotate(float(M_PI_2), vec3(0.0f, 0.0f, 0.0f)) *
+                glm::scale(size * vec3(0.025f, 0.025f, 1.0f)),
+            .color = vec3(0.0f, 0.0f, z_k)}});
+    // Grab spheres
+    cmd.push_back(Gizmo_Draw_Cmd{
+        .type = Gizmo_Geometry_Type::SPHERE,
+        .data = Gizmo_Instance_Data_CPU{
+            .transform = tranform * glm::translate(vec3(size, 0.0f, 0.0f)) *
+                         glm::scale(grab_radius * vec3(size, size, size)),
+            .color = vec3(x_k, 0.0f, 0.0f)}});
+    cmd.push_back(Gizmo_Draw_Cmd{
+        .type = Gizmo_Geometry_Type::SPHERE,
+        .data = Gizmo_Instance_Data_CPU{
+            .transform = tranform * glm::translate(vec3(0.0f, size, 0.0f)) *
+                         glm::scale(grab_radius * vec3(size, size, size)),
+            .color = vec3(0.0f, y_k, 0.0f)}});
+    cmd.push_back(Gizmo_Draw_Cmd{
+        .type = Gizmo_Geometry_Type::SPHERE,
+        .data = Gizmo_Instance_Data_CPU{
+            .transform = tranform * glm::translate(vec3(0.0f, 0.0f, size)) *
+                         glm::scale(grab_radius * vec3(size, size, size)),
+            .color = vec3(0.0f, 0.0f, z_k)}});
   }
   void on_mouse_release() {
     selected = false;
@@ -255,13 +216,158 @@ struct Gizmo_Layer {
 
   // Gizmos
   Gizmo_Drag_State gizmo_drag_state;
+
+  std::vector<Gizmo_Draw_Cmd> cmds;
+  // Vulkan state
+  struct Gizmo_Instance_Data {
+    vec4 in_model_0;
+    vec4 in_model_1;
+    vec4 in_model_2;
+    vec4 in_model_3;
+    vec3 in_color;
+  };
+  Pipeline_Wrapper gizmo_pipeline;
+  Raw_Mesh_3p16i_Wrapper icosahedron_wrapper;
+  Raw_Mesh_3p16i_Wrapper cylinder_wrapper;
+  Raw_Mesh_3p16i_Wrapper cone_wrapper;
+  VmaBuffer gizmo_instance_buffer;
+
   void init_vulkan_state(Device_Wrapper &device_wrapper,
                          vk::RenderPass &render_pass) {
-    gizmo_drag_state.init_vulkan_state(device_wrapper, render_pass);
+    gizmo_pipeline = Pipeline_Wrapper::create_graphics(
+        device_wrapper, "../shaders/gizmo.vert.glsl",
+        "../shaders/gizmo.frag.glsl",
+        vk::GraphicsPipelineCreateInfo().setRenderPass(render_pass),
+        {REG_VERTEX_ATTRIB(Gizmo_Vertex, in_position, 0,
+                           vk::Format::eR32G32B32Sfloat),
+         REG_VERTEX_ATTRIB(Gizmo_Instance_Data, in_model_0, 1,
+                           vk::Format::eR32G32B32A32Sfloat),
+         REG_VERTEX_ATTRIB(Gizmo_Instance_Data, in_model_1, 1,
+                           vk::Format::eR32G32B32A32Sfloat),
+         REG_VERTEX_ATTRIB(Gizmo_Instance_Data, in_model_2, 1,
+                           vk::Format::eR32G32B32A32Sfloat),
+         REG_VERTEX_ATTRIB(Gizmo_Instance_Data, in_model_3, 1,
+                           vk::Format::eR32G32B32A32Sfloat),
+         REG_VERTEX_ATTRIB(Gizmo_Instance_Data, in_color, 1,
+                           vk::Format::eR32G32B32Sfloat)},
+        {vk::VertexInputBindingDescription()
+             .setBinding(0)
+             .setStride(sizeof(Gizmo_Vertex))
+             .setInputRate(vk::VertexInputRate::eVertex),
+         vk::VertexInputBindingDescription()
+             .setBinding(1)
+             .setStride(sizeof(Gizmo_Instance_Data))
+             .setInputRate(vk::VertexInputRate::eInstance)},
+        {}, sizeof(Gizmo_Push_Constants));
+    cone_wrapper = Raw_Mesh_3p16i_Wrapper::create(
+        device_wrapper, subdivide_cone(8, 1.0f, 1.0f));
+    icosahedron_wrapper = Raw_Mesh_3p16i_Wrapper::create(
+        device_wrapper, subdivide_icosahedron(2));
+    cylinder_wrapper = Raw_Mesh_3p16i_Wrapper::create(
+        device_wrapper, subdivide_cylinder(8, 1.0f, 1.0f));
+  }
+  void push_gizmo(Gizmo_Draw_Cmd cmd) { cmds.push_back(cmd); }
+  void push_line(vec3 start, vec3 end, vec3 up, vec3 color) {
+    vec3 dr = end - start;
+    float length = glm::length(dr);
+    vec3 dir = glm::normalize(dr);
+    vec3 tangent = glm::normalize(glm::cross(dir, up));
+    vec3 binormal = -glm::cross(dir, tangent);
+    mat4 tranform = mat4(tangent.x, tangent.y, tangent.z, 0.0f, binormal.x,
+                         binormal.y, binormal.z, 0.0f, dir.x, dir.y, dir.z,
+                         0.0f, start.x, start.y, start.z, 1.0f);
+
+    push_gizmo(Gizmo_Draw_Cmd{
+        .type = Gizmo_Geometry_Type::CYLINDER,
+        .data = Gizmo_Instance_Data_CPU{
+            .transform =
+                tranform *
+                glm::scale(vec3(gizmo_drag_state.size * 0.01f,
+                                gizmo_drag_state.size * 0.01f, length)),
+            .color = color}});
   }
   void draw(Device_Wrapper &device_wrapper, vk::CommandBuffer &cmd) {
 
-    gizmo_drag_state.draw(device_wrapper, cmd, camera_view, camera_proj);
+    gizmo_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
+    Gizmo_Push_Constants tmp_pc{};
+    tmp_pc.proj = camera_proj;
+    tmp_pc.view = camera_view;
+    gizmo_pipeline.push_constants(cmd, &tmp_pc, sizeof(Gizmo_Push_Constants));
+
+    gizmo_drag_state.push_draw(cmds);
+    std::vector<Gizmo_Draw_Cmd> cylinders;
+    std::vector<Gizmo_Draw_Cmd> spheres;
+    std::vector<Gizmo_Draw_Cmd> cones;
+    for (auto cmd : cmds) {
+      if (cmd.type == Gizmo_Geometry_Type::CYLINDER) {
+        cylinders.push_back(cmd);
+      } else if (cmd.type == Gizmo_Geometry_Type::SPHERE) {
+        spheres.push_back(cmd);
+      } else if (cmd.type == Gizmo_Geometry_Type::CONE) {
+        cones.push_back(cmd);
+      }
+    }
+    gizmo_instance_buffer = device_wrapper.alloc_state->allocate_buffer(
+        vk::BufferCreateInfo()
+            .setSize(cmds.size() * sizeof(Gizmo_Instance_Data))
+            .setUsage(vk::BufferUsageFlagBits::eVertexBuffer),
+        VMA_MEMORY_USAGE_CPU_TO_GPU);
+    u32 cylinder_instance_offset = 0;
+    u32 spheres_instance_offset = 0;
+    u32 cones_instance_offset = 0;
+    {
+      void *data = gizmo_instance_buffer.map();
+      Gizmo_Instance_Data *typed_data = (Gizmo_Instance_Data *)data;
+      u32 total_index = 0;
+      auto push_type = [&](std::vector<Gizmo_Draw_Cmd> &arr) {
+        ito(arr.size()) {
+          auto data = arr[i].data;
+          typed_data[total_index].in_model_0 = data.transform[0];
+          typed_data[total_index].in_model_1 = data.transform[1];
+          typed_data[total_index].in_model_2 = data.transform[2];
+          typed_data[total_index].in_model_3 = data.transform[3];
+          typed_data[total_index].in_color = data.color;
+          total_index++;
+        }
+      };
+      push_type(cylinders);
+      spheres_instance_offset = total_index;
+      push_type(spheres);
+      cones_instance_offset = total_index;
+      push_type(cones);
+      gizmo_instance_buffer.unmap();
+    }
+    {
+
+      // Draw cylinders
+      cmd.bindVertexBuffers(
+          0,
+          {cylinder_wrapper.vertex_buffer.buffer, gizmo_instance_buffer.buffer},
+          {0, 0});
+      cmd.bindIndexBuffer(cylinder_wrapper.index_buffer.buffer, 0,
+                          vk::IndexType::eUint16);
+      cmd.drawIndexed(cylinder_wrapper.vertex_count, cylinders.size(), 0, 0,
+                      cylinder_instance_offset);
+      // Draw spheres
+      cmd.bindVertexBuffers(0,
+                            {icosahedron_wrapper.vertex_buffer.buffer,
+                             gizmo_instance_buffer.buffer},
+                            {0, 0});
+      cmd.bindIndexBuffer(icosahedron_wrapper.index_buffer.buffer, 0,
+                          vk::IndexType::eUint16);
+      cmd.drawIndexed(icosahedron_wrapper.vertex_count, 3, 0, 0,
+                      spheres_instance_offset);
+      // Draw Cones
+      cmd.bindVertexBuffers(
+          0, {cone_wrapper.vertex_buffer.buffer, gizmo_instance_buffer.buffer},
+          {0, 0});
+      cmd.bindIndexBuffer(cone_wrapper.index_buffer.buffer, 0,
+                          vk::IndexType::eUint16);
+      cmd.drawIndexed(cone_wrapper.vertex_count, 3, 0, 0,
+                      cones_instance_offset);
+    }
+    // Reset cpu command stream
+    cmds.clear();
   }
 
   void on_imgui_viewport() {
@@ -309,7 +415,7 @@ struct Gizmo_Layer {
     }
     if (ImGui::IsWindowHovered()) {
       ///////// Low precision timer
-      
+
       ///////////////////////
       auto eps = 1.0e-4f;
       auto mpos = ImGui::GetMousePos();
@@ -336,7 +442,7 @@ struct Gizmo_Layer {
       if (ImGui::GetIO().KeysDown[GLFW_KEY_D]) {
         camera_diff += camera_right;
       }
-      // It's always of length of 0.0 or 1.0 so just check 
+      // It's always of length of 0.0 or 1.0 so just check
       if (glm::dot(camera_diff, camera_diff) > 1.0e-3f)
         camera_look_at += glm::normalize(camera_diff) * camera_speed * dt;
 

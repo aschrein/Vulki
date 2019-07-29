@@ -667,6 +667,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   //   * Different types of tracing
   // * Multiple objects
   // * Object movement
+  // * Use canonical, system-wide approach to numerical errors
+  //   * Unify all EPSILON crap
 
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;
@@ -702,11 +704,15 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   auto load_model = [&]() {
     std::string full_path = "models/" + _models[current_model];
     auto models = load_obj_raw(full_path.c_str());
+    float global_upscale = 10.0f;
+    // float normalization_size = 4.0f;
     for (auto &model : models) {
       Scene_Node scene_node;
       scene_node.position = vec3(0.0f, 0.0f, 0.0f);
       scene_node.model = std::move(model);
-
+      for (auto &vertex : scene_node.model.vertices) {
+        vertex.position *= global_upscale;
+      }
       // swap z-y
       for (auto &vertex : scene_node.model.vertices) {
         std::swap(vertex.position.y, vertex.position.z);
@@ -729,13 +735,6 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       }
       avg_triangle_radius /= scene_node.model.indices.size();
       vec3 dim = test_model_max - test_model_min;
-      float max_axis = std::max(dim.x, std::max(dim.y, dim.z));
-      float normalization_size = 4.0f;
-      for (auto &vertex : scene_node.model.vertices) {
-        vertex.position *= normalization_size / max_axis;
-      }
-      test_model_min *= normalization_size / max_axis;
-      test_model_max *= normalization_size / max_axis;
 
       scene_node.model_simplified = scene_node.model.convert_to_simplified();
       scene_node.model_flat = scene_node.model.flatten();
@@ -811,6 +810,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     vec3 up;
     vec3 right;
     f32 fov;
+    vec2 _debug_uv;
     vec3 gen_ray(f32 u, f32 v) {
       return normalize(look + up * v + right * u * fov);
     }
@@ -888,9 +888,9 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   auto path_tracing_iteration = [&] {
     auto light_value = [](vec3 ray_dir, vec3 color) {
       float brightness = (0.5f * (0.5f + 0.5f * ray_dir.z));
-      float r = (0.1f * std::pow(0.5f - 0.5f * ray_dir.z, 4.0f));
-      float g = (0.1f * std::pow(0.5f - 0.5f * ray_dir.x, 4.0f));
-      float b = (0.1f * std::pow(0.5f - 0.5f * ray_dir.y, 4.0f));
+      float r = (0.01f * std::pow(0.5f - 0.5f * ray_dir.z, 4.0f));
+      float g = (0.01f * std::pow(0.5f - 0.5f * ray_dir.x, 4.0f));
+      float b = (0.01f * std::pow(0.5f - 0.5f * ray_dir.y, 4.0f));
       return vec4(color.x * (brightness + r), color.x * (g + brightness),
                   color.x * (brightness + b), 1.0f);
     };
@@ -1012,6 +1012,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         for (auto &node : scene_nodes) {
           node.ug.iterate(
               job.ray_dir, job.ray_origin, [&](std::vector<u32> const &items) {
+                bool any_hit = false;
                 for (u32 face_id : items) {
                   auto face = node.model.indices[face_id];
                   vec3 v0 = node.model.vertices[face.v0].position;
@@ -1025,12 +1026,12 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                       min_col = col;
                       col.mesh_id = 0;
                       col.face_id = face_id;
-                      col_found = true;
+                      col_found = any_hit = true;
                     }
                   }
                 }
 
-                return !col_found;
+                return !any_hit;
               });
         }
         if (col_found) {
@@ -1379,9 +1380,11 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     {
       Collision min_col{.t = 1.0e10f};
       bool col_found = false;
+      u32 mesh_id = 0;
       for (auto &node : scene_nodes) {
         node.ug.iterate(gizmo_layer.mouse_ray, gizmo_layer.camera_pos,
                         [&](std::vector<u32> const &items) {
+                          bool any_hit = false;
                           for (u32 face_id : items) {
                             auto face = node.model.indices[face_id];
                             vec3 v0 = node.model.vertices[face.v0].position;
@@ -1389,19 +1392,82 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                             vec3 v2 = node.model.vertices[face.v2].position;
                             Collision col = {};
 
-                            if (ray_triangle_test_woop(gizmo_layer.camera_pos,
-                                                       gizmo_layer.mouse_ray,
-                                                       v0, v1, v2, col)) {
+                            if (ray_triangle_test_moller(gizmo_layer.camera_pos,
+                                                         gizmo_layer.mouse_ray,
+                                                         v0, v1, v2, col)) {
                               if (col.t < min_col.t) {
+                                col.mesh_id = mesh_id;
+                                col.face_id = face_id;
                                 min_col = col;
-                                gizmo_layer.gizmo_drag_state.pos = col.position;
-                                col_found = true;
+                                col_found = any_hit = true;
                               }
                             }
                           }
 
-                          return !col_found;
+                          return !any_hit;
                         });
+        mesh_id++;
+      }
+      if (col_found) {
+        if (trace_paths) {
+          vec3 dr = min_col.position - path_tracing_camera.pos;
+          vec3 ray_dir = glm::normalize(dr);
+          vec3 tangent = glm::normalize(glm::cross(ray_dir, min_col.normal));
+          vec3 binormal = glm::cross(min_col.normal, tangent);
+          gizmo_layer.push_line(min_col.position, min_col.position + tangent,
+                                min_col.normal, vec3(1.0f, 0.0f, 0.0f));
+          gizmo_layer.push_line(min_col.position, min_col.position + binormal,
+                                min_col.normal, vec3(0.0f, 1.0f, 0.0f));
+          gizmo_layer.push_line(min_col.position,
+                                min_col.position + min_col.normal, tangent,
+                                vec3(0.0f, 0.0f, 1.0f));
+          gizmo_layer.push_line(min_col.position, path_tracing_camera.pos,
+                                min_col.normal, vec3(1.0f, 1.0f, 0.0f));
+          mat4 path_tracing_camera_viewproj =
+              glm::perspective(float(M_PI) / 2.0f, path_tracing_camera.fov,
+                               1.0e-1f, 1.0e3f) *
+              glm::lookAt(path_tracing_camera.pos,
+                          path_tracing_camera.pos + path_tracing_camera.look,
+                          vec3(0.0f, 0.0f, 1.0f));
+          vec4 projected_pos = path_tracing_camera_viewproj *
+                               vec4(min_col.position.x, min_col.position.y,
+                                    min_col.position.z, 1.0f);
+          projected_pos /= projected_pos.w;
+          path_tracing_camera._debug_uv =
+              vec2(projected_pos.x, projected_pos.y) * vec2(0.5f, -0.5f) +
+              vec2(0.5f, 0.5f);
+          // vec3 dr = min_col.position - gizmo_layer.camera_pos;
+          // float scale = std::abs(glm::dot(dr, gizmo_layer.camera_look)) / 8;
+          // mat4 tranform =
+          //     mat4(tangent.x, tangent.y, tangent.z, 0.0f, binormal.x,
+          //          binormal.y, binormal.z, 0.0f, min_col.normal.x,
+          //          min_col.normal.y, min_col.normal.z, 0.0f,
+          //          min_col.position.x, min_col.position.y,
+          //          min_col.position.z, 1.0f);
+          // gizmo_layer.push_gizmo(Gizmo_Draw_Cmd{
+          //     .type = Gizmo_Geometry_Type::CYLINDER,
+          //     .data = Gizmo_Instance_Data_CPU{
+          //         .transform =
+          //             tranform *
+          //             glm::rotate(float(M_PI_2), vec3(0.0f, 1.0f, 0.0f)) *
+          //             glm::scale(scale * vec3(0.025f, 0.025f, 1.0f)),
+          //         .color = vec3(1.0f, 0.0f, 0.0f)}});
+          // gizmo_layer.push_gizmo(Gizmo_Draw_Cmd{
+          //     .type = Gizmo_Geometry_Type::CYLINDER,
+          //     .data = Gizmo_Instance_Data_CPU{
+          //         .transform =
+          //             tranform *
+          //             glm::rotate(-float(M_PI_2), vec3(1.0f, 0.0f, 0.0f)) *
+          //             glm::scale(scale * vec3(0.025f, 0.025f, 1.0f)),
+          //         .color = vec3(0.0f, 1.0f, 0.0f)}});
+          // gizmo_layer.push_gizmo(Gizmo_Draw_Cmd{
+          //     .type = Gizmo_Geometry_Type::CYLINDER,
+          //     .data = Gizmo_Instance_Data_CPU{
+          //         .transform =
+          //             tranform * glm::scale(scale * vec3(0.025f,
+          //             0.025f, 1.0f)),
+          //         .color = vec3(0.0f, 0.0f, 1.0f)}});
+        }
       }
 
       // @Debug
@@ -1467,6 +1533,22 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
               color_to_int(path_tracing_image.get_value(j, i));
         }
       }
+      u32 _debug_pixel_x =
+          u32(path_tracing_camera._debug_uv.x * path_tracing_image.width);
+      u32 _debug_pixel_y =
+          u32(path_tracing_camera._debug_uv.y * path_tracing_image.height);
+      ito(3) {
+        jto(3) {
+          i32 pixel_x = i32(_debug_pixel_x) - 1 + j;
+          i32 pixel_y = i32(_debug_pixel_y) - 1 + i;
+          if (pixel_x >= 0 && pixel_x < path_tracing_image.width &&
+              pixel_y >= 0 && pixel_y < path_tracing_image.height) {
+            typed_data[pixel_y * path_tracing_image.width + pixel_x] =
+                color_to_int(vec4(1.0f, 0.0f, 0.0f, 1.0f));
+          }
+        }
+      }
+
       path_tracing_gpu_image.image.unmap();
       ImGui::Image(ImGui_ImplVulkan_AddTexture(
                        sampler.get(), path_tracing_gpu_image.image_view.get(),
