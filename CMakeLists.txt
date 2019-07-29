@@ -22,16 +22,19 @@ ELSE()
 	message(STATUS ${Vulkan_LIBRARY})
 ENDIF()
 
+find_package(OpenMP)
+if(NOT OpenMP_CXX_FOUND)
+    message(FATAL_ERROR "Could not find OpenMP library!")
+endif()
+
 add_definitions(-D_CRT_SECURE_NO_WARNINGS -fpermissive)
 set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
+set (CMAKE_CXX_FLAGS_RELEASE "-O3")
 # add_definitions(-std=c++17)
 set(SPIRV_CROSS_SHARED ON)
 add_subdirectory(3rdparty/SPIRV-Cross)
 add_subdirectory(3rdparty/tinyobjloader)
 add_subdirectory(3rdparty/meshoptimizer)
-set(sewing_use_cxx_11 ON)
-include_directories(3rdparty/sewing/include)
-add_subdirectory(3rdparty/sewing)
 
 
 file(GLOB SOURCE "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widgets.cpp 3rdparty/imgui/imgui_draw.cpp 3rdparty/imgui/imgui_demo.cpp 3rdparty/imgui/examples/imgui_impl_vulkan.cpp 3rdparty/imgui/examples/imgui_impl_glfw.cpp)
@@ -41,9 +44,9 @@ file(GLOB SOURCE "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widge
 # -O0 -g
 
 add_custom_command(OUTPUT kernel.o
-                   COMMAND ispc -O3 --math-lib=fast --pic  ${CMAKE_SOURCE_DIR}/"src/kernel.ispc" -o kernel.o
+                   COMMAND ispc -O3 -g --math-lib=fast --pic  ${CMAKE_SOURCE_DIR}/"src/kernel.ispc" -o kernel.o
                    DEPENDS "src/kernel.ispc")
-set(LIBS sewing meshoptimizer tinyobjloader glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util pthread boost_system boost_filesystem boost_thread)
+set(LIBS OpenMP::OpenMP_CXX meshoptimizer tinyobjloader glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util pthread boost_system boost_filesystem boost_thread)
 add_executable(GRAPHICS_EXPERIMENTS main.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
 target_include_directories(GRAPHICS_EXPERIMENTS PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
 target_link_libraries(GRAPHICS_EXPERIMENTS ${Vulkan_LIBRARY} ${LIBS})
