@@ -70,14 +70,14 @@ struct Raw_Mesh_Obj {
   std::vector<u32_face> indices;
   Raw_Mesh_3p32i_AOSOA convert_to_aosoa() {
     Raw_Mesh_3p32i_AOSOA out;
-    u32 chunks_count = (vertices.size() + 7)/8;
+    u32 chunks_count = (vertices.size() + 7) / 8;
     out.positions.resize(chunks_count);
     out.indices = indices;
     u32 i = 0;
     for (auto const &vertex : vertices) {
-      out.positions[i/8].x[i%8] = vertex.position.x;
-      out.positions[i/8].y[i%8] = vertex.position.y;
-      out.positions[i/8].y[i%8] = vertex.position.z;
+      out.positions[i / 8].x[i % 8] = vertex.position.x;
+      out.positions[i / 8].y[i % 8] = vertex.position.y;
+      out.positions[i / 8].y[i % 8] = vertex.position.z;
       i++;
     }
     return out;
@@ -88,6 +88,16 @@ struct Raw_Mesh_Obj {
     out.positions.reserve(vertices.size());
     for (auto const &vertex : vertices) {
       out.positions.push_back(vertex.position);
+    }
+    return out;
+  }
+  std::vector<vec3> flatten() {
+    std::vector<vec3> out;
+    out.reserve(vertices.size());
+    for (auto const &face : indices) {
+      out.push_back(vertices[face.v0].position);
+      out.push_back(vertices[face.v1].position);
+      out.push_back(vertices[face.v2].position);
     }
     return out;
   }
@@ -191,7 +201,7 @@ struct Raw_Mesh_Obj_Wrapper {
   VmaBuffer index_buffer;
   u32 vertex_count;
   static Raw_Mesh_Obj_Wrapper create(Device_Wrapper &device,
-                                           Raw_Mesh_Obj const &in) {
+                                     Raw_Mesh_Obj const &in) {
     Raw_Mesh_Obj_Wrapper out{};
     out.vertex_count = in.indices.size() * 3;
     out.vertex_buffer = device.alloc_state->allocate_buffer(
@@ -206,7 +216,8 @@ struct Raw_Mesh_Obj_Wrapper {
         VMA_MEMORY_USAGE_CPU_TO_GPU);
     {
       void *data = out.vertex_buffer.map();
-      memcpy(data, &in.vertices[0], sizeof(in.vertices[0]) * in.vertices.size());
+      memcpy(data, &in.vertices[0],
+             sizeof(in.vertices[0]) * in.vertices.size());
       out.vertex_buffer.unmap();
     }
     {

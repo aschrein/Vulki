@@ -26,7 +26,7 @@ namespace fs = std::filesystem;
 #include <glm/glm.hpp>
 using namespace glm;
 
-#include "sewing.h"
+#include "omp.h"
 
 TEST(graphics, vulkan_graphics_test_1) {
   auto device_wrapper = init_device(true);
@@ -658,14 +658,7 @@ struct JobPayload {
 
 using WorkPayload = std::vector<JobPayload>;
 
-void child_procedure(Sew_Procedure_Argument argument) {
-  JobPayload *payload = (JobPayload *)argument;
-  payload->func(payload->desc);
-}
-
-void main_procedure(struct Sewing *sewing, Sew_Thread *threads,
-                    size_t thread_count,
-                    Sew_Procedure_Argument procedure_argument) {
+TEST(graphics, vulkan_graphics_test_3d_models) {
   // @TODO:
   // * Fix moller and woop algorithms
   //   * They have some error checking which is not relative
@@ -683,6 +676,7 @@ void main_procedure(struct Sewing *sewing, Sew_Thread *threads,
     vec3 position;
     Raw_Mesh_Obj model;
     Raw_Mesh_3p32i model_simplified;
+    std::vector<vec3> model_flat;
     Raw_Mesh_Obj_Wrapper model_wrapper;
     UG ug = UG(1.0f, 1.0f);
     Packed_UG packed_ug;
@@ -744,6 +738,7 @@ void main_procedure(struct Sewing *sewing, Sew_Thread *threads,
       test_model_max *= normalization_size / max_axis;
 
       scene_node.model_simplified = scene_node.model.convert_to_simplified();
+      scene_node.model_flat = scene_node.model.flatten();
       scene_node.model_wrapper =
           Raw_Mesh_Obj_Wrapper::create(device_wrapper, scene_node.model);
       vec3 ug_size = test_model_max - test_model_min;
@@ -870,17 +865,22 @@ void main_procedure(struct Sewing *sewing, Sew_Thread *threads,
                                                vk::Format::eR8G8B8A8Unorm);
     ito(height) {
       jto(width) {
-        f32 u = (f32(j) + 0.5f) / width * 2.0f - 1.0f;
-        f32 v = -(f32(i) + 0.5f) / height * 2.0f + 1.0f;
-        Path_Tracing_Job job;
-        job.ray_dir = path_tracing_camera.gen_ray(u, v);
-        job.ray_origin = path_tracing_camera.pos;
-        job.pixel_x = j;
-        job.pixel_y = i;
-        job.weight = 1.0f;
-        job.color = vec3(1.0f, 1.0f, 1.0f);
-        job.depth = 0;
-        path_tracing_queue.enqueue(job);
+        // 16 samples per pixel
+        kto(16) {
+          f32 jitter_u = halton(k + 1, 2);
+          f32 jitter_v = halton(k + 1, 3);
+          f32 u = (f32(j) + jitter_u) / width * 2.0f - 1.0f;
+          f32 v = -(f32(i) + jitter_v) / height * 2.0f + 1.0f;
+          Path_Tracing_Job job;
+          job.ray_dir = path_tracing_camera.gen_ray(u, v);
+          job.ray_origin = path_tracing_camera.pos;
+          job.pixel_x = j;
+          job.pixel_y = i;
+          job.weight = 1.0f;
+          job.color = vec3(1.0f, 1.0f, 1.0f);
+          job.depth = 0;
+          path_tracing_queue.enqueue(job);
+        }
       }
     }
   };
@@ -931,8 +931,7 @@ void main_procedure(struct Sewing *sewing, Sew_Thread *threads,
                                &node.packed_ug.bin_count, 12);
                         ispc_packed_ug.bin_size = node.packed_ug.bin_size;
                         uint _tmp = desc.size;
-                        ispc_trace(&ispc_packed_ug,
-                                   (void *)&node.model_simplified.positions[0],
+                        ispc_trace(&ispc_packed_ug, (void *)&node.model_flat[0],
                                    (uint *)&node.model_simplified.indices[0],
                                    &ray_dirs[desc.offset],
                                    &ray_origins[desc.offset],
@@ -944,16 +943,11 @@ void main_procedure(struct Sewing *sewing, Sew_Thread *threads,
                     .size = std::min(u32(ray_jobs.size()) - i * jobs_per_item,
                                      jobs_per_item)}});
           }
-          std::vector<Sew_Stitch> jobs(work_payload.size());
-          u32 i = 0;
-          for (auto &item : work_payload) {
-            jobs[i].procedure = child_procedure;
-            jobs[i].argument = &item;
-            jobs[i].name = "child_procedure";
-            i++;
+#pragma omp parallel for
+          for (u32 i = 0; i < work_payload.size(); i++) {
+            auto work = work_payload[i];
+            work.func(work.desc);
           }
-
-          sew_stitches_and_wait(sewing, &jobs[0], jobs.size());
 
         } else {
           for (auto &node : scene_nodes) {
@@ -965,8 +959,7 @@ void main_procedure(struct Sewing *sewing, Sew_Thread *threads,
             memcpy(ispc_packed_ug.bin_count, &node.packed_ug.bin_count, 12);
             ispc_packed_ug.bin_size = node.packed_ug.bin_size;
             uint _tmp = ray_jobs.size();
-            ispc_trace(&ispc_packed_ug,
-                       (void *)&node.model_simplified.positions[0],
+            ispc_trace(&ispc_packed_ug, (void *)&node.model_flat[0],
                        (uint *)&node.model_simplified.indices[0], &ray_dirs[0],
                        &ray_origins[0], &ray_collisions[0], &_tmp);
           }
@@ -986,7 +979,7 @@ void main_procedure(struct Sewing *sewing, Sew_Thread *threads,
               vec3 tangent =
                   glm::normalize(glm::cross(job.ray_dir, min_col.normal));
               vec3 binormal = glm::cross(tangent, min_col.normal);
-              u32 secondary_N = 16 / (job.depth + 1);
+              u32 secondary_N = 4 / (1 << job.depth);
               ito(secondary_N) {
                 vec3 rand = frand.rand_unit_sphere();
                 auto new_job = job;
@@ -1488,31 +1481,6 @@ void main_procedure(struct Sewing *sewing, Sew_Thread *threads,
     ImGui::End();
   };
   device_wrapper.window_loop();
-
-  // WorkPayload *payload = (WorkPayload *)procedure_argument;
-}
-
-TEST(graphics, vulkan_graphics_test_3d_models) {
-  static std::unique_ptr<u8[]> sewing;
-  if (!sewing) {
-    size_t bytes =
-        sew_it(NULL // Set to null to get the required memory size
-               ,
-               1 << 20 // 32kb stack per fiber
-               ,
-               8 // threads (including this one)
-               ,
-               10 // Job queue (1 << N) entires large
-               ,
-               8 // fibers on the go at once
-               ,
-               main_procedure // User defined entry for the sewing system.
-               ,
-               NULL // User defined argument for 'main_procedure'
-        );
-    sewing.reset(new u8[bytes]);
-  }
-  sew_it(sewing.get(), 1 << 20, 8, 10, 8, main_procedure, NULL);
 }
 
 int main(int argc, char **argv) {

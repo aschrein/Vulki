@@ -47,3 +47,13 @@ public:
 private:
   pcg m_pcg;
 };
+
+static float halton(int i, int base) {
+  float x = 1.0f / base, v = 0.0f;
+  while (i > 0) {
+    v += x * (i % base);
+    i = floor(i / base);
+    x /= base;
+  }
+  return v;
+}

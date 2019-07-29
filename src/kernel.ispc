@@ -354,23 +354,27 @@ bool ispc_iterate(Packed_UG * uniform ug,
   int cell_id_cur = (int)(cell_id_offset);
   int cell_delta[3] = {step[0], step[1] * ug->bin_count[0],
                                   step[2] * ug->bin_count[0] * ug->bin_count[1]};
+  Collision min_collision = out_collision[ray_id];
   while (true) {
     uint o = cell_id_cur;
     uint bin_offset = ug->bins_indices[2 * o];
 
     // If the current node has items
     if (bin_offset > 0) {
-      Collision min_collision = out_collision[ray_id];
+      
       bool found = false;
       uint items_count = ug->bins_indices[2 * o + 1];
       for (uint i = bin_offset; i < bin_offset + items_count; i++) {
         uint face_id = ug->ids[i] * 3;
-        uint i0 = faces[face_id];
-        uint i1 = faces[face_id + 1];
-        uint i2 = faces[face_id + 2];
-        vec3 v0 = vertices[i0];
-        vec3 v1 = vertices[i1];
-        vec3 v2 = vertices[i2];
+        // uint i0 = faces[face_id];
+        // uint i1 = faces[face_id + 1];
+        // uint i2 = faces[face_id + 2];
+        // vec3 v0 = vertices[i0];
+        // vec3 v1 = vertices[i1];
+        // vec3 v2 = vertices[i2];
+        vec3 v0 = vertices[face_id];
+        vec3 v1 = vertices[face_id + 1];
+        vec3 v2 = vertices[face_id + 2];
         Collision col;
         if (ray_triangle_test_moller(ray_origin, ray_dir, v0,
                                    v1, v2, col))
@@ -381,9 +385,10 @@ bool ispc_iterate(Packed_UG * uniform ug,
           }
         }
       }
-      out_collision[ray_id] = min_collision;
-      if (found)
+      if (found) {
+        out_collision[ray_id] = min_collision;
         return true;
+      }
     }
     uint k = ((uint)(axis_distance[0] < axis_distance[1]) << 2) +
               ((uint)(axis_distance[0] < axis_distance[2]) << 1) +
