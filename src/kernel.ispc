@@ -35,7 +35,8 @@ struct Packed_UG {
 };
 struct Collision {
   vec3 position, normal;
-  float t, u, v;
+  uint mesh_id, face_id;
+  float t, u, v, du, dv;
 };
 // https://stackoverflow.com/questions/1148309/inverting-a-4x4-matrix
 bool invert_matrix(const float m[16], float invOut[16])
@@ -315,11 +316,10 @@ bool ispc_iterate(Packed_UG * uniform ug,
   vec3 ray_invdir = make_vec3(1.0f / ray_dir.x, 1.0f / ray_dir.y, 1.0f / ray_dir.z);
   float hit_min;
   float hit_max;
-  out_collision[ray_id].t = __FLT_MAX__;
   if (!intersect_box(ug, ray_invdir, ray_origin, hit_min, hit_max)) {
-    // out_collision[ray_id].t = 777.0f;
     return false;
   }
+  hit_min = max(0.0f, hit_min);
   vec3 _hit_pos = add(ray_origin, mul_k(ray_dir, hit_min));
   float hit_pos[3] = {_hit_pos.x, _hit_pos.y, _hit_pos.z};
   int step[3], cell_id[3];
@@ -355,15 +355,12 @@ bool ispc_iterate(Packed_UG * uniform ug,
   int cell_delta[3] = {step[0], step[1] * ug->bin_count[0],
                                   step[2] * ug->bin_count[0] * ug->bin_count[1]};
   while (true) {
-  // out_collision[ray_id].t = 666.0f;
     uint o = cell_id_cur;
     uint bin_offset = ug->bins_indices[2 * o];
 
     // If the current node has items
     if (bin_offset > 0) {
-      // out_collision[ray_id].t = 555.0f;
-      Collision min_collision;
-      min_collision.t = __FLT_MAX__;
+      Collision min_collision = out_collision[ray_id];
       bool found = false;
       uint items_count = ug->bins_indices[2 * o + 1];
       for (uint i = bin_offset; i < bin_offset + items_count; i++) {

@@ -74,14 +74,20 @@ struct UG {
     put(pos, {radius, radius, radius}, index);
   }
   void put(vec3 const &pos, vec3 const &extent, uint index) {
-    if (pos.x > this->max.x + extent.x || pos.y > this->max.y + extent.y ||
-        pos.z > this->max.z + extent.z || pos.x < this->min.x - extent.x ||
-        pos.y < this->min.y - extent.y || pos.z < this->min.z - extent.z) {
+    float EPS = 1.0e-7f;
+    if (pos.x > this->max.x + extent.x + EPS ||
+        pos.y > this->max.y + extent.y + EPS ||
+        pos.z > this->max.z + extent.z + EPS ||
+        pos.x < this->min.x - extent.x - EPS ||
+        pos.y < this->min.y - extent.y - EPS ||
+        pos.z < this->min.z - extent.z - EPS) {
       panic("");
       return;
     }
-    ivec3 min_ids = ivec3((pos - min - extent) / bin_size);
-    ivec3 max_ids = ivec3((pos - min + extent) / bin_size);
+    ivec3 min_ids =
+        ivec3((pos - min - vec3(EPS, EPS, EPS) - extent) / bin_size);
+    ivec3 max_ids =
+        ivec3((pos - min + vec3(EPS, EPS, EPS) + extent) / bin_size);
     for (int ix = min_ids.x; ix <= max_ids.x; ix++) {
       for (int iy = min_ids.y; iy <= max_ids.y; iy++) {
         for (int iz = min_ids.z; iz <= max_ids.z; iz++) {
@@ -135,8 +141,7 @@ struct UG {
       // hit_normal[i] = cell_id[i];
       if (std::abs(ray_dir[i]) < 1.0e-4f) {
         axis_delta[i] = 0.0f;
-        axis_distance[i] =
-            1.0e10f;
+        axis_distance[i] = 1.0e10f;
         step[i] = 0;
       } else if (ray_dir[i] < 0) {
         axis_delta[i] = -this->bin_size * ray_invdir[i];

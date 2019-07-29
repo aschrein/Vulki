@@ -4,6 +4,7 @@
 #include "memory.hpp"
 #include "primitives.hpp"
 #include "shader_compiler.hpp"
+#include "tinyobjloader/tiny_obj_loader.h"
 #include <glm/glm.hpp>
 #include <map>
 #include <vector>
@@ -55,8 +56,17 @@ struct Vertex_3p3n2t {
   vec3 normal;
   vec2 texcoord;
 };
-struct Raw_Mesh_3p3n2t32i {
-  std::vector<Vertex_3p3n2t> vertices;
+struct Vertex_3p3n3c2t_mat {
+  vec3 position;
+  vec3 normal;
+  vec3 color;
+  vec2 texcoord;
+  i32 mat_id;
+};
+struct Raw_Mesh_Obj {
+  std::string name;
+  std::vector<tinyobj::material_t> materials;
+  std::vector<Vertex_3p3n3c2t_mat> vertices;
   std::vector<u32_face> indices;
   Raw_Mesh_3p32i_AOSOA convert_to_aosoa() {
     Raw_Mesh_3p32i_AOSOA out;
@@ -175,18 +185,18 @@ static Raw_Mesh_3p16i subdivide_icosahedron(uint32_t level) {
   return out;
 }
 
-struct Raw_Mesh_3p3n2t32i_Wrapper {
-  RAW_MOVABLE(Raw_Mesh_3p3n2t32i_Wrapper)
+struct Raw_Mesh_Obj_Wrapper {
+  RAW_MOVABLE(Raw_Mesh_Obj_Wrapper)
   VmaBuffer vertex_buffer;
   VmaBuffer index_buffer;
   u32 vertex_count;
-  static Raw_Mesh_3p3n2t32i_Wrapper create(Device_Wrapper &device,
-                                           Raw_Mesh_3p3n2t32i const &in) {
-    Raw_Mesh_3p3n2t32i_Wrapper out{};
+  static Raw_Mesh_Obj_Wrapper create(Device_Wrapper &device,
+                                           Raw_Mesh_Obj const &in) {
+    Raw_Mesh_Obj_Wrapper out{};
     out.vertex_count = in.indices.size() * 3;
     out.vertex_buffer = device.alloc_state->allocate_buffer(
         vk::BufferCreateInfo()
-            .setSize(sizeof(Vertex_3p3n2t) * in.vertices.size())
+            .setSize(sizeof(in.vertices[0]) * in.vertices.size())
             .setUsage(vk::BufferUsageFlagBits::eVertexBuffer),
         VMA_MEMORY_USAGE_CPU_TO_GPU);
     out.index_buffer = device.alloc_state->allocate_buffer(
@@ -196,7 +206,7 @@ struct Raw_Mesh_3p3n2t32i_Wrapper {
         VMA_MEMORY_USAGE_CPU_TO_GPU);
     {
       void *data = out.vertex_buffer.map();
-      memcpy(data, &in.vertices[0], sizeof(Vertex_3p3n2t) * in.vertices.size());
+      memcpy(data, &in.vertices[0], sizeof(in.vertices[0]) * in.vertices.size());
       out.vertex_buffer.unmap();
     }
     {
@@ -242,7 +252,8 @@ struct Raw_Mesh_3p16i_Wrapper {
 };
 struct Collision {
   vec3 position, normal;
-  float t, u, v;
+  u32 mesh_id, face_id;
+  float t, u, v, du, dv;
 };
 // Möller–Trumbore intersection algorithm
 static bool ray_triangle_test_moller(vec3 ray_origin, vec3 ray_dir, vec3 v0,
@@ -334,7 +345,7 @@ static void get_aabb(vec3 const &a, vec3 const &b, vec3 const &c, vec3 &out_min,
 }
 
 static void get_center_radius(vec3 const &a, vec3 const &b, vec3 const &c,
-                              vec3 &out_center, float out_radius) {
+                              vec3 &out_center, float &out_radius) {
   vec3 min, max;
   get_aabb(a, b, c, min, max);
   out_center = (min + max) * 0.5f;

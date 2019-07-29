@@ -18,6 +18,8 @@
 #include <boost/thread.hpp>
 #include <chrono>
 #include <cstring>
+#include <filesystem>
+namespace fs = std::filesystem;
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/ext.hpp>
@@ -664,42 +666,37 @@ void child_procedure(Sew_Procedure_Argument argument) {
 void main_procedure(struct Sewing *sewing, Sew_Thread *threads,
                     size_t thread_count,
                     Sew_Procedure_Argument procedure_argument) {
-  WorkPayload *payload = (WorkPayload *)procedure_argument;
-
-  std::vector<Sew_Stitch> jobs(payload->size());
-  u32 i = 0;
-  for (auto &item : *payload) {
-    jobs[i].procedure = child_procedure;
-    jobs[i].argument = &item;
-    jobs[i].name = "child_procedure";
-    i++;
-  }
-
-  sew_stitches_and_wait(sewing, &jobs[0], jobs.size());
-}
-
-TEST(graphics, vulkan_graphics_test_3d_models) {
-
   // @TODO:
-  // Fix moller and woop algorithms
-  //  * They have some error checking which is not relative
-  //    It explodes at small triangles
+  // * Fix moller and woop algorithms
+  //   * They have some error checking which is not relative
+  //     It explodes at small triangles
+  // * Visual debugging for funky precision errors
+  //   * Different types of tracing
+  // * Multiple objects
+  // * Object movement
 
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;
 
   Simple_Monitor simple_monitor("../shaders");
-  Raw_Mesh_3p3n2t32i test_model;
-  Raw_Mesh_3p32i_AOSOA test_model_aosoa;
-  Raw_Mesh_3p32i test_model_simplified;
-  Raw_Mesh_3p3n2t32i_Wrapper test_model_wrapper;
-  UG test_model_ug(1.0f, 1.0f);
-  Packed_UG test_model_packed_ug;
-  const char *model_filenames[] = {
-      "models/MaleLow.obj",
-      "models/bunny.obj",
-      "models/dragon.obj",
+  struct Scene_Node {
+    vec3 position;
+    Raw_Mesh_Obj model;
+    Raw_Mesh_3p32i model_simplified;
+    Raw_Mesh_Obj_Wrapper model_wrapper;
+    UG ug = UG(1.0f, 1.0f);
+    Packed_UG packed_ug;
   };
+  std::vector<Scene_Node> scene_nodes;
+  std::string models_path = "models/";
+  std::vector<std::string> _models;
+  for (const auto &entry : fs::directory_iterator(models_path))
+    if (entry.path().filename().string().find(".obj") != std::string::npos) {
+      _models.push_back(entry.path().relative_path().filename().string());
+    }
+  std::vector<const char *> model_filenames;
+  for (auto const &filename : _models)
+    model_filenames.push_back(filename.c_str());
   i32 current_model = 0;
   f32 test_ug_size = 0.1f;
   bool trace_ispc = true;
@@ -709,60 +706,79 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   bool trace_paths = false;
   u32 max_jobs_per_iter = 50000;
   auto load_model = [&]() {
-    test_model = load_obj_raw(model_filenames[current_model]);
+    std::string full_path = "models/" + _models[current_model];
+    auto models = load_obj_raw(full_path.c_str());
+    for (auto &model : models) {
+      Scene_Node scene_node;
+      scene_node.position = vec3(0.0f, 0.0f, 0.0f);
+      scene_node.model = std::move(model);
 
-    // swap z-y
-    for (auto &vertex : test_model.vertices) {
-      std::swap(vertex.position.y, vertex.position.z);
-      std::swap(vertex.normal.y, vertex.normal.z);
-    }
-    // Scale the model
-    vec3 test_model_min(0.0f, 0.0f, 0.0f), test_model_max(0.0f, 0.0f, 0.0f);
-    for (auto face : test_model.indices) {
-      vec3 v0 = test_model.vertices[face.v0].position;
-      vec3 v1 = test_model.vertices[face.v1].position;
-      vec3 v2 = test_model.vertices[face.v2].position;
-      vec3 triangle_min, triangle_max;
-      get_aabb(v0, v1, v2, triangle_min, triangle_max);
-      union_aabb(triangle_min, triangle_max, test_model_min, test_model_max);
-    }
-    vec3 dim = test_model_max - test_model_min;
-    float max_axis = std::max(dim.x, std::max(dim.y, dim.z));
-    float normalization_size = 4.0f;
-    for (auto &vertex : test_model.vertices) {
-      vertex.position *= normalization_size / max_axis;
-    }
-    test_model_min *= normalization_size / max_axis;
-    test_model_max *= normalization_size / max_axis;
-
-    test_model_aosoa = test_model.convert_to_aosoa();
-    test_model_simplified = test_model.convert_to_simplified();
-    test_model_wrapper =
-        Raw_Mesh_3p3n2t32i_Wrapper::create(device_wrapper, test_model);
-
-    test_model_ug = UG(test_model_min, test_model_max, test_ug_size);
-
-    {
-      u32 triangle_id = 0;
-      for (auto face : test_model.indices) {
-        vec3 v0 = test_model.vertices[face.v0].position;
-        vec3 v1 = test_model.vertices[face.v1].position;
-        vec3 v2 = test_model.vertices[face.v2].position;
+      // swap z-y
+      for (auto &vertex : scene_node.model.vertices) {
+        std::swap(vertex.position.y, vertex.position.z);
+        std::swap(vertex.normal.y, vertex.normal.z);
+      }
+      // Scale the model
+      vec3 test_model_min(0.0f, 0.0f, 0.0f), test_model_max(0.0f, 0.0f, 0.0f);
+      float avg_triangle_radius = 0.0f;
+      for (auto face : scene_node.model.indices) {
+        vec3 v0 = scene_node.model.vertices[face.v0].position;
+        vec3 v1 = scene_node.model.vertices[face.v1].position;
+        vec3 v2 = scene_node.model.vertices[face.v2].position;
         vec3 triangle_min, triangle_max;
         get_aabb(v0, v1, v2, triangle_min, triangle_max);
-        test_model_ug.put((triangle_min + triangle_max) * 0.5f,
-                          (triangle_max - triangle_min) * 0.5f, triangle_id);
-        triangle_id++;
+        vec3 center;
+        float radius;
+        get_center_radius(v0, v1, v2, center, radius);
+        avg_triangle_radius += radius;
+        union_aabb(triangle_min, triangle_max, test_model_min, test_model_max);
       }
+      avg_triangle_radius /= scene_node.model.indices.size();
+      vec3 dim = test_model_max - test_model_min;
+      float max_axis = std::max(dim.x, std::max(dim.y, dim.z));
+      float normalization_size = 4.0f;
+      for (auto &vertex : scene_node.model.vertices) {
+        vertex.position *= normalization_size / max_axis;
+      }
+      test_model_min *= normalization_size / max_axis;
+      test_model_max *= normalization_size / max_axis;
+
+      scene_node.model_simplified = scene_node.model.convert_to_simplified();
+      scene_node.model_wrapper =
+          Raw_Mesh_Obj_Wrapper::create(device_wrapper, scene_node.model);
+      vec3 ug_size = test_model_max - test_model_min;
+      float smallest_dim = std::min(ug_size.x, std::min(ug_size.y, ug_size.z));
+      float longest_dim = std::max(ug_size.x, std::max(ug_size.y, ug_size.z));
+      float ug_cell_size =
+          std::max((longest_dim / 64) + 0.01f,
+                   std::min(avg_triangle_radius * 10.0f, longest_dim / 2));
+      scene_node.ug = UG(test_model_min, test_model_max, ug_cell_size);
+
+      {
+        u32 triangle_id = 0;
+        for (auto face : scene_node.model.indices) {
+          vec3 v0 = scene_node.model.vertices[face.v0].position;
+          vec3 v1 = scene_node.model.vertices[face.v1].position;
+          vec3 v2 = scene_node.model.vertices[face.v2].position;
+          vec3 triangle_min, triangle_max;
+          get_aabb(v0, v1, v2, triangle_min, triangle_max);
+          scene_node.ug.put((triangle_min + triangle_max) * 0.5f,
+                            (triangle_max - triangle_min) * 0.5f, triangle_id);
+          triangle_id++;
+        }
+      }
+      scene_node.packed_ug = scene_node.ug.pack();
+      scene_nodes.emplace_back(std::move(scene_node));
     }
-    test_model_packed_ug = test_model_ug.pack();
   };
   load_model();
   // Some shader data structures
   struct Test_Model_Vertex {
     vec3 in_position;
     vec3 in_normal;
+    vec3 in_color;
     vec2 in_texcoord;
+    u32 in_mat_id;
   };
   struct Test_Model_Instance_Data {
     vec4 in_model_0;
@@ -819,6 +835,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   } path_tracing_image;
   struct Path_Tracing_Job {
     vec3 ray_origin, ray_dir;
+    vec3 color;
     u32 pixel_x, pixel_y;
     f32 weight;
     u32 media_material_id;
@@ -861,6 +878,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         job.pixel_x = j;
         job.pixel_y = i;
         job.weight = 1.0f;
+        job.color = vec3(1.0f, 1.0f, 1.0f);
         job.depth = 0;
         path_tracing_queue.enqueue(job);
       }
@@ -868,10 +886,13 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   };
 
   auto path_tracing_iteration = [&] {
-    auto light_value = [](vec3 ray_dir) {
-      float brightness = (0.1f + 0.9f * (0.5f + 0.5f * ray_dir.z));
-      float backlight = (0.1f * std::pow(0.5f - 0.5f * ray_dir.z, 2.0f));
-      return vec4(brightness, brightness + backlight, brightness, 1.0f);
+    auto light_value = [](vec3 ray_dir, vec3 color) {
+      float brightness = (0.5f * (0.5f + 0.5f * ray_dir.z));
+      float r = (0.1f * std::pow(0.5f - 0.5f * ray_dir.z, 4.0f));
+      float g = (0.1f * std::pow(0.5f - 0.5f * ray_dir.x, 4.0f));
+      float b = (0.1f * std::pow(0.5f - 0.5f * ray_dir.y, 4.0f));
+      return vec4(color.x * (brightness + r), color.x * (g + brightness),
+                  color.x * (brightness + b), 1.0f);
     };
     if (trace_ispc) {
 
@@ -888,8 +909,9 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         ray_jobs.push_back(job);
         ray_dirs.push_back(job.ray_dir);
         ray_origins.push_back(job.ray_origin);
-        ray_collisions.push_back(Collision{});
+        ray_collisions.push_back(Collision{.t = FLT_MAX});
       }
+      // @PathTracing
       if (jobs_sofar > 0) {
         if (use_jobs) {
           WorkPayload work_payload;
@@ -898,66 +920,56 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
             work_payload.push_back(JobPayload{
                 .func =
                     [&](JobDesc desc) {
-                      ISPC_Packed_UG ispc_packed_ug;
-                      ispc_packed_ug.ids = &test_model_packed_ug.ids[0];
-                      ispc_packed_ug.bins_indices =
-                          &test_model_packed_ug.arena_table[0];
-                      memcpy(ispc_packed_ug._min, &test_model_packed_ug.min,
-                             12);
-                      memcpy(ispc_packed_ug._max, &test_model_packed_ug.max,
-                             12);
-                      memcpy(ispc_packed_ug.bin_count,
-                             &test_model_packed_ug.bin_count, 12);
-                      ispc_packed_ug.bin_size = test_model_packed_ug.bin_size;
-                      uint _tmp = desc.size;
-                      ispc_trace(&ispc_packed_ug,
-                                 (void *)&test_model_simplified.positions[0],
-                                 (uint *)&test_model_simplified.indices[0],
-                                 &ray_dirs[desc.offset],
-                                 &ray_origins[desc.offset],
-                                 &ray_collisions[desc.offset], &_tmp);
+                      for (auto &node : scene_nodes) {
+                        ISPC_Packed_UG ispc_packed_ug;
+                        ispc_packed_ug.ids = &node.packed_ug.ids[0];
+                        ispc_packed_ug.bins_indices =
+                            &node.packed_ug.arena_table[0];
+                        memcpy(ispc_packed_ug._min, &node.packed_ug.min, 12);
+                        memcpy(ispc_packed_ug._max, &node.packed_ug.max, 12);
+                        memcpy(ispc_packed_ug.bin_count,
+                               &node.packed_ug.bin_count, 12);
+                        ispc_packed_ug.bin_size = node.packed_ug.bin_size;
+                        uint _tmp = desc.size;
+                        ispc_trace(&ispc_packed_ug,
+                                   (void *)&node.model_simplified.positions[0],
+                                   (uint *)&node.model_simplified.indices[0],
+                                   &ray_dirs[desc.offset],
+                                   &ray_origins[desc.offset],
+                                   &ray_collisions[desc.offset], &_tmp);
+                      }
                     },
                 .desc = JobDesc{
                     .offset = i * jobs_per_item,
                     .size = std::min(u32(ray_jobs.size()) - i * jobs_per_item,
                                      jobs_per_item)}});
           }
-
-          static std::unique_ptr<u8[]> sewing;
-          if (!sewing) {
-            size_t bytes = sew_it(
-                NULL // Set to null to get the required memory size
-                ,
-                1 << 20 // 32kb stack per fiber
-                ,
-                8 // 4 threads (including this one)
-                ,
-                10 // Job queue will be (1 << 10) entires large
-                ,
-                32 // we can have 128 fibers on the go at once
-                ,
-                main_procedure // User defined entry for the sewing system.
-                ,
-                &work_payload // User defined argument for 'main_procedure'
-            );
-            sewing.reset(new u8[bytes]);
+          std::vector<Sew_Stitch> jobs(work_payload.size());
+          u32 i = 0;
+          for (auto &item : work_payload) {
+            jobs[i].procedure = child_procedure;
+            jobs[i].argument = &item;
+            jobs[i].name = "child_procedure";
+            i++;
           }
-          sew_it(sewing.get(), 1 << 20, 8, 10, 32, main_procedure,
-                 &work_payload);
+
+          sew_stitches_and_wait(sewing, &jobs[0], jobs.size());
 
         } else {
-          ISPC_Packed_UG ispc_packed_ug;
-          ispc_packed_ug.ids = &test_model_packed_ug.ids[0];
-          ispc_packed_ug.bins_indices = &test_model_packed_ug.arena_table[0];
-          memcpy(ispc_packed_ug._min, &test_model_packed_ug.min, 12);
-          memcpy(ispc_packed_ug._max, &test_model_packed_ug.max, 12);
-          memcpy(ispc_packed_ug.bin_count, &test_model_packed_ug.bin_count, 12);
-          ispc_packed_ug.bin_size = test_model_packed_ug.bin_size;
-          uint _tmp = ray_jobs.size();
-          ispc_trace(&ispc_packed_ug,
-                     (void *)&test_model_simplified.positions[0],
-                     (uint *)&test_model_simplified.indices[0], &ray_dirs[0],
-                     &ray_origins[0], &ray_collisions[0], &_tmp);
+          for (auto &node : scene_nodes) {
+            ISPC_Packed_UG ispc_packed_ug;
+            ispc_packed_ug.ids = &node.packed_ug.ids[0];
+            ispc_packed_ug.bins_indices = &node.packed_ug.arena_table[0];
+            memcpy(ispc_packed_ug._min, &node.packed_ug.min, 12);
+            memcpy(ispc_packed_ug._max, &node.packed_ug.max, 12);
+            memcpy(ispc_packed_ug.bin_count, &node.packed_ug.bin_count, 12);
+            ispc_packed_ug.bin_size = node.packed_ug.bin_size;
+            uint _tmp = ray_jobs.size();
+            ispc_trace(&ispc_packed_ug,
+                       (void *)&node.model_simplified.positions[0],
+                       (uint *)&node.model_simplified.indices[0], &ray_dirs[0],
+                       &ray_origins[0], &ray_collisions[0], &_tmp);
+          }
         }
         ito(ray_jobs.size()) {
           auto job = ray_jobs[i];
@@ -982,14 +994,15 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                     glm::normalize(min_col.normal * (1.0f + rand.z) +
                                    tangent * rand.x + binormal * rand.y);
                 new_job.ray_origin = min_col.position;
-                new_job.weight *= 1.0f / secondary_N * 0.9f;
+                new_job.weight *= 1.0f / secondary_N * 0.5f;
                 new_job.depth += 1;
                 path_tracing_queue.enqueue(new_job);
               }
             }
           } else {
-            path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-                                         job.weight * light_value(job.ray_dir));
+            path_tracing_image.add_value(
+                job.pixel_x, job.pixel_y,
+                job.weight * light_value(job.ray_dir, vec3(1.0f, 1.0f, 1.0f)));
           }
         }
       }
@@ -1003,30 +1016,34 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         auto job = path_tracing_queue.dequeue();
         bool col_found = false;
         Collision min_col{.t = 1.0e10f};
-        test_model_ug.iterate(
-            job.ray_dir, job.ray_origin, [&](std::vector<u32> const &items) {
-              for (u32 face_id : items) {
-                auto face = test_model.indices[face_id];
-                vec3 v0 = test_model.vertices[face.v0].position;
-                vec3 v1 = test_model.vertices[face.v1].position;
-                vec3 v2 = test_model.vertices[face.v2].position;
-                Collision col = {};
+        for (auto &node : scene_nodes) {
+          node.ug.iterate(
+              job.ray_dir, job.ray_origin, [&](std::vector<u32> const &items) {
+                for (u32 face_id : items) {
+                  auto face = node.model.indices[face_id];
+                  vec3 v0 = node.model.vertices[face.v0].position;
+                  vec3 v1 = node.model.vertices[face.v1].position;
+                  vec3 v2 = node.model.vertices[face.v2].position;
+                  Collision col = {};
 
-                if (ray_triangle_test_woop(job.ray_origin, job.ray_dir, v0, v1,
-                                           v2, col)) {
-                  if (col.t < min_col.t) {
-                    min_col = col;
-                    col_found = true;
+                  if (ray_triangle_test_woop(job.ray_origin, job.ray_dir, v0,
+                                             v1, v2, col)) {
+                    if (col.t < min_col.t) {
+                      min_col = col;
+                      col.mesh_id = 0;
+                      col.face_id = face_id;
+                      col_found = true;
+                    }
                   }
                 }
-              }
 
-              return !col_found;
-            });
+                return !col_found;
+              });
+        }
         if (col_found) {
           // path_tracing_image.add_value(job.pixel_x, job.pixel_y,
           //                              vec4(1.0f, 1.0f, 1.0f, 1.0f));
-          if (job.depth == 1) {
+          if (job.depth == 2) {
             // Terminate
             path_tracing_image.add_value(job.pixel_x, job.pixel_y,
                                          vec4(0.0f, 0.0f, 0.0f, job.weight));
@@ -1035,21 +1052,32 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                 glm::normalize(glm::cross(job.ray_dir, min_col.normal));
             vec3 binormal = glm::cross(tangent, min_col.normal);
             u32 secondary_N = 16;
+            // if (min_col.material_id >= 0) {
+            //   auto const &mat = test_model.materials[min_col.material_id];
+            //   path_tracing_image.add_value(
+            //       job.pixel_x, job.pixel_y,
+            //       job.weight * light_value(job.ray_dir, vec3(mat.emission[0],
+            //                                                  mat.emission[1],
+            //                                                  mat.emission[2])));
+            // }
             ito(secondary_N) {
               vec3 rand = frand.rand_unit_sphere();
               auto new_job = job;
+
               new_job.ray_dir =
                   glm::normalize(min_col.normal * (1.0f + rand.z) +
                                  tangent * rand.x + binormal * rand.y);
               new_job.ray_origin = min_col.position;
-              new_job.weight *= 1.0f / secondary_N * 0.9f;
+              new_job.weight *= 1.0f / secondary_N;
+              new_job.color = new_job.color;
               new_job.depth += 1;
               path_tracing_queue.enqueue(new_job);
             }
           }
         } else {
           path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-                                       job.weight * light_value(job.ray_dir));
+                                       job.weight *
+                                           light_value(job.ray_dir, job.color));
         }
       }
     }
@@ -1196,11 +1224,12 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     /*----------------*/
     /* Update buffers */
     /*----------------*/
-    u32 ug_debug_lines_count = 0;
+    std::vector<vec3> lines;
+    for (auto &node : scene_nodes) {
+
+      node.ug.fill_lines_render(lines);
+    }
     {
-      std::vector<vec3> lines;
-      test_model_ug.fill_lines_render(lines);
-      ug_debug_lines_count = lines.size();
       ug_lines_gpu_buffer = alloc_state->allocate_buffer(
           vk::BufferCreateInfo()
               .setSize(lines.size() * sizeof(vec3))
@@ -1260,14 +1289,16 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       tmp_pc.view = gizmo_layer.camera_view;
       test_model_pipeline.push_constants(cmd, &tmp_pc,
                                          sizeof(Test_Model_Push_Constants));
-      cmd.bindVertexBuffers(0,
-                            {test_model_wrapper.vertex_buffer.buffer,
-                             test_model_instance_buffer.buffer},
-                            {0, 0});
-      cmd.bindIndexBuffer(test_model_wrapper.index_buffer.buffer, 0,
-                          vk::IndexType::eUint32);
+      for (auto &node : scene_nodes) {
+        cmd.bindVertexBuffers(0,
+                              {node.model_wrapper.vertex_buffer.buffer,
+                               test_model_instance_buffer.buffer},
+                              {0, 0});
+        cmd.bindIndexBuffer(node.model_wrapper.index_buffer.buffer, 0,
+                            vk::IndexType::eUint32);
 
-      cmd.drawIndexed(test_model_wrapper.vertex_count, 1, 0, 0, 0);
+        cmd.drawIndexed(node.model_wrapper.vertex_count, 1, 0, 0, 0);
+      }
     }
     if (draw_test_model_ug) {
       lines_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
@@ -1283,7 +1314,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                             },
                             {0});
 
-      cmd.draw(ug_debug_lines_count, 1, 0, 0);
+      cmd.draw(lines.size(), 1, 0, 0);
     }
     gizmo_layer.draw(device_wrapper, cmd);
     fullscreen_pipeline.bind_pipeline(device.get(), cmd);
@@ -1355,60 +1386,30 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     {
       Collision min_col{.t = 1.0e10f};
       bool col_found = false;
-      test_model_ug.iterate(
-          gizmo_layer.mouse_ray, gizmo_layer.camera_pos,
-          [&](std::vector<u32> const &items) {
-            f32 min_t = 1.0e10f;
-            for (u32 face_id : items) {
-              auto face = test_model.indices[face_id];
-              vec3 v0 = test_model.vertices[face.v0].position;
-              vec3 v1 = test_model.vertices[face.v1].position;
-              vec3 v2 = test_model.vertices[face.v2].position;
-              Collision col = {};
-              // @TODO:
-              // The internet says that woop is faster that
-              // moller but may struggle from certain numerical
-              // instability. So it's better to create a test
-              // Collision col1 = {};
-              // if
-              // (ray_triangle_test_moller(gizmo_layer.camera_pos,
-              //                              gizmo_layer.mouse_ray,
-              //                              v0, v1, v2, col1)
-              //                              &&
-              //     !ray_triangle_test_woop(gizmo_layer.camera_pos,
-              //                             gizmo_layer.mouse_ray,
-              //                             v0, v1, v2, col)) {
-              //   ray_triangle_test_woop(gizmo_layer.camera_pos,
-              //                          gizmo_layer.mouse_ray,
-              //                          v0, v1, v2, col);
-              // }
+      for (auto &node : scene_nodes) {
+        node.ug.iterate(gizmo_layer.mouse_ray, gizmo_layer.camera_pos,
+                        [&](std::vector<u32> const &items) {
+                          for (u32 face_id : items) {
+                            auto face = node.model.indices[face_id];
+                            vec3 v0 = node.model.vertices[face.v0].position;
+                            vec3 v1 = node.model.vertices[face.v1].position;
+                            vec3 v2 = node.model.vertices[face.v2].position;
+                            Collision col = {};
 
-              if (ray_triangle_test_woop(gizmo_layer.camera_pos,
-                                         gizmo_layer.mouse_ray, v0, v1, v2,
-                                         col)) {
-                if (col.t < min_col.t) {
-                  // std::cout << "[FACE_ID] = " << face_id <<
-                  // "\n"; std::cout << "[i0, i1, i2] = " <<
-                  // face.v0 << " " << face.v1
-                  //           << " " << face.v2 << "\n";
-                  // std::cout << "[v0.x, v0.y, v0.z] = " <<
-                  // v0.x << " " << v0.y
-                  //           << " " << v0.z << "\n";
-                  // std::cout << "[v1.x, v1.y, v1.z] = " <<
-                  // v1.x << " " << v1.y
-                  //           << " " << v1.z << "\n";
-                  // std::cout << "[v2.x, v2.y, v2.z] = " <<
-                  // v2.x << " " << v2.y
-                  //           << " " << v2.z << "\n";
-                  gizmo_layer.gizmo_drag_state.pos = col.position;
-                  min_col = col;
-                  col_found = true;
-                }
-                return false;
-              }
-            }
-            return true;
-          });
+                            if (ray_triangle_test_woop(gizmo_layer.camera_pos,
+                                                       gizmo_layer.mouse_ray,
+                                                       v0, v1, v2, col)) {
+                              if (col.t < min_col.t) {
+                                min_col = col;
+                                gizmo_layer.gizmo_drag_state.pos = col.position;
+                                col_found = true;
+                              }
+                            }
+                          }
+
+                          return !col_found;
+                        });
+      }
 
       // @Debug
       // if (col_found) {
@@ -1429,8 +1430,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       //   ImGui::InputFloat3("col.normal", (float*)&col.normal, 3);
       // }
     }
-    if (ImGui::ListBox("test models", &current_model, model_filenames,
-                       __ARRAY_SIZE(model_filenames)))
+    if (ImGui::ListBox("test models", &current_model, &model_filenames[0],
+                       model_filenames.size()))
       load_model();
     // ImGui::InputText("test model filename", test_model_filename,
     //                  sizeof(test_model_filename));
@@ -1461,7 +1462,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
 
       auto color_to_int = [](vec4 color) {
         auto saturate = [](f32 val) {
-          return std::pow(val < 0.0f ? 0.0f : (val > 1.0f ? 1.0f : val), 2.2f);
+          return std::pow(val < 0.0f ? 0.0f : (val > 1.0f ? 1.0f : val), 0.5f);
         };
         return u8(255.0f * saturate(color.x / color.w)) |
                (u8(255.0f * saturate(color.y / color.w)) << 8) |
@@ -1487,6 +1488,31 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     ImGui::End();
   };
   device_wrapper.window_loop();
+
+  // WorkPayload *payload = (WorkPayload *)procedure_argument;
+}
+
+TEST(graphics, vulkan_graphics_test_3d_models) {
+  static std::unique_ptr<u8[]> sewing;
+  if (!sewing) {
+    size_t bytes =
+        sew_it(NULL // Set to null to get the required memory size
+               ,
+               1 << 20 // 32kb stack per fiber
+               ,
+               8 // threads (including this one)
+               ,
+               10 // Job queue (1 << N) entires large
+               ,
+               8 // fibers on the go at once
+               ,
+               main_procedure // User defined entry for the sewing system.
+               ,
+               NULL // User defined argument for 'main_procedure'
+        );
+    sewing.reset(new u8[bytes]);
+  }
+  sew_it(sewing.get(), 1 << 20, 8, 10, 8, main_procedure, NULL);
 }
 
 int main(int argc, char **argv) {

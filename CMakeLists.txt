@@ -38,8 +38,10 @@ file(GLOB SOURCE "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widge
 # file(GLOB 3RD_SOURCE 3rdparty/SPIRV-Reflect/spirv_reflect.c)
 # message(${SOURCE})
 # message(${SOURCE})
+# -O0 -g
+
 add_custom_command(OUTPUT kernel.o
-                   COMMAND ispc --pic -O0 -g ${CMAKE_SOURCE_DIR}/"src/kernel.ispc" -o kernel.o
+                   COMMAND ispc -O3 --math-lib=fast --pic  ${CMAKE_SOURCE_DIR}/"src/kernel.ispc" -o kernel.o
                    DEPENDS "src/kernel.ispc")
 set(LIBS sewing meshoptimizer tinyobjloader glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util pthread boost_system boost_filesystem boost_thread)
 add_executable(GRAPHICS_EXPERIMENTS main.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
@@ -66,6 +68,7 @@ if(NOT EXISTS ${CMAKE_BINARY_DIR}/models)
     file(DOWNLOAD https://casual-effects.com/g3d/data10/research/model/bunny/bunny.zip models/bunny.zip SHOW_PROGRESS)
     file(DOWNLOAD https://casual-effects.com/g3d/data10/research/model/dragon/dragon.zip models/dragon.zip SHOW_PROGRESS)
     file(DOWNLOAD https://static.free3d.com/models/cyctff9ijn-Newmalelow.zip models/Newmalelow.zip SHOW_PROGRESS)
+    file(DOWNLOAD https://casual-effects.com/g3d/data10/common/model/CornellBox/CornellBox.zip models/CornellBox.zip SHOW_PROGRESS)
     execute_process(
         COMMAND unzip -o *.zip
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/models/
