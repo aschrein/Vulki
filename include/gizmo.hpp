@@ -286,6 +286,16 @@ struct Gizmo_Layer {
                                 gizmo_drag_state.size * 0.01f, length)),
             .color = color}});
   }
+  void push_sphere(vec3 start, float radius, vec3 color) {
+    push_gizmo(Gizmo_Draw_Cmd{
+        .type = Gizmo_Geometry_Type::SPHERE,
+        .data = Gizmo_Instance_Data_CPU{
+            .transform =
+                glm::translate(start) *
+                glm::scale(vec3(radius,
+                                radius, radius)),
+            .color = color}});
+  }
   void draw(Device_Wrapper &device_wrapper, vk::CommandBuffer &cmd) {
 
     gizmo_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
@@ -355,7 +365,7 @@ struct Gizmo_Layer {
                             {0, 0});
       cmd.bindIndexBuffer(icosahedron_wrapper.index_buffer.buffer, 0,
                           vk::IndexType::eUint16);
-      cmd.drawIndexed(icosahedron_wrapper.vertex_count, 3, 0, 0,
+      cmd.drawIndexed(icosahedron_wrapper.vertex_count, spheres.size(), 0, 0,
                       spheres_instance_offset);
       // Draw Cones
       cmd.bindVertexBuffers(
@@ -363,7 +373,7 @@ struct Gizmo_Layer {
           {0, 0});
       cmd.bindIndexBuffer(cone_wrapper.index_buffer.buffer, 0,
                           vk::IndexType::eUint16);
-      cmd.drawIndexed(cone_wrapper.vertex_count, 3, 0, 0,
+      cmd.drawIndexed(cone_wrapper.vertex_count, cones.size(), 0, 0,
                       cones_instance_offset);
     }
     // Reset cpu command stream

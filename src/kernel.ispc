@@ -254,7 +254,7 @@ bool ray_triangle_test_moller(vec3 ray_origin, vec3 ray_dir, vec3 v0,
                                      vec3 v1, vec3 v2,
                                      Collision &out_collision) {
 
-  const float EPSILON = 1.0e-6f;
+  const float EPSILON = 1.0e-5f;
   vec3 edge1, edge2, h, s, q;
   float a, f, u, v;
   edge1 = sub(v1, v0);
@@ -296,7 +296,8 @@ vec3 vec3_min(vec3 a, vec3 b) {
 vec3 vec3_max(vec3 a, vec3 b) {
   return make_vec3(max(a.x, b.x), max(a.y, b.y), max(a.z, b.z));
 }
-bool intersect_box(Packed_UG * uniform ug, vec3 ray_invdir, vec3 ray_origin, float &hit_min,
+bool intersect_box(Packed_UG * uniform ug, vec3 ray_invdir, vec3 ray_origin,
+                    float &hit_min,
                     float &hit_max) {
   vec3 tbot = mul(ray_invdir, sub_arr(ug->min, ray_origin));
   vec3 ttop = mul(ray_invdir, sub_arr(ug->max, ray_origin));
@@ -332,7 +333,7 @@ bool ispc_iterate(Packed_UG * uniform ug,
     cell_id[i] = (int)(clamp(floor(ray_offset / ug->bin_size), 0.0f,
                                 (float)(ug->bin_count[i]) - 1.0f));
     // hit_normal[i] = cell_id[i];
-    if (abs(ray_dir_arr[i]) < 1.0e-4f) {
+    if (abs(ray_dir_arr[i]) < 1.0e-5f) {
       axis_delta[i] = 0.0f;
       axis_distance[i] =
           1.0e10f;
@@ -349,16 +350,23 @@ bool ispc_iterate(Packed_UG * uniform ug,
       step[i] = 1;
     }
   }
-  uint cell_id_offset = cell_id[2] * ug->bin_count[0] * ug->bin_count[1] +
-                        cell_id[1] * ug->bin_count[0] + cell_id[0];
-  int cell_id_cur = (int)(cell_id_offset);
-  int cell_delta[3] = {step[0], step[1] * ug->bin_count[0],
-                                  step[2] * ug->bin_count[0] * ug->bin_count[1]};
+  
+  int cell_delta[3] = {step[0], step[1],
+                                  step[2]};
   Collision min_collision = out_collision[ray_id];
+  int total_cells = ug->bin_count[0] * ug->bin_count[1] * ug->bin_count[2];
   while (true) {
-    uint o = cell_id_cur;
+    uint k = ((uint)(axis_distance[0] < axis_distance[1]) << 2) +
+              ((uint)(axis_distance[0] < axis_distance[2]) << 1) +
+              ((uint)(axis_distance[1] < axis_distance[2]));
+    const uint map[8] = {2, 1, 2, 1, 2, 2, 0, 0};
+    uint axis = map[k];
+    float t_max = axis_distance[axis];
+    
+    uint cell_id_offset = cell_id[2] * ug->bin_count[0] * ug->bin_count[1] +
+                        cell_id[1] * ug->bin_count[0] + cell_id[0];
+    uint o = cell_id_offset;
     uint bin_offset = ug->bins_indices[2 * o];
-
     // If the current node has items
     if (bin_offset > 0) {
       
@@ -366,12 +374,6 @@ bool ispc_iterate(Packed_UG * uniform ug,
       uint items_count = ug->bins_indices[2 * o + 1];
       for (uint i = bin_offset; i < bin_offset + items_count; i++) {
         uint face_id = ug->ids[i] * 3;
-        // uint i0 = faces[face_id];
-        // uint i1 = faces[face_id + 1];
-        // uint i2 = faces[face_id + 2];
-        // vec3 v0 = vertices[i0];
-        // vec3 v1 = vertices[i1];
-        // vec3 v2 = vertices[i2];
         vec3 v0 = vertices[face_id];
         vec3 v1 = vertices[face_id + 1];
         vec3 v2 = vertices[face_id + 2];
@@ -379,7 +381,8 @@ bool ispc_iterate(Packed_UG * uniform ug,
         if (ray_triangle_test_moller(ray_origin, ray_dir, v0,
                                    v1, v2, col))
         {
-          if (col.t < min_collision.t) {
+          if (col.t < min_collision.t &&
+              col.t < (t_max + hit_min) * (1.0f + 1.0e-4f)) {
             min_collision = col;
             found = true;
           }
@@ -390,15 +393,10 @@ bool ispc_iterate(Packed_UG * uniform ug,
         return true;
       }
     }
-    uint k = ((uint)(axis_distance[0] < axis_distance[1]) << 2) +
-              ((uint)(axis_distance[0] < axis_distance[2]) << 1) +
-              ((uint)(axis_distance[1] < axis_distance[2]));
-    const uint map[8] = {2, 1, 2, 1, 2, 2, 0, 0};
-    uint axis = map[k];
-    if (hit_max - hit_min < axis_distance[axis] + 1.0e-3)
-      break;
-    cell_id_cur += cell_delta[axis];
     axis_distance[axis] += axis_delta[axis];
+    cell_id[axis] += cell_delta[axis];
+    if (cell_id[axis] < 0 || cell_id[axis] >= ug->bin_count[axis])
+      break;
   }
   return false;
 }

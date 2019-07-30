@@ -74,13 +74,13 @@ struct UG {
     put(pos, {radius, radius, radius}, index);
   }
   void put(vec3 const &pos, vec3 const &extent, uint index) {
-    float EPS = 1.0e-7f;
-    if (pos.x > this->max.x + extent.x + EPS ||
-        pos.y > this->max.y + extent.y + EPS ||
-        pos.z > this->max.z + extent.z + EPS ||
-        pos.x < this->min.x - extent.x - EPS ||
-        pos.y < this->min.y - extent.y - EPS ||
-        pos.z < this->min.z - extent.z - EPS) {
+    float EPS = 1.0e-5f;
+    if (pos.x > this->max.x + extent.x * (1.0f + EPS) ||
+        pos.y > this->max.y + extent.y * (1.0f + EPS) ||
+        pos.z > this->max.z + extent.z * (1.0f + EPS) ||
+        pos.x < this->min.x - extent.x * (1.0f + EPS) ||
+        pos.y < this->min.y - extent.y * (1.0f + EPS) ||
+        pos.z < this->min.z - extent.z * (1.0f + EPS)) {
       panic("");
       return;
     }
@@ -123,13 +123,15 @@ struct UG {
     return t1 > std::max(t0, 0.0f);
   }
   // on_hit returns false to early-out the traversal
-  void iterate(vec3 ray_dir, vec3 ray_origin,
-               std::function<bool(std::vector<u32> const &)> on_hit) {
+  void
+  iterate(vec3 ray_dir, vec3 ray_origin,
+          std::function<bool(std::vector<u32> const &, float t_max)> on_hit) {
     vec3 ray_invdir = 1.0f / ray_dir;
     float hit_min;
     float hit_max;
     if (!intersect_box(ray_invdir, ray_origin, hit_min, hit_max))
       return;
+    hit_min = std::max(0.0f, hit_min);
     vec3 hit_pos = ray_origin + ray_dir * hit_min;
     ivec3 exit, step, cell_id;
     vec3 axis_delta, axis_distance;
@@ -139,7 +141,7 @@ struct UG {
       cell_id[i] = int(glm::clamp(floor(ray_offset / this->bin_size), 0.0f,
                                   float(this->bin_count[i]) - 1.0f));
       // hit_normal[i] = cell_id[i];
-      if (std::abs(ray_dir[i]) < 1.0e-4f) {
+      if (std::abs(ray_dir[i]) < 1.0e-5f) {
         axis_delta[i] = 0.0f;
         axis_distance[i] = 1.0e10f;
         step[i] = 0;
@@ -157,30 +159,28 @@ struct UG {
         step[i] = 1;
       }
     }
-    uint cell_id_offset = cell_id.z * this->bin_count.x * this->bin_count.y +
-                          cell_id.y * this->bin_count.x + cell_id.x;
-    int cell_id_cur = int(cell_id_offset);
-    ivec3 cell_delta = step * ivec3(1, this->bin_count.x,
-                                    this->bin_count.x * this->bin_count.y);
+    int cell_delta[3] = {step[0], step[1], step[2]};
     while (true) {
-      uint o = cell_id_cur;
-      uint bin_offset = this->bins_indices[o];
-
       uint k = (uint(axis_distance[0] < axis_distance[1]) << 2) +
                (uint(axis_distance[0] < axis_distance[2]) << 1) +
                (uint(axis_distance[1] < axis_distance[2]));
       const uint map[8] = {2, 1, 2, 1, 2, 2, 0, 0};
       uint axis = map[k];
-
+      float t_max = axis_distance[axis];
+      uint cell_id_offset = cell_id[2] * bin_count[0] * bin_count[1] +
+                            cell_id[1] * bin_count[0] + cell_id[0];
+      uint o = cell_id_offset;
+      uint bin_offset = this->bins_indices[o];
       // If the current node has items
       if (bin_offset > 0) {
-        if (!on_hit(this->bins[bin_offset]))
+        if (!on_hit(this->bins[bin_offset],
+                    (t_max + hit_min) * (1.0f + 1.0e-5f)))
           return;
       }
-      if (hit_max - hit_min < axis_distance[axis] + 1.0e-3)
-        break;
-      cell_id_cur += cell_delta[axis];
       axis_distance[axis] += axis_delta[axis];
+      cell_id[axis] += cell_delta[axis];
+      if (cell_id[axis] < 0 || cell_id[axis] >= bin_count[axis])
+        break;
     }
   }
   void fill_lines_render(std::vector<vec3> &lines) {

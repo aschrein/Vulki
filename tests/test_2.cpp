@@ -745,7 +745,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       float longest_dim = std::max(ug_size.x, std::max(ug_size.y, ug_size.z));
       float ug_cell_size =
           std::max((longest_dim / 64) + 0.01f,
-                   std::min(avg_triangle_radius * 10.0f, longest_dim / 2));
+                   std::min(avg_triangle_radius * 2.0f, longest_dim / 2));
       scene_node.ug = UG(test_model_min, test_model_max, ug_cell_size);
 
       {
@@ -815,6 +815,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       return normalize(look + up * v + right * u * fov);
     }
   } path_tracing_camera;
+
   struct Path_Tracing_Image {
     std::vector<vec4> data;
     u32 width, height;
@@ -1010,29 +1011,30 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         bool col_found = false;
         Collision min_col{.t = 1.0e10f};
         for (auto &node : scene_nodes) {
-          node.ug.iterate(
-              job.ray_dir, job.ray_origin, [&](std::vector<u32> const &items) {
-                bool any_hit = false;
-                for (u32 face_id : items) {
-                  auto face = node.model.indices[face_id];
-                  vec3 v0 = node.model.vertices[face.v0].position;
-                  vec3 v1 = node.model.vertices[face.v1].position;
-                  vec3 v2 = node.model.vertices[face.v2].position;
-                  Collision col = {};
+          node.ug.iterate(job.ray_dir, job.ray_origin,
+                          [&](std::vector<u32> const &items, float t_max) {
+                            bool any_hit = false;
+                            for (u32 face_id : items) {
+                              auto face = node.model.indices[face_id];
+                              vec3 v0 = node.model.vertices[face.v0].position;
+                              vec3 v1 = node.model.vertices[face.v1].position;
+                              vec3 v2 = node.model.vertices[face.v2].position;
+                              Collision col = {};
 
-                  if (ray_triangle_test_woop(job.ray_origin, job.ray_dir, v0,
-                                             v1, v2, col)) {
-                    if (col.t < min_col.t) {
-                      min_col = col;
-                      col.mesh_id = 0;
-                      col.face_id = face_id;
-                      col_found = any_hit = true;
-                    }
-                  }
-                }
+                              if (ray_triangle_test_woop(job.ray_origin,
+                                                         job.ray_dir, v0, v1,
+                                                         v2, col)) {
+                                if (col.t < min_col.t && col.t < t_max) {
+                                  min_col = col;
+                                  col.mesh_id = 0;
+                                  col.face_id = face_id;
+                                  col_found = any_hit = true;
+                                }
+                              }
+                            }
 
-                return !any_hit;
-              });
+                            return !any_hit;
+                          });
         }
         if (col_found) {
           // path_tracing_image.add_value(job.pixel_x, job.pixel_y,
@@ -1076,7 +1078,22 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       }
     }
   };
-
+  auto launch_debug_ray = [&](vec3 ray_origin, vec3 ray_dir) {
+    path_tracing_queue.reset();
+    Path_Tracing_Job job;
+    job.ray_dir = ray_dir;
+    job.ray_origin = ray_origin;
+    job.pixel_x = 0;
+    job.pixel_y = 0;
+    job.weight = 1.0f;
+    job.color = vec3(1.0f, 1.0f, 1.0f);
+    job.depth = 0;
+    path_tracing_queue.enqueue(job);
+     path_tracing_image.init(1, 1);
+    path_tracing_gpu_image = CPU_Image::create(device_wrapper, 1, 1,
+                                               vk::Format::eR8G8B8A8Unorm);
+    path_tracing_iteration();
+  };
   struct Path_Tracing_Plane_Push {
     mat4 viewprojmodel;
   };
@@ -1378,12 +1395,15 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     ImGui::End();
     ImGui::Begin("Rendering configuration");
     {
+      if (ImGui::GetIO().MouseDown[2]) {
+        sleep(0);
+      }
       Collision min_col{.t = 1.0e10f};
       bool col_found = false;
       u32 mesh_id = 0;
       for (auto &node : scene_nodes) {
         node.ug.iterate(gizmo_layer.mouse_ray, gizmo_layer.camera_pos,
-                        [&](std::vector<u32> const &items) {
+                        [&](std::vector<u32> const &items, float t_max) {
                           bool any_hit = false;
                           for (u32 face_id : items) {
                             auto face = node.model.indices[face_id];
@@ -1395,11 +1415,12 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                             if (ray_triangle_test_moller(gizmo_layer.camera_pos,
                                                          gizmo_layer.mouse_ray,
                                                          v0, v1, v2, col)) {
-                              if (col.t < min_col.t) {
+                              if (col.t < min_col.t && col.t < t_max) {
                                 col.mesh_id = mesh_id;
                                 col.face_id = face_id;
                                 min_col = col;
-                                col_found = any_hit = true;
+                                col_found = true;
+                                any_hit = true;
                               }
                             }
                           }
@@ -1409,6 +1430,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         mesh_id++;
       }
       if (col_found) {
+        gizmo_layer.push_sphere(min_col.position, 0.5f, vec3(1.0f, 0.0f, 0.0f));
         if (trace_paths) {
           vec3 dr = min_col.position - path_tracing_camera.pos;
           vec3 ray_dir = glm::normalize(dr);
@@ -1497,23 +1519,28 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     // if (ImGui::Button("load test model")) {
     //   load_model(test_model_filename);
     // }
-    ImGui::SliderFloat("UG cell size", &test_ug_size, 0.01f, 1.0f);
+    // ImGui::SliderFloat("UG cell size", &test_ug_size, 0.01f, 1.0f);
     ImGui::SliderInt("max jobs per iter", (int *)&max_jobs_per_iter, 100,
                      100000);
     ImGui::SliderInt("jobs per item", (int *)&jobs_per_item, 100, 10000);
     ImGui::Checkbox("draw test model UG", &draw_test_model_ug);
     ImGui::Checkbox("use ISPC kernel", &trace_ispc);
-    ImGui::Checkbox("use job system", &use_jobs);
+    ImGui::Checkbox("use multi-threading", &use_jobs);
     if (ImGui::Checkbox("trace paths", &trace_paths)) {
       if (trace_paths) {
         reset_path_tracing_state(512, 512);
       }
     }
-    if (ImGui::Button("update path tracing")) {
+    if (ImGui::Button("update image")) {
       if (trace_paths) {
         reset_path_tracing_state(512, 512);
       }
     }
+    if (ImGui::Button("launch debug ray")) {
+      launch_debug_ray(vec3(6.99091816f, 2.6676445f, 19.8999996f),
+                       vec3(0.0267414041f, -0.600523651f, -0.799159765f));
+    }
+
     if (trace_paths) {
       path_tracing_iteration();
       void *data = path_tracing_gpu_image.image.map();
