@@ -276,14 +276,14 @@ struct Gizmo_Layer {
     mat4 tranform = mat4(tangent.x, tangent.y, tangent.z, 0.0f, binormal.x,
                          binormal.y, binormal.z, 0.0f, dir.x, dir.y, dir.z,
                          0.0f, start.x, start.y, start.z, 1.0f);
-
+//gizmo_drag_state.size * 
     push_gizmo(Gizmo_Draw_Cmd{
         .type = Gizmo_Geometry_Type::CYLINDER,
         .data = Gizmo_Instance_Data_CPU{
             .transform =
                 tranform *
-                glm::scale(vec3(gizmo_drag_state.size * 0.01f,
-                                gizmo_drag_state.size * 0.01f, length)),
+                glm::scale(vec3(0.001f,
+                                0.001f, length)),
             .color = color}});
   }
   void push_sphere(vec3 start, float radius, vec3 color) {

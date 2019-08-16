@@ -2,6 +2,7 @@
 #include "error_handling.hpp"
 #include "random.hpp"
 #include <algorithm>
+#include <deque>
 #include <fstream>
 #include <glm/glm.hpp>
 #include <memory>
@@ -9,6 +10,270 @@
 #include <string>
 #include <vector>
 using namespace glm;
+
+struct Oct_Item {
+  vec3 min, max;
+  u32 id;
+};
+
+struct Bit_Stream {
+  u32 current_pos = 0u;
+  u8 current_byte = 0u;
+  std::vector<u8> bytes;
+  float shannon_entropy() {
+    u32 freq[0x100] = {};
+    for (auto byte : bytes)
+      freq[byte]++;
+    float entr = 0.0f;
+    for (auto f : freq)
+      if (f)
+        entr += float(f) * std::log2(float(f) / bytes.size());
+    return -entr / bytes.size();
+  }
+  void decode_run_length8(Bit_Stream &out) {
+    for (auto byte : bytes) {
+      u32 run_value = byte & 1u;
+      u32 run_length = byte >> 1u;
+      for (u32 i = 0; i < run_length; i++)
+        out.push_low_bit(run_value);
+    }
+    out.flush();
+  }
+  void push_byte(u8 byte) { bytes.push_back(byte); }
+  void push_low_bit(u8 byte) {
+    current_byte |= ((byte & 1u) << current_pos);
+    current_pos++;
+    if (current_pos == 8u) {
+      bytes.push_back(current_byte);
+      current_byte = 0u;
+      current_pos = 0u;
+    }
+  }
+  void flush() {
+    if (current_byte)
+      bytes.push_back(current_byte);
+    current_byte = 0u;
+    current_pos = 0u;
+  }
+  void run_length_encode4(Bit_Stream &out) {
+    u32 run_length = 0u;
+    u8 run_symbol = 0u;
+    for (auto byte : bytes) {
+      for (u32 bit = 0u; bit < 8u; bit++) {
+        u8 cur_symbol = (byte >> bit) & 1u;
+        if (cur_symbol == run_symbol) {
+          run_length++;
+          if (run_length == 0x7u) {
+            out.push_low_bit(run_symbol);
+            for (u32 j = 0; j < 3; j++)
+              out.push_low_bit(1);
+            run_length = 0;
+          }
+        } else {
+          if (run_length != 0u) {
+            out.push_low_bit(run_symbol);
+            for (u32 j = 0; j < 3; j++)
+              out.push_low_bit((run_length >> j) & 1);
+          }
+          run_symbol = cur_symbol;
+          run_length = 1;
+        }
+      }
+    }
+    if (run_length != 0u) {
+      out.push_low_bit(run_symbol);
+      for (u32 j = 0; j < 3; j++)
+        out.push_low_bit((run_length >> j) & 1);
+    }
+    out.flush();
+  }
+  void run_length_encode8(Bit_Stream &out) {
+    u32 run_length = 0u;
+    u8 run_symbol = 0u;
+    for (auto byte : bytes) {
+      for (u32 bit = 0u; bit < 8u; bit++) {
+        u8 cur_symbol = (byte >> bit) & 1u;
+        if (cur_symbol == run_symbol) {
+          run_length++;
+          if (run_length == 0x7fu) {
+            out.push_low_bit(run_symbol);
+            for (u32 j = 0; j < 7; j++)
+              out.push_low_bit(1);
+            run_length = 0;
+          }
+        } else {
+          if (run_length != 0u) {
+            out.push_low_bit(run_symbol);
+            for (u32 j = 0; j < 7; j++)
+              out.push_low_bit((run_length >> j) & 1);
+          }
+          run_symbol = cur_symbol;
+          run_length = 1;
+        }
+      }
+    }
+    if (run_length != 0u) {
+      out.push_low_bit(run_symbol);
+      for (u32 j = 0; j < 7; j++)
+        out.push_low_bit((run_length >> j) & 1);
+    }
+    out.flush();
+  }
+  void run_length_encode_zero_chunk8(Bit_Stream &out) {
+    u32 run_length = 0u;
+    u8 run_symbol = 0u;
+    for (auto byte : bytes) {
+      if (byte != 0u) {
+        if (run_length != 0u) {
+          out.push_byte(run_length);
+          run_length = 0;
+        }
+        out.push_byte(0xffu);
+        out.push_byte(byte);
+      } else {
+        run_length++;
+        if (run_length == 0x7fu) {
+          out.push_byte(run_length);
+          run_length = 0;
+        }
+      }
+    }
+    if (run_length != 0u) {
+      out.push_byte(run_length);
+      run_length = 0;
+    }
+    out.flush();
+  }
+  void run_length_encode16(Bit_Stream &out) {
+    u32 run_length = 0u;
+    u8 run_symbol = 0u;
+    for (auto byte : bytes) {
+      for (u32 bit = 0u; bit < 8u; bit++) {
+        u8 cur_symbol = (byte >> bit) & 1u;
+        if (cur_symbol == run_symbol) {
+          run_length++;
+          if (run_length == 0x7fffu) {
+            out.push_low_bit(run_symbol);
+            for (u32 j = 0; j < 15; j++)
+              out.push_low_bit(1);
+            run_length = 0;
+          }
+        } else {
+          if (run_length != 0u) {
+            out.push_low_bit(run_symbol);
+            for (u32 j = 0; j < 15; j++)
+              out.push_low_bit((run_length >> j) & 1);
+          }
+          run_symbol = cur_symbol;
+          run_length = 1;
+        }
+      }
+    }
+    if (run_length != 0u) {
+      out.push_low_bit(run_symbol);
+      for (u32 j = 0; j < 15; j++)
+        out.push_low_bit((run_length >> j) & 1);
+    }
+    out.flush();
+  }
+};
+
+struct Oct_Node {
+  static const u32 COUNT_THRESHOLD = 100;
+  static const u32 DEPTH_THRESHOLD = 5;
+  vec3 min, max;
+  bool leaf;
+  u32 depth;
+  std::vector<std::unique_ptr<Oct_Node>> children;
+  std::vector<Oct_Item> items;
+  Oct_Node(vec3 _min, vec3 _max, u32 _depth)
+      : min(_min), max(_max), leaf(true), depth(_depth) {}
+  void push(Oct_Item const &item) {
+    float EPS = 1.0e-5f;
+    if (item.min.x > this->max.x * (1.0f + EPS) ||
+        item.min.y > this->max.y * (1.0f + EPS) ||
+        item.min.z > this->max.z * (1.0f + EPS) ||
+        item.max.x < this->min.x * (1.0f - EPS) ||
+        item.max.y < this->min.y * (1.0f - EPS) ||
+        item.max.z < this->min.z * (1.0f - EPS)) {
+      return;
+    }
+    if (leaf) {
+      items.push_back(item);
+      if (items.size() > COUNT_THRESHOLD && depth < DEPTH_THRESHOLD) {
+        leaf = false;
+        vec3 dim = max - min;
+        vec3 new_dim = (max - min) * 0.5f;
+        for (u32 i = 0; i < 8; i++) {
+          u32 dx = i & 1;
+          u32 dy = (i >> 1) & 1;
+          u32 dz = (i >> 2) & 1;
+          vec3 new_min =
+              min + 0.5f * dim * vec3(float(dx), float(dy), float(dz));
+          vec3 new_max = new_min + new_dim;
+          children.emplace_back(new Oct_Node(new_min, new_max, depth + 1));
+          for (auto const &item : items) {
+            children[i]->push(item);
+          }
+        }
+        items.clear();
+      }
+    } else {
+      for (u32 i = 0; i < 8; i++) {
+        children[i]->push(item);
+      }
+    }
+  }
+  void fill_lines_render(std::vector<vec3> &lines) {
+    auto push_cube = [&lines](float bin_idx, float bin_idy, float bin_idz,
+                              float bin_size_x, float bin_size_y,
+                              float bin_size_z) {
+      {
+        const u32 iter_x[] = {0, 0, 1, 1, 0, 0, 1, 1, 0, 0};
+        const u32 iter_y[] = {0, 1, 1, 0, 0, 0, 0, 1, 1, 0};
+        const u32 iter_z[] = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
+        ito(9) {
+          lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i]),
+                               bin_idy + bin_size_y * f32(iter_y[i]),
+                               bin_idz + bin_size_z * f32(iter_z[i])});
+          lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i + 1]),
+                               bin_idy + bin_size_y * f32(iter_y[i + 1]),
+                               bin_idz + bin_size_z * f32(iter_z[i + 1])});
+        }
+      }
+      {
+        const u32 iter_x[] = {
+            0, 0, 1, 1, 1, 1,
+        };
+        const u32 iter_y[] = {
+            1, 1, 1, 1, 0, 0,
+        };
+        const u32 iter_z[] = {
+            0, 1, 0, 1, 0, 1,
+        };
+        ito(3) {
+          lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i * 2]),
+                               bin_idy + bin_size_y * f32(iter_y[i * 2]),
+                               bin_idz + bin_size_z * f32(iter_z[i * 2])});
+          lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i * 2 + 1]),
+                               bin_idy + bin_size_y * f32(iter_y[i * 2 + 1]),
+                               bin_idz + bin_size_z * f32(iter_z[i * 2 + 1])});
+        }
+      }
+    };
+    push_cube(min.x, min.y, min.z, max.x - min.x, max.y - min.y, max.z - min.z);
+    if (!leaf) {
+      for (u32 i = 0; i < 8; i++) {
+        children[i]->fill_lines_render(lines);
+      }
+    }
+  }
+  void to_bit_table(Bit_Stream &bitstream) {}
+};
+
+struct Oct_Tree {
+  std::unique_ptr<Oct_Node> root;
+};
 
 struct Packed_UG {
   // (arena_origin, arena_size)
@@ -47,6 +312,115 @@ struct UG {
     this->total_bin_count = bin_count.x * bin_count.y * bin_count.z;
     for (u32 i = 0; i < total_bin_count; i++)
       bins_indices.push_back(0);
+  }
+  void to_bit_table(Bit_Stream &bitstream) {
+
+    std::vector<u32> flag_table(total_bin_count);
+    // First pass mark all boundary cells
+    for (int dx = 0; dx < bin_count.x; dx++) {
+      for (int dy = 0; dy < bin_count.y; dy++) {
+        for (int dz = 0; dz < bin_count.z; dz++) {
+          const auto flat_id = dx + dy * this->bin_count.x +
+                               dz * this->bin_count.x * this->bin_count.y;
+          const auto bin_id = this->bins_indices[flat_id];
+          if (bin_id != 0) {
+            flag_table[flat_id] = 1;
+          }
+        }
+      }
+    }
+    // Now run the flood pass
+    // We know that the volume does not have holes
+    // And that it does not have inner empty bubbles
+    // Having all that we just mark islands of disconnected cells
+    // And then mark those islands that touch the boundary
+    // The inner volume is those islands that does not touch the boundary
+    u32 flag_counter = 1;
+    while (true) {
+      i32 x, y, z;
+      bool picked = false;
+      for (int dz = 0; dz < bin_count.z; dz++) {
+        for (int dy = 0; dy < bin_count.y; dy++) {
+          for (int dx = 0; dx < bin_count.x; dx++) {
+            const auto flat_id = dx + dy * this->bin_count.x +
+                                 dz * this->bin_count.x * this->bin_count.y;
+            u8 flag = flag_table[flat_id];
+            if (!flag) {
+              x = dx;
+              y = dy;
+              z = dz;
+              picked = true;
+              break;
+            }
+          }
+          if (picked)
+            break;
+        }
+        if (picked)
+          break;
+      }
+      if (!picked)
+        break;
+      flag_counter++;
+      std::deque<uvec3> queue;
+      queue.push_back({x, y, z});
+      while (queue.size()) {
+        auto item = queue.back();
+        queue.pop_back();
+        if (item.x < 0 || item.y < 0 || item.z < 0 ||
+            item.x >= int(this->bin_count.x) ||
+            item.y >= int(this->bin_count.y) ||
+            item.z >= int(this->bin_count.z))
+          continue;
+        const auto flat_id = item.x + item.y * this->bin_count.x +
+                             item.z * this->bin_count.x * this->bin_count.y;
+        if (flag_table[flat_id] != 0)
+          continue;
+        flag_table[flat_id] = flag_counter;
+        queue.push_back({item.x + 1, item.y, item.z});
+        queue.push_back({item.x - 1, item.y, item.z});
+        queue.push_back({item.x, item.y + 1, item.z});
+        queue.push_back({item.x, item.y - 1, item.z});
+        queue.push_back({item.x, item.y, item.z + 1});
+        queue.push_back({item.x, item.y, item.z - 1});
+      }
+    }
+    google::dense_hash_set<u32> boundary_set;
+    boundary_set.set_empty_key(UINT32_MAX);
+    // Now mark outer islands
+    for (int dx = 0; dx < bin_count.x; dx++) {
+      for (int dy = 0; dy < bin_count.y; dy++) {
+        for (int dz = 0; dz < bin_count.z; dz++) {
+          if (dx == 0 || dx == this->bin_count.x - 1 || dy == 0 ||
+              dy == this->bin_count.y - 1 || dz == 0 ||
+              dz == this->bin_count.z - 1) {
+            const auto flat_id = dx + dy * this->bin_count.x +
+                                 dz * this->bin_count.x * this->bin_count.y;
+            const auto bin_id = this->bins_indices[flat_id];
+            if (flag_table[flat_id] != 1) {
+              boundary_set.insert(flag_table[flat_id]);
+            }
+          }
+        }
+      }
+    }
+
+    for (int dz = 0; dz < bin_count.z; dz++) {
+      for (int dy = 0; dy < bin_count.y; dy++) {
+        for (int dx = 0; dx < bin_count.x; dx++) {
+          const auto flat_id = dx + dy * this->bin_count.x +
+                               dz * this->bin_count.x * this->bin_count.y;
+          // We put 1 if that cell is mesh boundary or inner volume
+          if (flag_table[flat_id] &&
+              boundary_set.find(flag_table[flat_id]) == boundary_set.end()) {
+            bitstream.push_low_bit(1);
+          } else {
+            bitstream.push_low_bit(0);
+          }
+        }
+      }
+    }
+    bitstream.flush();
   }
   Packed_UG pack() {
     Packed_UG out;

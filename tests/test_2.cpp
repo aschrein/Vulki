@@ -7,6 +7,7 @@
 #include "../include/particle_sim.hpp"
 #include "../include/profiling.hpp"
 #include "../include/shader_compiler.hpp"
+#include "f32_f16.hpp"
 
 #include "../include/random.hpp"
 #include "imgui.h"
@@ -682,6 +683,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     Raw_Mesh_Obj_Wrapper model_wrapper;
     UG ug = UG(1.0f, 1.0f);
     Packed_UG packed_ug;
+    Oct_Tree octree;
   };
   std::vector<Scene_Node> scene_nodes;
   std::string models_path = "models/";
@@ -744,10 +746,11 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       float smallest_dim = std::min(ug_size.x, std::min(ug_size.y, ug_size.z));
       float longest_dim = std::max(ug_size.x, std::max(ug_size.y, ug_size.z));
       float ug_cell_size =
-          std::max((longest_dim / 64) + 0.01f,
+          std::max((longest_dim / 100) + 0.01f,
                    std::min(avg_triangle_radius * 2.0f, longest_dim / 2));
       scene_node.ug = UG(test_model_min, test_model_max, ug_cell_size);
-
+      scene_node.octree.root.reset(
+          new Oct_Node(test_model_min, test_model_max, 0));
       {
         u32 triangle_id = 0;
         for (auto face : scene_node.model.indices) {
@@ -758,9 +761,80 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
           get_aabb(v0, v1, v2, triangle_min, triangle_max);
           scene_node.ug.put((triangle_min + triangle_max) * 0.5f,
                             (triangle_max - triangle_min) * 0.5f, triangle_id);
+          scene_node.octree.root->push(Oct_Item{
+              .min = triangle_min, .max = triangle_max, .id = triangle_id});
           triangle_id++;
         }
       }
+      {
+
+        Bit_Stream ug_bitstream;
+        scene_node.ug.to_bit_table(ug_bitstream);
+        {
+          std::ofstream out("ug_bitstream", std::ios::binary | std::ios::out);
+          out.write((char *)&ug_bitstream.bytes[0], ug_bitstream.bytes.size());
+          std::cout << "[Packing] entropy of ug_bitstream: "
+                    << ug_bitstream.shannon_entropy() << "\n";
+        }
+        {
+          std::ofstream out("ug_runlength4", std::ios::binary | std::ios::out);
+          Bit_Stream runlength;
+          ug_bitstream.run_length_encode4(runlength);
+          out.write((char *)&runlength.bytes[0], runlength.bytes.size());
+          std::cout << "[Packing] entropy of ug_runlength4: "
+                    << runlength.shannon_entropy() << "\n";
+        }
+        {
+          std::ofstream out("ug_runlength8", std::ios::binary | std::ios::out);
+          Bit_Stream runlength;
+          ug_bitstream.run_length_encode8(runlength);
+          Bit_Stream inverserunlength;
+          runlength.decode_run_length8(inverserunlength);
+          for (u32 i = 0; i < inverserunlength.bytes.size() - 1; i++) {
+            if (ug_bitstream.bytes[i] != inverserunlength.bytes[i])
+              std::cout << "[ERROR] @ " << i << "\n";
+          }
+          
+          std::cout << "[Packing] entropy of ug_runlength8: "
+                    << runlength.shannon_entropy() << "\n";
+          vec3 dim = scene_node.ug.max - scene_node.ug.min;
+          std::cout << "const float SIZE_X = " << dim.x
+                    << "f, SIZE_Y = " << dim.y << "f, SIZE_Z = " << dim.z
+                    << "f;\n";
+          std::cout << "const float BIN_SIZE = " << scene_node.ug.bin_size
+                    << "f;\n";
+          std::cout << "const uint BINS_X = " << scene_node.ug.bin_count.x
+                    << "u, BINS_Y = " << scene_node.ug.bin_count.y
+                    << "u, BINS_Z = " << scene_node.ug.bin_count.z << "u;\n";
+          std::cout << "const uint DATA_SIZE = " << (runlength.bytes.size() + 3) / 4 << "u;\n";        
+          std::cout << "const uint raw_data[] = uint[](";
+          // Assume Little endian
+          u32 *u32_data = (u32 *)&runlength.bytes[0];
+          for (u32 i = 0; i < (runlength.bytes.size() + 3) / 4; i++) {
+            std::cout << u32_data[i] << "u, ";
+          }
+          std::cout << " 0u);\n";
+          out.write((char *)&runlength.bytes[0], runlength.bytes.size());
+        }
+        {
+          std::ofstream out("ug_runlength16", std::ios::binary | std::ios::out);
+          Bit_Stream runlength;
+          ug_bitstream.run_length_encode16(runlength);
+          out.write((char *)&runlength.bytes[0], runlength.bytes.size());
+          std::cout << "[Packing] entropy of ug_runlength16: "
+                    << runlength.shannon_entropy() << "\n";
+        }
+        {
+          std::ofstream out("ug_runlength_zero_chunk",
+                            std::ios::binary | std::ios::out);
+          Bit_Stream runlength;
+          ug_bitstream.run_length_encode_zero_chunk8(runlength);
+          out.write((char *)&runlength.bytes[0], runlength.bytes.size());
+          std::cout << "[Packing] entropy of ug_runlength_zero_chunk: "
+                    << runlength.shannon_entropy() << "\n";
+        }
+      }
+
       scene_node.packed_ug = scene_node.ug.pack();
       scene_nodes.emplace_back(std::move(scene_node));
     }
@@ -1089,9 +1163,9 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     job.color = vec3(1.0f, 1.0f, 1.0f);
     job.depth = 0;
     path_tracing_queue.enqueue(job);
-     path_tracing_image.init(1, 1);
-    path_tracing_gpu_image = CPU_Image::create(device_wrapper, 1, 1,
-                                               vk::Format::eR8G8B8A8Unorm);
+    path_tracing_image.init(1, 1);
+    path_tracing_gpu_image =
+        CPU_Image::create(device_wrapper, 1, 1, vk::Format::eR8G8B8A8Unorm);
     path_tracing_iteration();
   };
   struct Path_Tracing_Plane_Push {
@@ -1237,8 +1311,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     /*----------------*/
     std::vector<vec3> lines;
     for (auto &node : scene_nodes) {
-
-      node.ug.fill_lines_render(lines);
+      node.octree.root->fill_lines_render(lines);
+      // node.ug.fill_lines_render(lines);
     }
     {
       ug_lines_gpu_buffer = alloc_state->allocate_buffer(
@@ -1587,6 +1661,565 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     ImGui::Begin("Metrics");
     // ImGui::InputFloat("mx", &mx, 0.1f, 0.1f, 2);
     // ImGui::InputFloat("my", &my, 0.1f, 0.1f, 2);
+    ImGui::End();
+  };
+  device_wrapper.window_loop();
+}
+
+TEST(graphics, vulkan_graphics_test_volume_rendering) {
+  auto device_wrapper = init_device(true);
+  auto &device = device_wrapper.device;
+
+  Simple_Monitor simple_monitor("../shaders");
+  // Some shader data structures
+  struct Particle_Vertex {
+    vec3 position;
+  };
+  struct Compute_UBO {
+    vec3 camera_pos;
+    int pad_0;
+    vec3 camera_look;
+    int pad_1;
+    vec3 camera_up;
+    int pad_2;
+    vec3 camera_right;
+    int pad_3;
+    uvec3 ug_bins_count;
+    int pad_4;
+    vec3 ug_min;
+    int pad_5;
+    vec3 ug_max;
+    f32 camera_fov;
+    f32 ug_bin_size;
+    uint rendering_flags;
+    uint raymarch_iterations;
+    f32 hull_radius;
+    f32 step_radius;
+    float voxel_weight;
+  };
+  struct Particle_UBO {
+    mat4 world;
+    mat4 view;
+    mat4 proj;
+  };
+  ///////////////////////////
+  // Particle system state //
+  ///////////////////////////
+  Random_Factory frand;
+  uint bins_x = 320;
+  uint bins_y = 192;
+  uint bins_z = 128;
+  int current_model = 0;
+  float voxel_weight;
+  uint rendering_flags;
+  std::vector<uint8> volume_data_x;
+  std::vector<uint8> volume_data_y;
+  std::vector<uint8> volume_data_z;
+
+  bins_x = 32;
+  bins_y = 16;
+  bins_z = 32;
+  voxel_weight = 10.0;
+  rendering_flags = 0x4;
+  auto load_model = [&](char const *filename) {
+    std::vector<uint8> volume_data;
+    std::ifstream is(filename, std::ios::binary | std::ios::in | std::ios::ate);
+
+    ASSERT_PANIC(is.is_open());
+    size_t size = is.tellg();
+    is.seekg(0, std::ios::beg);
+    volume_data.resize(size);
+    is.read((char *)&volume_data[0], size);
+    is.close();
+    return volume_data;
+  };
+  volume_data_x = load_model("moscow_r.bin");
+  volume_data_y = load_model("moscow_g.bin");
+  volume_data_z = load_model("moscow_b.bin");
+  // std::vector<char const *> model_filenames = {"raw_0.bin", "raw_1.bin",
+  //                                              "raw_2.bin", "raw_3.bin",
+  //                                              "raw_4.bin", "raw_5.bin"};
+  // std::vector<uint8> volume_data;
+  // auto load_model = [&]() {
+  //   if (current_model == 4) {
+  //     bins_x = 320;
+  //     bins_y = 192;
+  //     bins_z = 128;
+  //     voxel_weight = 4.0e-3;
+  //     rendering_flags = 0;
+  //   } else {
+  //     bins_x = 32;
+  //     bins_y = 16;
+  //     bins_z = 32;
+  //     voxel_weight = 10.0;
+  //     rendering_flags = 0x4;
+  //   }
+  //   {
+  //     std::ifstream is(model_filenames[current_model],
+  //                      std::ios::binary | std::ios::in | std::ios::ate);
+
+  //     ASSERT_PANIC(is.is_open());
+  //     size_t size = is.tellg();
+  //     is.seekg(0, std::ios::beg);
+  //     volume_data.resize(size);
+  //     is.read((char *)&volume_data[0], size);
+  //     is.close();
+  //   }
+  // };
+  // load_model();
+
+  // Rendering state
+  // @TODO: Proper serialization with protocol buffers or smth
+  Stack_Plot<7> cpu_frametime_stack{
+    name : "CPU frame time",
+    max_values : 256,
+    plot_names :
+        {"grid baking", "simulation", "buffer update", "descriptor update",
+         "command submit", "recreate resources", "full frame"}
+  };
+  CPU_Image cpu_time =
+      CPU_Image::create(device_wrapper, 256, 128, vk::Format::eR8G8B8A8Unorm);
+  Timestamp_Plot_Wrapper raymarch_timestamp_graph{
+    name : "raymarch time",
+    query_begin_id : 0,
+    max_values : 100
+  };
+  Timestamp_Plot_Wrapper fullframe_gpu_graph{
+    name : "full frame GPU time",
+    query_begin_id : 2,
+    max_values : 100
+  };
+  bool raymarch_flag_render_hull = true;
+  bool raymarch_flag_render_cells = true;
+  u32 GRID_DIM = 32;
+  uint raymarch_iterations = 32;
+  f32 rendering_radius = 0.1f;
+  f32 rendering_step = 0.2f;
+  f32 debug_grid_flood_radius = 0.325f;
+  Framebuffer_Wrapper framebuffer_wrapper{};
+  Storage_Image_Wrapper storage_image_wrapper{};
+  Pipeline_Wrapper fullscreen_pipeline;
+  Pipeline_Wrapper particles_pipeline;
+  Pipeline_Wrapper links_pipeline;
+  Pipeline_Wrapper compute_pipeline_wrapped;
+
+  Gizmo_Layer gizmo_layer{};
+
+  auto recreate_resources = [&] {
+    // Raymarching kernel
+    compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
+        device_wrapper, "../shaders/raymarch.comp.2.glsl",
+        {{"GROUP_DIM", "16"}});
+    framebuffer_wrapper = Framebuffer_Wrapper::create(
+        device_wrapper, gizmo_layer.example_viewport.extent.width,
+        gizmo_layer.example_viewport.extent.height,
+        vk::Format::eR32G32B32A32Sfloat);
+    storage_image_wrapper = Storage_Image_Wrapper::create(
+        device_wrapper, gizmo_layer.example_viewport.extent.width,
+        gizmo_layer.example_viewport.extent.height,
+        vk::Format::eR32G32B32A32Sfloat);
+    // @TODO: Squash all this pipeline creation boilerplate
+    // Fullscreen pass
+    fullscreen_pipeline = Pipeline_Wrapper::create_graphics(
+        device_wrapper, "../shaders/tests/bufferless_triangle.vert.glsl",
+        "../shaders/tests/simple_1.frag.glsl",
+        vk::GraphicsPipelineCreateInfo().setRenderPass(
+            framebuffer_wrapper.render_pass.get()),
+        {}, {}, {});
+    gizmo_layer.init_vulkan_state(device_wrapper,
+                                  framebuffer_wrapper.render_pass.get());
+  };
+  Alloc_State *alloc_state = device_wrapper.alloc_state.get();
+
+  // Shared sampler
+  vk::UniqueSampler sampler =
+      device->createSamplerUnique(vk::SamplerCreateInfo().setMaxLod(1));
+  // Init device stuff
+  {
+    vk::UniqueFence transfer_fence =
+        device->createFenceUnique(vk::FenceCreateInfo());
+    auto &cmd = device_wrapper.graphics_cmds[0].get();
+    cmd.reset(vk::CommandBufferResetFlagBits::eReleaseResources);
+    cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
+    cpu_time.transition_layout_to_general(device_wrapper, cmd);
+    cmd.end();
+    device_wrapper.graphics_queue.submit(
+        vk::SubmitInfo(
+            0, nullptr,
+            &vk::PipelineStageFlags(vk::PipelineStageFlagBits::eAllCommands), 1,
+            &cmd),
+        transfer_fence.get());
+    while (vk::Result::eTimeout ==
+           device->waitForFences(transfer_fence.get(), VK_TRUE, 0xffffffffu))
+      ;
+  }
+
+  //////////////////////
+  // Render offscreen //
+  //////////////////////
+  VmaBuffer compute_ubo_buffer;
+  VmaBuffer bins_buffer;
+
+  device_wrapper.pre_tick = [&](vk::CommandBuffer &cmd) {
+    CPU_timestamp __full_frame;
+    fullframe_gpu_graph.push_value(device_wrapper);
+    fullframe_gpu_graph.query_begin(cmd, device_wrapper);
+    // Update backbuffer if the viewport size has changed
+
+    if (simple_monitor.is_updated() ||
+        framebuffer_wrapper.width !=
+            gizmo_layer.example_viewport.extent.width ||
+        framebuffer_wrapper.height !=
+            gizmo_layer.example_viewport.extent.height) {
+      CPU_timestamp __timestamp;
+      recreate_resources();
+      cpu_frametime_stack.set_value("recreate resources", __timestamp.end());
+    }
+
+    ////////////// SIMULATION //////////////////
+    // Perform fixed step iteration on the particle system
+    // Fill the uniform grid
+
+    {
+      CPU_timestamp __timestamp;
+      cpu_frametime_stack.set_value("grid baking", __timestamp.end());
+    }
+    ///////////// RENDERING ////////////////////
+
+    // Create new GPU visible buffers
+    // @TODO: Track usage of the old buffers
+    // Right now there is no overlapping of cpu and gpu work
+    // With overlapping this will invalidate used buffers
+    {
+      CPU_timestamp __timestamp;
+      compute_ubo_buffer = alloc_state->allocate_buffer(
+          vk::BufferCreateInfo()
+              .setSize(sizeof(Compute_UBO))
+              .setUsage(vk::BufferUsageFlagBits::eUniformBuffer |
+                        vk::BufferUsageFlagBits::eTransferDst),
+          VMA_MEMORY_USAGE_CPU_TO_GPU);
+      bins_buffer = alloc_state->allocate_buffer(
+          vk::BufferCreateInfo()
+              .setSize(2 * volume_data_x.size())
+              .setUsage(vk::BufferUsageFlagBits::eStorageBuffer |
+                        vk::BufferUsageFlagBits::eTransferDst),
+          VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+      {
+        void *data = bins_buffer.map();
+        // float *typed_data = (float *)data;
+        std::vector<float> typed_data_x(volume_data_x.size() / 2);
+        std::vector<float> typed_data_y(volume_data_y.size() / 2);
+        std::vector<float> typed_data_z(volume_data_z.size() / 2);
+        for (u32 i = 0; i < volume_data_x.size() / 2; i++) {
+          u8 first_byte = volume_data_x[i * 2];
+          u8 second_byte = volume_data_x[i * 2 + 1];
+          u16 half = first_byte | (second_byte << 8);
+          FP32 f = half_to_float_fast5(FP16{half});
+          typed_data_x[i] = *reinterpret_cast<float *>(&f);
+        }
+        for (u32 i = 0; i < volume_data_y.size() / 2; i++) {
+          u8 first_byte = volume_data_y[i * 2];
+          u8 second_byte = volume_data_y[i * 2 + 1];
+          u16 half = first_byte | (second_byte << 8);
+          FP32 f = half_to_float_fast5(FP16{half});
+          typed_data_y[i] = *reinterpret_cast<float *>(&f);
+        }
+        for (u32 i = 0; i < volume_data_z.size() / 2; i++) {
+          u8 first_byte = volume_data_z[i * 2];
+          u8 second_byte = volume_data_z[i * 2 + 1];
+          u16 half = first_byte | (second_byte << 8);
+          FP32 f = half_to_float_fast5(FP16{half});
+          typed_data_z[i] = *reinterpret_cast<float *>(&f);
+        }
+        ito(typed_data_x.size() / 4) {
+          vec4 v = *(vec4 *)&typed_data_x[i * 4];
+          uint grid_x = i % bins_x;
+          uint grid_y = (i / bins_x) % bins_y;
+          uint grid_z = i / (bins_x * bins_y);
+          vec3 origin = vec3(float(grid_x) + 0.5f, float(grid_y) + 0.5f,
+                             float(grid_z) + 0.5f) /
+                            float(bins_x) -
+                        vec3(float(bins_x), float(bins_y), float(bins_z)) /
+                            float(bins_x) * 0.5f;
+          if (length(v) > 1.0e-7f)
+            gizmo_layer.push_line(origin, origin + 5.0f * (vec3(v.x, v.y, v.z)),
+                                  vec3(0.0f, 0.0f, 1.0f),
+                                  vec3(1.0f, 0.0f, 0.0f));
+        }
+        ito(typed_data_y.size() / 4) {
+          vec4 v = *(vec4 *)&typed_data_y[i * 4];
+          uint grid_x = i % bins_x;
+          uint grid_y = (i / bins_x) % bins_y;
+          uint grid_z = i / (bins_x * bins_y);
+          vec3 origin = vec3(float(grid_x) + 0.5f, float(grid_y) + 0.5f,
+                             float(grid_z) + 0.5f) /
+                            float(bins_x) -
+                        vec3(float(bins_x), float(bins_y), float(bins_z)) /
+                            float(bins_x) * 0.5f;
+          if (length(v) > 1.0e-7f)
+            gizmo_layer.push_line(origin, origin + 5.0f * (vec3(v.x, v.y, v.z)),
+                                  vec3(0.0f, 0.0f, 1.0f),
+                                  vec3(0.0f, 1.0f, 0.0f));
+        }
+        ito(typed_data_z.size() / 4) {
+          vec4 v = *(vec4 *)&typed_data_z[i * 4];
+          uint grid_x = i % bins_x;
+          uint grid_y = (i / bins_x) % bins_y;
+          uint grid_z = i / (bins_x * bins_y);
+          vec3 origin = vec3(float(grid_x) + 0.5f, float(grid_y) + 0.5f,
+                             float(grid_z) + 0.5f) /
+                            float(bins_x) -
+                        vec3(float(bins_x), float(bins_y), float(bins_z)) /
+                            float(bins_x) * 0.5f;
+          if (length(v) > 1.0e-7f)
+            gizmo_layer.push_line(origin, origin + 5.0f * (vec3(v.x, v.y, v.z)),
+                                  vec3(0.0f, 0.0f, 1.0f),
+                                  vec3(0.0f, 0.0f, 1.0f));
+        }
+        memcpy(data, &typed_data_x[0], 4 * typed_data_x.size());
+        bins_buffer.unmap();
+      }
+      {
+        void *data = compute_ubo_buffer.map();
+        Compute_UBO *typed_data = (Compute_UBO *)data;
+        Compute_UBO tmp_ubo;
+        tmp_ubo.camera_fov = f32(gizmo_layer.example_viewport.extent.width) /
+                             gizmo_layer.example_viewport.extent.height;
+
+        tmp_ubo.camera_pos = gizmo_layer.camera_pos;
+        tmp_ubo.camera_look = normalize(-gizmo_layer.camera_pos);
+        tmp_ubo.camera_right =
+            normalize(cross(tmp_ubo.camera_look, vec3(0.0f, 0.0f, 1.0f)));
+        tmp_ubo.camera_up =
+            normalize(cross(tmp_ubo.camera_right, tmp_ubo.camera_look));
+
+        tmp_ubo.ug_bins_count = uvec3(bins_x, bins_y, bins_z);
+        tmp_ubo.ug_min = vec3(-float(bins_x), -float(bins_y), -float(bins_z)) /
+                         float(bins_x) * 0.5;
+        tmp_ubo.ug_max = vec3(float(bins_x), float(bins_y), float(bins_z)) /
+                         float(bins_x) * 0.5;
+        tmp_ubo.ug_bin_size = 1.0f / float(bins_x);
+        tmp_ubo.voxel_weight = voxel_weight;
+        tmp_ubo.rendering_flags = rendering_flags;
+        tmp_ubo.rendering_flags |= (raymarch_flag_render_hull ? 1 : 0);
+        tmp_ubo.rendering_flags |= (raymarch_flag_render_cells ? 1 : 0) << 1;
+        tmp_ubo.hull_radius = rendering_radius;
+        tmp_ubo.step_radius = rendering_step;
+        tmp_ubo.raymarch_iterations = raymarch_iterations;
+        *typed_data = tmp_ubo;
+        compute_ubo_buffer.unmap();
+      }
+
+      cpu_frametime_stack.set_value("buffer update", __timestamp.end());
+    }
+    // Update descriptor tables
+    {
+      CPU_timestamp __timestamp;
+      compute_pipeline_wrapped.update_descriptor(
+          device.get(), "Bins", bins_buffer.buffer, 0, 2 * volume_data_x.size(),
+          vk::DescriptorType::eStorageBuffer);
+      compute_pipeline_wrapped.update_descriptor(
+          device.get(), "UBO", compute_ubo_buffer.buffer, 0,
+          sizeof(Compute_UBO), vk::DescriptorType::eUniformBuffer);
+
+      compute_pipeline_wrapped.update_storage_image_descriptor(
+          device.get(), "resultImage", storage_image_wrapper.image_view.get());
+      fullscreen_pipeline.update_sampled_image_descriptor(
+          device.get(), "tex", storage_image_wrapper.image_view.get(),
+          sampler.get());
+      cpu_frametime_stack.set_value("descriptor update", __timestamp.end());
+    }
+    /*------------------------------*/
+    /* Spawn the raymarching kernel */
+    /*------------------------------*/
+    {
+      CPU_timestamp __timestamp;
+      raymarch_timestamp_graph.push_value(device_wrapper);
+      storage_image_wrapper.transition_layout_to_write(device_wrapper, cmd);
+      compute_pipeline_wrapped.bind_pipeline(device.get(), cmd);
+      raymarch_timestamp_graph.query_begin(cmd, device_wrapper);
+      // cmd.dispatch((gizmo_layer.example_viewport.extent.width + 15) / 16,
+      //              (gizmo_layer.example_viewport.extent.height + 15) / 16,
+      //              1);
+      raymarch_timestamp_graph.query_end(cmd, device_wrapper);
+      storage_image_wrapper.transition_layout_to_read(device_wrapper, cmd);
+
+      /*----------------------------------*/
+      /* Update the offscreen framebuffer */
+      /*----------------------------------*/
+      framebuffer_wrapper.transition_layout_to_write(device_wrapper, cmd);
+      framebuffer_wrapper.begin_render_pass(cmd);
+      cmd.setViewport(
+          0, {vk::Viewport(0, 0, gizmo_layer.example_viewport.extent.width,
+                           gizmo_layer.example_viewport.extent.height, 0.0f,
+                           1.0f)});
+      cmd.setScissor(0, {{{0, 0},
+                          {gizmo_layer.example_viewport.extent.width,
+                           gizmo_layer.example_viewport.extent.height}}});
+      fullscreen_pipeline.bind_pipeline(device.get(), cmd);
+      // cmd.draw(3, 1, 0, 0);
+      gizmo_layer.draw(device_wrapper, cmd);
+
+      framebuffer_wrapper.end_render_pass(cmd);
+      framebuffer_wrapper.transition_layout_to_read(device_wrapper, cmd);
+      fullframe_gpu_graph.query_end(cmd, device_wrapper);
+      cpu_frametime_stack.set_value("command submit", __timestamp.end());
+    }
+    cpu_frametime_stack.set_value("full frame", __full_frame.end());
+    cpu_frametime_stack.push_value();
+  };
+
+  /////////////////////
+  // Render the image
+  /////////////////////
+  device_wrapper.on_tick = [&](vk::CommandBuffer &cmd) {
+
+  };
+
+  /////////////////////
+  // Render the GUI
+  /////////////////////
+  device_wrapper.on_gui = [&] {
+    static bool show_demo = true;
+    ImGuiWindowFlags window_flags =
+        ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+    ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->Pos);
+    ImGui::SetNextWindowSize(viewport->Size);
+    ImGui::SetNextWindowViewport(viewport->ID);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+    window_flags |=
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+
+    window_flags |= ImGuiWindowFlags_NoBackground;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(-1.0f);
+    ImGui::Begin("DockSpace Demo", nullptr, window_flags);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
+    ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
+    ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f),
+                     ImGuiDockNodeFlags_PassthruCentralNode);
+    ImGui::End();
+
+    ImGui::SetNextWindowBgAlpha(-1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::Begin("dummy window");
+    ImGui::PopStyleVar(3);
+
+    gizmo_layer.on_imgui_viewport();
+    // ImGui::Button("Press me");
+
+    ImGui::Image(ImGui_ImplVulkan_AddTexture(
+                     sampler.get(), framebuffer_wrapper.image_view.get(),
+                     VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+                 ImVec2(gizmo_layer.example_viewport.extent.width,
+                        gizmo_layer.example_viewport.extent.height),
+                 ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+
+    ImGui::End();
+    ImGui::ShowDemoWindow(&show_demo);
+    ImGui::Begin("Simulation parameters");
+
+    ImGui::End();
+    ImGui::Begin("Rendering configuration");
+    // if (ImGui::ListBox("test models", &current_model, &model_filenames[0],
+    //                    model_filenames.size()))
+    //   load_model();
+    ImGui::Checkbox("raymarch render hull", &raymarch_flag_render_hull);
+    ImGui::Checkbox("raymarch render iterations", &raymarch_flag_render_cells);
+    ImGui::DragFloat("raymarch hull radius", &rendering_radius, 0.025f, 0.025f,
+                     10.0f);
+    ImGui::DragFloat("raymarch step radius", &rendering_step, 0.025f, 0.025f,
+                     10.0f);
+    ImGui::DragFloat("[Debug] grid flood radius", &debug_grid_flood_radius,
+                     0.025f, 0.0f, 10.0f);
+    u32 step = 1;
+    ImGui::InputScalar("raymarch grid dimension", ImGuiDataType_U32, &GRID_DIM,
+                       &step);
+    ImGui::SliderInt("raymarch max iterations", (i32 *)&raymarch_iterations, 1,
+                     64);
+    ImGui::End();
+    ImGui::Begin("Metrics");
+    {
+      u32 colors[] = {
+          0x6a4740ff, 0xe6fdabff, 0xb7be0bff, 0x8fe5beff,
+          0x03bcd8ff, 0xed3e0eff, 0xa90b0cff, 0xffffffff,
+      };
+      auto bswap = [](u32 val) {
+        return ((val >> 24) & 0xff) | ((val << 8) & 0xff0000) |
+               ((val >> 8) & 0xff00) | ((val << 24) & 0xff000000);
+      };
+      f32 max = 0.0f;
+      for (auto const &item : cpu_frametime_stack.values) {
+        for (u32 i = 0; i < __ARRAY_SIZE(item.vals); i++) {
+          max = std::max(max, item.vals[i]);
+        }
+      }
+      void *data = cpu_time.image.map();
+      u32 *typed_data = (u32 *)data;
+      // typed_data[0] = 0xffu;
+      for (u32 x = 0; x < cpu_time.width; x++) {
+        for (u32 y = 0; y < cpu_time.height; y++) {
+          typed_data[x + y * cpu_time.width] = bswap(0x000000ffu);
+        }
+      }
+      for (u32 x = 0; x < cpu_time.width; x++) {
+        if (x == cpu_frametime_stack.values.size())
+          break;
+        auto item = cpu_frametime_stack.values[x];
+        for (u32 i = 1; i < __ARRAY_SIZE(item.vals) - 1; i++) {
+          item.vals[i] += item.vals[i - 1];
+        }
+        for (auto &val : item.vals) {
+          val *= f32(cpu_time.height) / max;
+        }
+        for (u32 y = 0; y < cpu_time.height; y++) {
+
+          for (u32 i = 0; i < __ARRAY_SIZE(item.vals); i++) {
+            if (y <= u32(item.vals[i])) {
+              typed_data[x + y * cpu_time.width] = bswap(colors[i]);
+              break;
+            }
+          }
+        }
+      }
+      auto int_to_color = [](u32 color) {
+        return ImVec4(f32((color >> 24) & 0xff) / 255.0f,
+                      f32((color >> 16) & 0xff) / 255.0f,
+                      f32((color >> 8) & 0xff) / 255.0f,
+                      f32((color >> 0) & 0xff) / 255.0f);
+      };
+      for (auto const &item : cpu_frametime_stack.legend) {
+        ImGui::SameLine();
+        ImGui::ColorButton(item.first.c_str(),
+                           int_to_color(colors[item.second]));
+      }
+      cpu_time.image.unmap();
+    }
+    if (cpu_frametime_stack.values.size()) {
+      ImGui::Image(
+          ImGui_ImplVulkan_AddTexture(sampler.get(), cpu_time.image_view.get(),
+                                      VkImageLayout::VK_IMAGE_LAYOUT_GENERAL),
+          ImVec2(cpu_time.width, cpu_time.height), ImVec2(0.0f, 1.0f),
+          ImVec2(1.0f, 0.0f));
+      ImGui::SameLine();
+      ImGui::Text(
+          "%s:%-3.1fuS", cpu_frametime_stack.name.c_str(),
+          cpu_frametime_stack.values[cpu_frametime_stack.values.size() - 1]
+              .vals[__ARRAY_SIZE(cpu_frametime_stack.values[0].vals) - 1]);
+    }
+    raymarch_timestamp_graph.draw();
+    fullframe_gpu_graph.draw();
+    // fullframe_cpu_graph.draw();
+    // ug_cpu_graph.draw();
+    // sim_cpu_graph.draw();
     ImGui::End();
   };
   device_wrapper.window_loop();

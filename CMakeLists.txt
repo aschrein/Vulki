@@ -46,6 +46,7 @@ file(GLOB SOURCE "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widge
 add_custom_command(OUTPUT kernel.o
                    COMMAND ispc -g -O3  --math-lib=fast --pic  ${CMAKE_SOURCE_DIR}/"src/kernel.ispc" -o kernel.o
                    DEPENDS "src/kernel.ispc")
+                
 set(LIBS OpenMP::OpenMP_CXX meshoptimizer tinyobjloader glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util pthread boost_system boost_filesystem boost_thread)
 add_executable(GRAPHICS_EXPERIMENTS main.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
 target_include_directories(GRAPHICS_EXPERIMENTS PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
@@ -66,6 +67,11 @@ add_executable(test_2 tests/test_2.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
 target_include_directories(test_2 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
 target_link_libraries(test_2 ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(test_2 PRIVATE shaderc_shared)
+
+add_executable(test_3 tests/test_3.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
+target_include_directories(test_3 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
+target_link_libraries(test_3 ${Vulkan_LIBRARY} ${LIBS})
+target_link_libraries(test_3 PRIVATE shaderc_shared)
 
 if(NOT EXISTS ${CMAKE_BINARY_DIR}/models)
     file(DOWNLOAD https://casual-effects.com/g3d/data10/research/model/bunny/bunny.zip models/bunny.zip SHOW_PROGRESS)
