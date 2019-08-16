@@ -1,3 +1,8 @@
+## Screenshots
+![alt text](images/screenshot_1.png)
+![alt text](images/screenshot_2.png)
+![alt text](images/screenshot_3.png)
+![alt text](images/record_1.gif)
 ## Dependencies
 ```console
 ## Install Lunarg-SDK and set up enviroment variables

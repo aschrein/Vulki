@@ -35,7 +35,7 @@ TEST(graphics, vulkan_graphics_test_1) {
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;
 
-  Simple_Monitor simple_monitor("../shaders");
+  Simple_Monitor simple_monitor("shaders");
   // Some shader data structures
   struct Particle_Vertex {
     vec3 position;
@@ -113,7 +113,7 @@ TEST(graphics, vulkan_graphics_test_1) {
   auto recreate_resources = [&] {
     // Raymarching kernel
     compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
-        device_wrapper, "../shaders/raymarch.comp.1.glsl",
+        device_wrapper, "shaders/raymarch.comp.1.glsl",
         {{"GROUP_DIM", "16"}});
     framebuffer_wrapper = Framebuffer_Wrapper::create(
         device_wrapper, gizmo_layer.example_viewport.extent.width,
@@ -126,8 +126,8 @@ TEST(graphics, vulkan_graphics_test_1) {
     // @TODO: Squash all this pipeline creation boilerplate
     // Fullscreen pass
     fullscreen_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "../shaders/tests/bufferless_triangle.vert.glsl",
-        "../shaders/tests/simple_1.frag.glsl",
+        device_wrapper, "shaders/tests/bufferless_triangle.vert.glsl",
+        "shaders/tests/simple_1.frag.glsl",
         vk::GraphicsPipelineCreateInfo().setRenderPass(
             framebuffer_wrapper.render_pass.get()),
         {}, {}, {});
@@ -494,7 +494,7 @@ TEST(graphics, vulkan_graphics_test_gizmo) {
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;
 
-  Simple_Monitor simple_monitor("../shaders");
+  Simple_Monitor simple_monitor("shaders");
 
   // Some shader data structures
   Gizmo_Layer gizmo_layer{};
@@ -512,8 +512,8 @@ TEST(graphics, vulkan_graphics_test_gizmo) {
         vk::Format::eR32G32B32A32Sfloat);
 
     fullscreen_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "../shaders/tests/bufferless_triangle.vert.glsl",
-        "../shaders/tests/simple_1.frag.glsl",
+        device_wrapper, "shaders/tests/bufferless_triangle.vert.glsl",
+        "shaders/tests/simple_1.frag.glsl",
         vk::GraphicsPipelineCreateInfo()
             .setPInputAssemblyState(
                 &vk::PipelineInputAssemblyStateCreateInfo().setTopology(
@@ -676,7 +676,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;
 
-  Simple_Monitor simple_monitor("../shaders");
+  Simple_Monitor simple_monitor("shaders");
   struct Scene_Node {
     vec3 position;
     Raw_Mesh_Obj model;
@@ -1189,8 +1189,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         vk::Format::eR32G32B32A32Sfloat);
 
     fullscreen_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "../shaders/tests/bufferless_triangle.vert.glsl",
-        "../shaders/tests/simple_1.frag.glsl",
+        device_wrapper, "shaders/tests/bufferless_triangle.vert.glsl",
+        "shaders/tests/simple_1.frag.glsl",
         vk::GraphicsPipelineCreateInfo()
             .setPInputAssemblyState(
                 &vk::PipelineInputAssemblyStateCreateInfo().setTopology(
@@ -1198,8 +1198,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
             .setRenderPass(framebuffer_wrapper.render_pass.get()),
         {}, {}, {});
     path_tracing_plane_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "../shaders/path_tracing_plane.vert.glsl",
-        "../shaders/path_tracing_plane.frag.glsl",
+        device_wrapper, "shaders/path_tracing_plane.vert.glsl",
+        "shaders/path_tracing_plane.frag.glsl",
         vk::GraphicsPipelineCreateInfo()
             .setPInputAssemblyState(
                 &vk::PipelineInputAssemblyStateCreateInfo().setTopology(
@@ -1207,8 +1207,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
             .setRenderPass(framebuffer_wrapper.render_pass.get()),
         {}, {}, {}, sizeof(Path_Tracing_Plane_Push));
     lines_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "../shaders/ug_debug.vert.glsl",
-        "../shaders/ug_debug.frag.glsl",
+        device_wrapper, "shaders/ug_debug.vert.glsl",
+        "shaders/ug_debug.frag.glsl",
         vk::GraphicsPipelineCreateInfo()
 
             .setPInputAssemblyState(
@@ -1227,8 +1227,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
              .setInputRate(vk::VertexInputRate::eVertex)},
         {}, sizeof(Test_Model_Push_Constants));
     test_model_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "../shaders/3p3n2t.vert.glsl",
-        "../shaders/lambert.frag.glsl",
+        device_wrapper, "shaders/3p3n2t.vert.glsl",
+        "shaders/lambert.frag.glsl",
         vk::GraphicsPipelineCreateInfo().setRenderPass(
             framebuffer_wrapper.render_pass.get()),
         {
@@ -1672,7 +1672,7 @@ TEST(graphics, vulkan_graphics_test_volume_rendering) {
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;
 
-  Simple_Monitor simple_monitor("../shaders");
+  Simple_Monitor simple_monitor("shaders");
   // Some shader data structures
   struct Particle_Vertex {
     vec3 position;
@@ -1810,7 +1810,7 @@ TEST(graphics, vulkan_graphics_test_volume_rendering) {
   auto recreate_resources = [&] {
     // Raymarching kernel
     compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
-        device_wrapper, "../shaders/raymarch.comp.2.glsl",
+        device_wrapper, "shaders/raymarch.comp.2.glsl",
         {{"GROUP_DIM", "16"}});
     framebuffer_wrapper = Framebuffer_Wrapper::create(
         device_wrapper, gizmo_layer.example_viewport.extent.width,
@@ -1823,8 +1823,8 @@ TEST(graphics, vulkan_graphics_test_volume_rendering) {
     // @TODO: Squash all this pipeline creation boilerplate
     // Fullscreen pass
     fullscreen_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "../shaders/tests/bufferless_triangle.vert.glsl",
-        "../shaders/tests/simple_1.frag.glsl",
+        device_wrapper, "shaders/tests/bufferless_triangle.vert.glsl",
+        "shaders/tests/simple_1.frag.glsl",
         vk::GraphicsPipelineCreateInfo().setRenderPass(
             framebuffer_wrapper.render_pass.get()),
         {}, {}, {});

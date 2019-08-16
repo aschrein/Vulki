@@ -232,8 +232,8 @@ struct Gizmo_Layer {
   void init_vulkan_state(Device_Wrapper &device_wrapper,
                          vk::RenderPass &render_pass) {
     gizmo_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "../shaders/gizmo.vert.glsl",
-        "../shaders/gizmo.frag.glsl",
+        device_wrapper, "shaders/gizmo.vert.glsl",
+        "shaders/gizmo.frag.glsl",
         vk::GraphicsPipelineCreateInfo().setRenderPass(render_pass),
         sh_gizmo_vert::Binding,
         {vk::VertexInputBindingDescription()
