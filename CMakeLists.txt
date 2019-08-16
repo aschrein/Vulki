@@ -37,7 +37,7 @@ add_subdirectory(3rdparty/tinyobjloader)
 add_subdirectory(3rdparty/meshoptimizer)
 
 
-file(GLOB SOURCE "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widgets.cpp 3rdparty/imgui/imgui_draw.cpp 3rdparty/imgui/imgui_demo.cpp 3rdparty/imgui/examples/imgui_impl_vulkan.cpp 3rdparty/imgui/examples/imgui_impl_glfw.cpp)
+file(GLOB SOURCE ${CMAKE_SOURCE_DIR}/shaders/shaders.h "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widgets.cpp 3rdparty/imgui/imgui_draw.cpp 3rdparty/imgui/imgui_demo.cpp 3rdparty/imgui/examples/imgui_impl_vulkan.cpp 3rdparty/imgui/examples/imgui_impl_glfw.cpp)
 # file(GLOB 3RD_SOURCE 3rdparty/SPIRV-Reflect/spirv_reflect.c)
 # message(${SOURCE})
 # message(${SOURCE})
@@ -46,32 +46,66 @@ file(GLOB SOURCE "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widge
 add_custom_command(OUTPUT kernel.o
                    COMMAND ispc -g -O3  --math-lib=fast --pic  ${CMAKE_SOURCE_DIR}/"src/kernel.ispc" -o kernel.o
                    DEPENDS "src/kernel.ispc")
-                
+
+
 set(LIBS OpenMP::OpenMP_CXX meshoptimizer tinyobjloader glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util pthread boost_system boost_filesystem boost_thread)
+
+
+
+
+add_executable(shader_parser shader_parser.cpp  ${3RD_SOURCE})
+target_include_directories(shader_parser PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
+target_link_libraries(shader_parser ${Vulkan_LIBRARY} ${LIBS})
+target_link_libraries(shader_parser PRIVATE shaderc_shared)
+
+if(NOT EXISTS ${CMAKE_BINARY_DIR}/shaders)
+    execute_process(
+        COMMAND mkdir ${CMAKE_BINARY_DIR}/shaders
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        )
+endif()
+
+add_custom_target(
+    my_custom_target_that_always_runs ALL
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/__header.h
+    )
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/__header.h  ${CMAKE_SOURCE_DIR}/shaders/shaders.h
+    DEPENDS shader_parser always_rebuild
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        COMMAND rm -rf ${CMAKE_BINARY_DIR}/shaders && cp -r ${CMAKE_SOURCE_DIR}/shaders ${CMAKE_BINARY_DIR} && cd shaders && echo "" > shaders.h && ${CMAKE_BINARY_DIR}/shader_parser >> shaders.h
+    )
+    add_custom_command(
+    OUTPUT always_rebuild
+    COMMAND cmake -E echo
+    )
+
 add_executable(GRAPHICS_EXPERIMENTS main.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
-target_include_directories(GRAPHICS_EXPERIMENTS PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
+target_include_directories(GRAPHICS_EXPERIMENTS PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
 target_link_libraries(GRAPHICS_EXPERIMENTS ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(GRAPHICS_EXPERIMENTS PRIVATE shaderc_shared)
 
 add_executable(test_0 tests/test_0.cpp ${SOURCE} ${3RD_SOURCE})
-target_include_directories(test_0 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
+target_include_directories(test_0 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
 target_link_libraries(test_0 ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(test_0 PRIVATE shaderc_shared)
 
 add_executable(test_1 tests/test_1.cpp ${SOURCE} ${3RD_SOURCE})
-target_include_directories(test_1 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
+target_include_directories(test_1 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
 target_link_libraries(test_1 ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(test_1 PRIVATE shaderc_shared)
 
 add_executable(test_2 tests/test_2.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
-target_include_directories(test_2 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
+target_include_directories(test_2 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
 target_link_libraries(test_2 ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(test_2 PRIVATE shaderc_shared)
 
 add_executable(test_3 tests/test_3.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
-target_include_directories(test_3 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
+target_include_directories(test_3 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
 target_link_libraries(test_3 ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(test_3 PRIVATE shaderc_shared)
+
 
 if(NOT EXISTS ${CMAKE_BINARY_DIR}/models)
     file(DOWNLOAD https://casual-effects.com/g3d/data10/research/model/bunny/bunny.zip models/bunny.zip SHOW_PROGRESS)

@@ -56,17 +56,25 @@ using WorkPayload = std::vector<JobPayload>;
 TEST(graphics, model_comperession) {
 }
 
+struct Component_ID {
+  unsigned type: 16u;
+  unsigned user: 16u;
+  unsigned index: 32u;
+};
+
+enum class Component_Type : u16 {
+  TRANSFORM, INFO, MESH_3D, MATERIAL
+};
+
+struct Scene_Node {
+  std::string name;
+  std::vector<Component_ID> components;
+};
+
+
+
 TEST(graphics, vulkan_graphics_test_3d_models) {
-  // @TODO:
-  // * Fix moller and woop algorithms
-  //   * They have some error checking which is not relative
-  //     It explodes at small triangles
-  // * Visual debugging for funky precision errors
-  //   * Different types of tracing
-  // * Multiple objects
-  // * Object movement
-  // * Use canonical, system-wide approach to numerical errors
-  //   * Unify all EPSILON crap
+  ASSERT_PANIC(sizeof(Component_ID) == 64u);
 
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;

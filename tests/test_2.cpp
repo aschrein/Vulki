@@ -29,6 +29,8 @@ using namespace glm;
 
 #include "omp.h"
 
+#include <shaders.h>
+
 TEST(graphics, vulkan_graphics_test_1) {
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;

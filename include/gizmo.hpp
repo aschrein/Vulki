@@ -13,6 +13,8 @@ using namespace glm;
 #include "gelf.h"
 #include "imgui.h"
 
+#include <shaders.h>
+
 struct Gizmo_Vertex {
   vec3 in_position;
 };
@@ -219,18 +221,13 @@ struct Gizmo_Layer {
 
   std::vector<Gizmo_Draw_Cmd> cmds;
   // Vulkan state
-  struct Gizmo_Instance_Data {
-    vec4 in_model_0;
-    vec4 in_model_1;
-    vec4 in_model_2;
-    vec4 in_model_3;
-    vec3 in_color;
-  };
   Pipeline_Wrapper gizmo_pipeline;
   Raw_Mesh_3p16i_Wrapper icosahedron_wrapper;
   Raw_Mesh_3p16i_Wrapper cylinder_wrapper;
   Raw_Mesh_3p16i_Wrapper cone_wrapper;
   VmaBuffer gizmo_instance_buffer;
+
+  using Gizmo_Instance_Data = sh_gizmo_vert::_Binding_1;
 
   void init_vulkan_state(Device_Wrapper &device_wrapper,
                          vk::RenderPass &render_pass) {
@@ -238,25 +235,14 @@ struct Gizmo_Layer {
         device_wrapper, "../shaders/gizmo.vert.glsl",
         "../shaders/gizmo.frag.glsl",
         vk::GraphicsPipelineCreateInfo().setRenderPass(render_pass),
-        {REG_VERTEX_ATTRIB(Gizmo_Vertex, in_position, 0,
-                           vk::Format::eR32G32B32Sfloat),
-         REG_VERTEX_ATTRIB(Gizmo_Instance_Data, in_model_0, 1,
-                           vk::Format::eR32G32B32A32Sfloat),
-         REG_VERTEX_ATTRIB(Gizmo_Instance_Data, in_model_1, 1,
-                           vk::Format::eR32G32B32A32Sfloat),
-         REG_VERTEX_ATTRIB(Gizmo_Instance_Data, in_model_2, 1,
-                           vk::Format::eR32G32B32A32Sfloat),
-         REG_VERTEX_ATTRIB(Gizmo_Instance_Data, in_model_3, 1,
-                           vk::Format::eR32G32B32A32Sfloat),
-         REG_VERTEX_ATTRIB(Gizmo_Instance_Data, in_color, 1,
-                           vk::Format::eR32G32B32Sfloat)},
+        sh_gizmo_vert::Binding,
         {vk::VertexInputBindingDescription()
              .setBinding(0)
-             .setStride(sizeof(Gizmo_Vertex))
+             .setStride(sizeof(sh_gizmo_vert::_Binding_0))
              .setInputRate(vk::VertexInputRate::eVertex),
          vk::VertexInputBindingDescription()
              .setBinding(1)
-             .setStride(sizeof(Gizmo_Instance_Data))
+             .setStride(sizeof(sh_gizmo_vert::_Binding_1))
              .setInputRate(vk::VertexInputRate::eInstance)},
         {}, sizeof(Gizmo_Push_Constants));
     cone_wrapper = Raw_Mesh_3p16i_Wrapper::create(
