@@ -1,5 +1,6 @@
 #include "../include/assets.hpp"
 #include "../include/device.hpp"
+#include "../include/ecs.hpp"
 #include "../include/error_handling.hpp"
 #include "../include/gizmo.hpp"
 #include "../include/memory.hpp"
@@ -53,25 +54,14 @@ struct JobPayload {
 
 using WorkPayload = std::vector<JobPayload>;
 
-TEST(graphics, model_comperession) {
+TEST(graphics, ecs_test) {
+  auto e_0_id = Entity::create_entity();
+  auto e_0_p = Entity::get_entity_weak(e_0_id);
+  e_0_p->get_or_create_component<C_Transform>();
+  e_0_p->get_or_create_component<C_Name>()->name = "test name";
+  std::cout << e_0_p->get_component<C_Name>()->name << "\n";
+  std::cout << e_0_p->get_component<C_Name>()->owner.index << "\n";
 }
-
-struct Component_ID {
-  unsigned type: 16u;
-  unsigned user: 16u;
-  unsigned index: 32u;
-};
-
-enum class Component_Type : u16 {
-  TRANSFORM, INFO, MESH_3D, MATERIAL
-};
-
-struct Scene_Node {
-  std::string name;
-  std::vector<Component_ID> components;
-};
-
-
 
 TEST(graphics, vulkan_graphics_test_3d_models) {
   ASSERT_PANIC(sizeof(Component_ID) == 8u);
@@ -80,19 +70,16 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   auto &device = device_wrapper.device;
 
   Simple_Monitor simple_monitor("../shaders");
-  
+
   Gizmo_Layer gizmo_layer{};
 
   ////////////////////////
   // Path tracing state //
   ////////////////////////
   Random_Factory frand;
-  
+
   Framebuffer_Wrapper framebuffer_wrapper{};
   Pipeline_Wrapper fullscreen_pipeline;
-  Pipeline_Wrapper test_model_pipeline;
-  Pipeline_Wrapper lines_pipeline;
-  Pipeline_Wrapper path_tracing_plane_pipeline;
 
   auto recreate_resources = [&] {
     framebuffer_wrapper = Framebuffer_Wrapper::create(
@@ -109,7 +96,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                     vk::PrimitiveTopology::eTriangleList))
             .setRenderPass(framebuffer_wrapper.render_pass.get()),
         {}, {}, {});
-    
+
     gizmo_layer.init_vulkan_state(device_wrapper,
                                   framebuffer_wrapper.render_pass.get());
   };
@@ -149,7 +136,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     /*----------------------------------*/
     /* Update the offscreen framebuffer */
     /*----------------------------------*/
- 
+
     framebuffer_wrapper.transition_layout_to_write(device_wrapper, cmd);
     framebuffer_wrapper.begin_render_pass(cmd);
     cmd.setViewport(
@@ -160,9 +147,9 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     cmd.setScissor(0, {{{0, 0},
                         {gizmo_layer.example_viewport.extent.width,
                          gizmo_layer.example_viewport.extent.height}}});
-  
-    fullscreen_pipeline.bind_pipeline(device.get(), cmd);
 
+    fullscreen_pipeline.bind_pipeline(device.get(), cmd);
+    gizmo_layer.draw(device_wrapper, cmd);
     framebuffer_wrapper.end_render_pass(cmd);
     framebuffer_wrapper.transition_layout_to_read(device_wrapper, cmd);
   };
@@ -178,41 +165,11 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   // Render the GUI
   /////////////////////
   device_wrapper.on_gui = [&] {
+    gizmo_layer.on_imgui_begin();
     static bool show_demo = true;
-    ImGuiWindowFlags window_flags =
-        ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
-    ImGuiViewport *viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->Pos);
-    ImGui::SetNextWindowSize(viewport->Size);
-    ImGui::SetNextWindowViewport(viewport->ID);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
-                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
-    window_flags |=
-        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
-
-    window_flags |= ImGuiWindowFlags_NoBackground;
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    ImGui::SetNextWindowBgAlpha(-1.0f);
-    ImGui::Begin("DockSpace Demo", nullptr, window_flags);
-    ImGui::PopStyleVar();
-    ImGui::PopStyleVar(2);
-    ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
-    ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f),
-                     ImGuiDockNodeFlags_PassthruCentralNode);
-    ImGui::End();
-
-    ImGui::SetNextWindowBgAlpha(-1.0f);
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::Begin("dummy window");
     ImGui::PopStyleVar(3);
     gizmo_layer.on_imgui_viewport();
-
-    // ImGui::Button("Press me");
 
     ImGui::Image(ImGui_ImplVulkan_AddTexture(
                      sampler.get(), framebuffer_wrapper.image_view.get(),
@@ -227,14 +184,13 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
 
     ImGui::End();
     ImGui::Begin("Rendering configuration");
-  
+
     ImGui::End();
     ImGui::Begin("Metrics");
     ImGui::End();
   };
   device_wrapper.window_loop();
 }
-
 
 int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);

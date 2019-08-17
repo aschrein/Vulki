@@ -367,6 +367,100 @@ struct Framebuffer_Wrapper {
   }
 };
 
+struct Storage_Volume_Wrapper {
+  RAW_MOVABLE(Storage_Volume_Wrapper)
+  VmaImage image;
+  vk::UniqueImageView image_view;
+  vk::ImageLayout cur_layout;
+  vk::AccessFlags cur_access_flags;
+  uint32_t width;
+  uint32_t height;
+  uint32_t depth;
+  static Storage_Volume_Wrapper create(Device_Wrapper &device_wrapper,
+                                      uint32_t width, uint32_t height, uint32_t depth,
+                                      vk::Format format) {
+    ASSERT_PANIC(width && height);
+    Storage_Volume_Wrapper out{};
+    out.width = width;
+    out.height = height;
+    out.depth = depth;
+    out.image = device_wrapper.alloc_state->allocate_image(
+        vk::ImageCreateInfo()
+            .setArrayLayers(1)
+            .setExtent(vk::Extent3D(width, height, depth))
+            .setFormat(format)
+            .setMipLevels(1)
+            .setImageType(vk::ImageType::e3D)
+            .setInitialLayout(vk::ImageLayout::eUndefined)
+            .setPQueueFamilyIndices(&device_wrapper.graphics_queue_family_id)
+            .setQueueFamilyIndexCount(1)
+            .setSamples(vk::SampleCountFlagBits::e1)
+            .setSharingMode(vk::SharingMode::eExclusive)
+            .setTiling(vk::ImageTiling::eOptimal)
+            .setUsage(vk::ImageUsageFlagBits::eStorage |
+                      vk::ImageUsageFlagBits::eSampled),
+
+        VMA_MEMORY_USAGE_GPU_ONLY);
+    out.cur_layout = vk::ImageLayout::eUndefined;
+    out.cur_access_flags = vk::AccessFlagBits::eMemoryRead;
+    out.image_view =
+        device_wrapper.device->createImageViewUnique(vk::ImageViewCreateInfo(
+            vk::ImageViewCreateFlags(), out.image.image, vk::ImageViewType::e3D,
+            format,
+            vk::ComponentMapping(
+                vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG,
+                vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA),
+            vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0,
+                                      1)));
+
+    return out;
+  }
+  void transition_layout_to_read(Device_Wrapper &device,
+                                 vk::CommandBuffer &cmd) {
+    cmd.pipelineBarrier(
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::DependencyFlagBits::eByRegion, {}, {},
+        {vk::ImageMemoryBarrier()
+             .setSrcAccessMask(this->cur_access_flags)
+             .setDstAccessMask(vk::AccessFlagBits::eShaderRead)
+             .setOldLayout(this->cur_layout)
+             .setNewLayout(vk::ImageLayout::eShaderReadOnlyOptimal)
+             .setSrcQueueFamilyIndex(device.graphics_queue_family_id)
+             .setDstQueueFamilyIndex(device.graphics_queue_family_id)
+             .setImage(this->image.image)
+             .setSubresourceRange(
+                 vk::ImageSubresourceRange()
+                     .setLayerCount(1)
+                     .setLevelCount(1)
+                     .setAspectMask(vk::ImageAspectFlagBits::eColor))});
+    this->cur_access_flags = vk::AccessFlagBits::eShaderRead;
+    this->cur_layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+  }
+  void transition_layout_to_write(Device_Wrapper &device,
+                                  vk::CommandBuffer &cmd) {
+    cmd.pipelineBarrier(
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::DependencyFlagBits::eByRegion, {}, {},
+        {vk::ImageMemoryBarrier()
+             .setSrcAccessMask(this->cur_access_flags)
+             .setDstAccessMask(vk::AccessFlagBits::eShaderWrite)
+             .setOldLayout(this->cur_layout)
+             .setNewLayout(vk::ImageLayout::eGeneral)
+             .setSrcQueueFamilyIndex(device.graphics_queue_family_id)
+             .setDstQueueFamilyIndex(device.graphics_queue_family_id)
+             .setImage(this->image.image)
+             .setSubresourceRange(
+                 vk::ImageSubresourceRange()
+                     .setLayerCount(1)
+                     .setLevelCount(1)
+                     .setAspectMask(vk::ImageAspectFlagBits::eColor))});
+    this->cur_access_flags = vk::AccessFlagBits::eShaderRead;
+    this->cur_layout = vk::ImageLayout::eGeneral;
+  }
+};
+
 struct Storage_Image_Wrapper {
   RAW_MOVABLE(Storage_Image_Wrapper)
   VmaImage image;
@@ -398,7 +492,7 @@ struct Storage_Image_Wrapper {
             .setUsage(vk::ImageUsageFlagBits::eStorage |
                       vk::ImageUsageFlagBits::eSampled),
 
-        VMA_MEMORY_USAGE_GPU_ONLY);
+        VMA_MEMORY_USAGE_GPU_TO_CPU);
     out.cur_layout = vk::ImageLayout::eUndefined;
     out.cur_access_flags = vk::AccessFlagBits::eMemoryRead;
     out.image_view =
@@ -444,6 +538,30 @@ struct Storage_Image_Wrapper {
         {vk::ImageMemoryBarrier()
              .setSrcAccessMask(this->cur_access_flags)
              .setDstAccessMask(vk::AccessFlagBits::eShaderWrite)
+             .setOldLayout(this->cur_layout)
+             .setNewLayout(vk::ImageLayout::eGeneral)
+             .setSrcQueueFamilyIndex(device.graphics_queue_family_id)
+             .setDstQueueFamilyIndex(device.graphics_queue_family_id)
+             .setImage(this->image.image)
+             .setSubresourceRange(
+                 vk::ImageSubresourceRange()
+                     .setLayerCount(1)
+                     .setLevelCount(1)
+                     .setAspectMask(vk::ImageAspectFlagBits::eColor))});
+    this->cur_access_flags = vk::AccessFlagBits::eShaderRead;
+    this->cur_layout = vk::ImageLayout::eGeneral;
+  }
+  void transition_layout_to_general(Device_Wrapper &device,
+                                    vk::CommandBuffer &cmd) {
+    if (this->cur_layout == vk::ImageLayout::eGeneral)
+      return;
+    cmd.pipelineBarrier(
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::DependencyFlagBits::eByRegion, {}, {},
+        {vk::ImageMemoryBarrier()
+             .setSrcAccessMask(this->cur_access_flags)
+             .setDstAccessMask(vk::AccessFlagBits::eShaderRead)
              .setOldLayout(this->cur_layout)
              .setNewLayout(vk::ImageLayout::eGeneral)
              .setSrcQueueFamilyIndex(device.graphics_queue_family_id)

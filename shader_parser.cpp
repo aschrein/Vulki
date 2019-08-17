@@ -43,11 +43,11 @@ std::vector<Input> preprocess(std::string source_name) {
 
   std::vector<Input> out;
   while (std::getline(infile, line)) {
-    auto f = line.find("//@IN(");
+    auto f = line.find("@IN(");
 
     if (f != std::string::npos) {
       size_t lastindex = line.find_last_of(")");
-      std::string span = line.substr(f + 6, lastindex - f - 6);
+      std::string span = line.substr(f + 4, lastindex - f - 4);
       std::istringstream iss(span);
       u32 location, binding;
       std::string name, type, rate;

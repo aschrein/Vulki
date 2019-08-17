@@ -232,8 +232,7 @@ struct Gizmo_Layer {
   void init_vulkan_state(Device_Wrapper &device_wrapper,
                          vk::RenderPass &render_pass) {
     gizmo_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "shaders/gizmo.vert.glsl",
-        "shaders/gizmo.frag.glsl",
+        device_wrapper, "shaders/gizmo.vert.glsl", "shaders/gizmo.frag.glsl",
         vk::GraphicsPipelineCreateInfo().setRenderPass(render_pass),
         sh_gizmo_vert::Binding,
         {vk::VertexInputBindingDescription()
@@ -262,24 +261,19 @@ struct Gizmo_Layer {
     mat4 tranform = mat4(tangent.x, tangent.y, tangent.z, 0.0f, binormal.x,
                          binormal.y, binormal.z, 0.0f, dir.x, dir.y, dir.z,
                          0.0f, start.x, start.y, start.z, 1.0f);
-//gizmo_drag_state.size * 
+    // gizmo_drag_state.size *
     push_gizmo(Gizmo_Draw_Cmd{
         .type = Gizmo_Geometry_Type::CYLINDER,
         .data = Gizmo_Instance_Data_CPU{
-            .transform =
-                tranform *
-                glm::scale(vec3(0.001f,
-                                0.001f, length)),
+            .transform = tranform * glm::scale(vec3(0.001f, 0.001f, length)),
             .color = color}});
   }
   void push_sphere(vec3 start, float radius, vec3 color) {
     push_gizmo(Gizmo_Draw_Cmd{
         .type = Gizmo_Geometry_Type::SPHERE,
         .data = Gizmo_Instance_Data_CPU{
-            .transform =
-                glm::translate(start) *
-                glm::scale(vec3(radius,
-                                radius, radius)),
+            .transform = glm::translate(start) *
+                         glm::scale(vec3(radius, radius, radius)),
             .color = color}});
   }
   void draw(Device_Wrapper &device_wrapper, vk::CommandBuffer &cmd) {
@@ -479,5 +473,37 @@ struct Gizmo_Layer {
 
       mouse_last_down = ImGui::GetIO().MouseDown[0];
     }
+  }
+  
+  void on_imgui_begin() {
+    ImGuiWindowFlags window_flags =
+        ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+    ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->Pos);
+    ImGui::SetNextWindowSize(viewport->Size);
+    ImGui::SetNextWindowViewport(viewport->ID);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+    window_flags |=
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+
+    window_flags |= ImGuiWindowFlags_NoBackground;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(-1.0f);
+    ImGui::Begin("DockSpace Demo", nullptr, window_flags);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
+    ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
+    ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f),
+                     ImGuiDockNodeFlags_PassthruCentralNode);
+    ImGui::End();
+
+    ImGui::SetNextWindowBgAlpha(-1.0f);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
   }
 };

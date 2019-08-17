@@ -74,3 +74,18 @@ public:
 #define CONCAT_INTERNAL(x,y) x##y
 #define CONCAT(x,y) CONCAT_INTERNAL(x,y)
 #define defer const auto &CONCAT(defer__, __LINE__) = ExitScopeHelp() + [&]()
+
+template <typename T> struct Onetime {
+  Onetime(T lambda) { lambda(); }
+  Onetime(const Onetime &) = delete;
+  Onetime &operator=(Onetime const &) = delete;
+
+private:
+};
+
+class OnetimeHelp {
+public:
+  template <typename T> Onetime<T> operator+(T t) { return t; }
+};
+
+#define onetime static Onetime CONCAT(defer__, __LINE__) = OnetimeHelp() + []()
