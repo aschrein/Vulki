@@ -768,74 +768,74 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
           triangle_id++;
         }
       }
-      {
+      // {
 
-        Bit_Stream ug_bitstream;
-        scene_node.ug.to_bit_table(ug_bitstream);
-        {
-          std::ofstream out("ug_bitstream", std::ios::binary | std::ios::out);
-          out.write((char *)&ug_bitstream.bytes[0], ug_bitstream.bytes.size());
-          std::cout << "[Packing] entropy of ug_bitstream: "
-                    << ug_bitstream.shannon_entropy() << "\n";
-        }
-        {
-          std::ofstream out("ug_runlength4", std::ios::binary | std::ios::out);
-          Bit_Stream runlength;
-          ug_bitstream.run_length_encode4(runlength);
-          out.write((char *)&runlength.bytes[0], runlength.bytes.size());
-          std::cout << "[Packing] entropy of ug_runlength4: "
-                    << runlength.shannon_entropy() << "\n";
-        }
-        {
-          std::ofstream out("ug_runlength8", std::ios::binary | std::ios::out);
-          Bit_Stream runlength;
-          ug_bitstream.run_length_encode8(runlength);
-          Bit_Stream inverserunlength;
-          runlength.decode_run_length8(inverserunlength);
-          for (u32 i = 0; i < inverserunlength.bytes.size() - 1; i++) {
-            if (ug_bitstream.bytes[i] != inverserunlength.bytes[i])
-              std::cout << "[ERROR] @ " << i << "\n";
-          }
+      //   Bit_Stream ug_bitstream;
+      //   scene_node.ug.to_bit_table(ug_bitstream);
+      //   {
+      //     std::ofstream out("ug_bitstream", std::ios::binary | std::ios::out);
+      //     out.write((char *)&ug_bitstream.bytes[0], ug_bitstream.bytes.size());
+      //     std::cout << "[Packing] entropy of ug_bitstream: "
+      //               << ug_bitstream.shannon_entropy() << "\n";
+      //   }
+      //   {
+      //     std::ofstream out("ug_runlength4", std::ios::binary | std::ios::out);
+      //     Bit_Stream runlength;
+      //     ug_bitstream.run_length_encode4(runlength);
+      //     out.write((char *)&runlength.bytes[0], runlength.bytes.size());
+      //     std::cout << "[Packing] entropy of ug_runlength4: "
+      //               << runlength.shannon_entropy() << "\n";
+      //   }
+      //   {
+      //     std::ofstream out("ug_runlength8", std::ios::binary | std::ios::out);
+      //     Bit_Stream runlength;
+      //     ug_bitstream.run_length_encode8(runlength);
+      //     Bit_Stream inverserunlength;
+      //     runlength.decode_run_length8(inverserunlength);
+      //     for (u32 i = 0; i < inverserunlength.bytes.size() - 1; i++) {
+      //       if (ug_bitstream.bytes[i] != inverserunlength.bytes[i])
+      //         std::cout << "[ERROR] @ " << i << "\n";
+      //     }
           
-          std::cout << "[Packing] entropy of ug_runlength8: "
-                    << runlength.shannon_entropy() << "\n";
-          vec3 dim = scene_node.ug.max - scene_node.ug.min;
-          std::cout << "const float SIZE_X = " << dim.x
-                    << "f, SIZE_Y = " << dim.y << "f, SIZE_Z = " << dim.z
-                    << "f;\n";
-          std::cout << "const float BIN_SIZE = " << scene_node.ug.bin_size
-                    << "f;\n";
-          std::cout << "const uint BINS_X = " << scene_node.ug.bin_count.x
-                    << "u, BINS_Y = " << scene_node.ug.bin_count.y
-                    << "u, BINS_Z = " << scene_node.ug.bin_count.z << "u;\n";
-          std::cout << "const uint DATA_SIZE = " << (runlength.bytes.size() + 3) / 4 << "u;\n";        
-          std::cout << "const uint raw_data[] = uint[](";
-          // Assume Little endian
-          u32 *u32_data = (u32 *)&runlength.bytes[0];
-          for (u32 i = 0; i < (runlength.bytes.size() + 3) / 4; i++) {
-            std::cout << u32_data[i] << "u, ";
-          }
-          std::cout << " 0u);\n";
-          out.write((char *)&runlength.bytes[0], runlength.bytes.size());
-        }
-        {
-          std::ofstream out("ug_runlength16", std::ios::binary | std::ios::out);
-          Bit_Stream runlength;
-          ug_bitstream.run_length_encode16(runlength);
-          out.write((char *)&runlength.bytes[0], runlength.bytes.size());
-          std::cout << "[Packing] entropy of ug_runlength16: "
-                    << runlength.shannon_entropy() << "\n";
-        }
-        {
-          std::ofstream out("ug_runlength_zero_chunk",
-                            std::ios::binary | std::ios::out);
-          Bit_Stream runlength;
-          ug_bitstream.run_length_encode_zero_chunk8(runlength);
-          out.write((char *)&runlength.bytes[0], runlength.bytes.size());
-          std::cout << "[Packing] entropy of ug_runlength_zero_chunk: "
-                    << runlength.shannon_entropy() << "\n";
-        }
-      }
+      //     std::cout << "[Packing] entropy of ug_runlength8: "
+      //               << runlength.shannon_entropy() << "\n";
+      //     vec3 dim = scene_node.ug.max - scene_node.ug.min;
+      //     std::cout << "const float SIZE_X = " << dim.x
+      //               << "f, SIZE_Y = " << dim.y << "f, SIZE_Z = " << dim.z
+      //               << "f;\n";
+      //     std::cout << "const float BIN_SIZE = " << scene_node.ug.bin_size
+      //               << "f;\n";
+      //     std::cout << "const uint BINS_X = " << scene_node.ug.bin_count.x
+      //               << "u, BINS_Y = " << scene_node.ug.bin_count.y
+      //               << "u, BINS_Z = " << scene_node.ug.bin_count.z << "u;\n";
+      //     std::cout << "const uint DATA_SIZE = " << (runlength.bytes.size() + 3) / 4 << "u;\n";        
+      //     std::cout << "const uint raw_data[] = uint[](";
+      //     // Assume Little endian
+      //     u32 *u32_data = (u32 *)&runlength.bytes[0];
+      //     for (u32 i = 0; i < (runlength.bytes.size() + 3) / 4; i++) {
+      //       std::cout << u32_data[i] << "u, ";
+      //     }
+      //     std::cout << " 0u);\n";
+      //     out.write((char *)&runlength.bytes[0], runlength.bytes.size());
+      //   }
+      //   {
+      //     std::ofstream out("ug_runlength16", std::ios::binary | std::ios::out);
+      //     Bit_Stream runlength;
+      //     ug_bitstream.run_length_encode16(runlength);
+      //     out.write((char *)&runlength.bytes[0], runlength.bytes.size());
+      //     std::cout << "[Packing] entropy of ug_runlength16: "
+      //               << runlength.shannon_entropy() << "\n";
+      //   }
+      //   {
+      //     std::ofstream out("ug_runlength_zero_chunk",
+      //                       std::ios::binary | std::ios::out);
+      //     Bit_Stream runlength;
+      //     ug_bitstream.run_length_encode_zero_chunk8(runlength);
+      //     out.write((char *)&runlength.bytes[0], runlength.bytes.size());
+      //     std::cout << "[Packing] entropy of ug_runlength_zero_chunk: "
+      //               << runlength.shannon_entropy() << "\n";
+      //   }
+      // }
 
       scene_node.packed_ug = scene_node.ug.pack();
       scene_nodes.emplace_back(std::move(scene_node));
@@ -1513,14 +1513,14 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
           vec3 tangent = glm::normalize(glm::cross(ray_dir, min_col.normal));
           vec3 binormal = glm::cross(min_col.normal, tangent);
           gizmo_layer.push_line(min_col.position, min_col.position + tangent,
-                                min_col.normal, vec3(1.0f, 0.0f, 0.0f));
+                                vec3(1.0f, 0.0f, 0.0f));
           gizmo_layer.push_line(min_col.position, min_col.position + binormal,
-                                min_col.normal, vec3(0.0f, 1.0f, 0.0f));
+                                vec3(0.0f, 1.0f, 0.0f));
           gizmo_layer.push_line(min_col.position,
-                                min_col.position + min_col.normal, tangent,
+                                min_col.position + min_col.normal,
                                 vec3(0.0f, 0.0f, 1.0f));
           gizmo_layer.push_line(min_col.position, path_tracing_camera.pos,
-                                min_col.normal, vec3(1.0f, 1.0f, 0.0f));
+                                 vec3(1.0f, 1.0f, 0.0f));
           mat4 path_tracing_camera_viewproj =
               glm::perspective(float(M_PI) / 2.0f, path_tracing_camera.fov,
                                1.0e-1f, 1.0e3f) *
@@ -1946,7 +1946,7 @@ TEST(graphics, vulkan_graphics_test_volume_rendering) {
                             float(bins_x) * 0.5f;
           if (length(v) > 1.0e-7f)
             gizmo_layer.push_line(origin, origin + 5.0f * (vec3(v.x, v.y, v.z)),
-                                  vec3(0.0f, 0.0f, 1.0f),
+                                 
                                   vec3(1.0f, 0.0f, 0.0f));
         }
         ito(typed_data_y.size() / 4) {
@@ -1961,7 +1961,7 @@ TEST(graphics, vulkan_graphics_test_volume_rendering) {
                             float(bins_x) * 0.5f;
           if (length(v) > 1.0e-7f)
             gizmo_layer.push_line(origin, origin + 5.0f * (vec3(v.x, v.y, v.z)),
-                                  vec3(0.0f, 0.0f, 1.0f),
+                                 
                                   vec3(0.0f, 1.0f, 0.0f));
         }
         ito(typed_data_z.size() / 4) {
@@ -1976,7 +1976,7 @@ TEST(graphics, vulkan_graphics_test_volume_rendering) {
                             float(bins_x) * 0.5f;
           if (length(v) > 1.0e-7f)
             gizmo_layer.push_line(origin, origin + 5.0f * (vec3(v.x, v.y, v.z)),
-                                  vec3(0.0f, 0.0f, 1.0f),
+                                  
                                   vec3(0.0f, 0.0f, 1.0f));
         }
         memcpy(data, &typed_data_x[0], 4 * typed_data_x.size());

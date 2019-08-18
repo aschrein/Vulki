@@ -42,6 +42,28 @@ struct Raw_Mesh_3p32i {
   std::vector<vec3> positions;
   std::vector<u32_face> indices;
 };
+
+struct Image_Raw {
+  u32 width;
+  u32 height;
+  vk::Format format;
+  std::vector<u8> data;
+};
+
+struct Vertex_Attribute {
+  vk::Format format;
+  u32 offset;
+};
+
+using Attribute_Map = std::unordered_map<std::string, Vertex_Attribute>;
+
+struct Raw_Mesh_Opaque {
+  std::vector<u8> attributes;
+  std::vector<u32> indices;
+  std::unordered_map<std::string, Vertex_Input> binding;
+  u32 vertex_stride;
+};
+
 struct vec3_aos8 {
   f32 x[8];
   f32 y[8];
@@ -214,6 +236,40 @@ static Raw_Mesh_3p16i subdivide_cone(uint32_t level, float radius,
   }
   return out;
 }
+
+struct Raw_Mesh_Opaque_Wrapper {
+  RAW_MOVABLE(Raw_Mesh_Opaque_Wrapper)
+  VmaBuffer vertex_buffer;
+  VmaBuffer index_buffer;
+  u32 index_count;
+  static Raw_Mesh_Opaque_Wrapper create(Device_Wrapper &device,
+                                     Raw_Mesh_Opaque const &in) {
+    Raw_Mesh_Opaque_Wrapper out{};
+    out.index_count = in.indices.size();
+    out.vertex_buffer = device.alloc_state->allocate_buffer(
+        vk::BufferCreateInfo()
+            .setSize(in.attributes.size())
+            .setUsage(vk::BufferUsageFlagBits::eVertexBuffer),
+        VMA_MEMORY_USAGE_CPU_TO_GPU);
+    out.index_buffer = device.alloc_state->allocate_buffer(
+        vk::BufferCreateInfo()
+            .setSize(sizeof(u32) * in.indices.size())
+            .setUsage(vk::BufferUsageFlagBits::eIndexBuffer),
+        VMA_MEMORY_USAGE_CPU_TO_GPU);
+    {
+      void *data = out.vertex_buffer.map();
+      memcpy(data, &in.attributes[0],
+             in.attributes.size());
+      out.vertex_buffer.unmap();
+    }
+    {
+      void *data = out.index_buffer.map();
+      memcpy(data, &in.indices[0], sizeof(u32) * in.indices.size());
+      out.index_buffer.unmap();
+    }
+    return out;
+  }
+};
 
 struct Raw_Mesh_Obj_Wrapper {
   RAW_MOVABLE(Raw_Mesh_Obj_Wrapper)

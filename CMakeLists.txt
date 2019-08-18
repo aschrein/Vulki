@@ -52,8 +52,6 @@ add_custom_command(OUTPUT kernel.o
 set(LIBS OpenMP::OpenMP_CXX meshoptimizer tinyobjloader glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util pthread boost_system boost_filesystem boost_thread)
 
 
-
-
 add_executable(shader_parser shader_parser.cpp  ${3RD_SOURCE})
 target_include_directories(shader_parser PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
 target_link_libraries(shader_parser ${Vulkan_LIBRARY} ${LIBS})
@@ -109,6 +107,11 @@ target_link_libraries(test_3 PRIVATE shaderc_shared)
 
 
 if(NOT EXISTS ${CMAKE_BINARY_DIR}/models)
+    execute_process(
+        COMMAND mkdir ${CMAKE_BINARY_DIR}/shaders
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        )
+    file(DOWNLOAD http://themaister.net/sponza-gltf-pbr/sponza-gltf-pbr.zip models/sponza.zip SHOW_PROGRESS)
     file(DOWNLOAD https://casual-effects.com/g3d/data10/research/model/bunny/bunny.zip models/bunny.zip SHOW_PROGRESS)
     file(DOWNLOAD https://casual-effects.com/g3d/data10/research/model/dragon/dragon.zip models/dragon.zip SHOW_PROGRESS)
     file(DOWNLOAD https://static.free3d.com/models/cyctff9ijn-Newmalelow.zip models/Newmalelow.zip SHOW_PROGRESS)

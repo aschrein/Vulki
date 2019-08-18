@@ -3,6 +3,7 @@
 #include <glm/fwd.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <glm/gtx/transform.hpp>
 #include <sparsehash/dense_hash_map>
 using namespace glm;
 
@@ -46,7 +47,7 @@ private:
   static void _init() {
     static bool initialized = false;
     if (initialized)
-    return;
+      return;
     initialized = true;
     _get_component_mng_table().set_empty_key(UINT32_MAX);
     // create a null entity
@@ -87,7 +88,6 @@ private:
   }
 
 public:
-  
   static u32 register_component(char const *name, Component_Factory factory,
                                 Component_Getter getter,
                                 Component_Deleter deleter) {
@@ -105,6 +105,8 @@ public:
     return {0u, index};
   };
   static Entity *get_entity_weak(Entity_ID id) {
+    if (id.index == 0)
+      return nullptr;
     return &get_entity_table()[id.index];
   }
   static void defer_function(std::function<void()> func) {
@@ -161,7 +163,7 @@ public:
 
 struct Entity_StrongPtr {
   RAW_MOVABLE(Entity_StrongPtr);
-  Entity_StrongPtr(Entity_ID eid): eid(eid) {}
+  Entity_StrongPtr(Entity_ID eid) : eid(eid) {}
   Entity *operator->() { return Entity::get_entity_weak(eid); }
   ~Entity_StrongPtr() {
     if (eid.index) {
@@ -190,6 +192,11 @@ struct C_Transform : public Component_Base<C_Transform> {
   vec3 scale;
   vec3 offset;
   quat rotation;
+  mat4 get_matrix() {
+    return glm::translate(offset) *
+           rotation.operator glm::mat<4, 4, glm::f32, glm::packed_highp>() *
+           glm::scale(scale);
+  }
 };
 
 struct C_Name : public Component_Base<C_Name> {

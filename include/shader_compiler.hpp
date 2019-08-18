@@ -100,7 +100,7 @@ struct Shader_Parsed {
   std::unordered_map<std::string, uint32_t> output_slots;
 };
 
-Shader_Parsed create_shader_module(
+static Shader_Parsed create_shader_module(
     vk::Device &device, const std::string &source_name,
     vk::ShaderStageFlagBits stage,
     std::vector<std::pair<std::string, std::string>> const &defines) {

@@ -399,8 +399,7 @@ void Device_Wrapper::window_loop() {
 
     double xpos, ypos;
     glfwGetCursorPos(this->window, &xpos, &ypos);
-    if (glfwGetMouseButton(this->window, 1))
-      break;
+    
     if (this->on_gui)
       this->on_gui();
 

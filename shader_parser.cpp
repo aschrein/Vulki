@@ -312,7 +312,11 @@ void parse_shader(
     // for (auto &item : res.push_constant_buffers) {
     //   pushResource(vk::DescriptorType::eUniformBuffer, item);
     // }
-
+    for (auto &item : res.push_constant_buffers) {
+      printResource(item);
+      // std::cout << "static u32 in_" << item.name << " = " << location << "
+      // {\n";
+    }
     for (auto &item : res.stage_inputs) {
       auto location =
           comp.get_decoration(item.id, spv::Decoration::DecorationLocation);

@@ -89,15 +89,19 @@ struct C_Damage : public Component_Base<C_Damage> {
 REG_COMPONENT(C_Health);
 REG_COMPONENT(C_Damage);
 
+#define CPT(eid, ctype) Entity::get_entity_weak(eid)->get_component<ctype>()
+
 TEST(graphics, ecs_test) {
-  auto e_0_id = Entity::create_entity();
-  Entity_StrongPtr esptr{e_0_id};
+  auto eid = Entity::create_entity();
+  ASSERT_PANIC(1u == eid.index);
+  Entity_StrongPtr esptr{eid};
   esptr->get_or_create_component<C_Transform>();
+  esptr->get_or_create_component<C_Damage>();
   esptr->get_or_create_component<C_Name>()->name = "test name";
-  ASSERT_PANIC(esptr->get_component<C_Name>()->name == "test name");
-  ASSERT_PANIC(esptr->get_component<C_Name>()->owner.index == 1);
-  u32 i = 100;
-  while (esptr->get_or_create_component<C_Damage>()->receive_damage(1)) {
+  ASSERT_PANIC(CPT(eid, C_Name)->name == "test name");
+  ASSERT_PANIC(CPT(eid, C_Name)->owner.index == eid.index);
+  u32 i = 100u;
+  while (CPT(eid, C_Damage)->receive_damage(1)) {
     i--;
     Entity::flush();
   }
@@ -106,24 +110,36 @@ TEST(graphics, ecs_test) {
   ASSERT_PANIC(i == 0u);
 }
 
+TEST(graphics, glb_test) { load_gltf_raw("models/sponza-gltf-pbr/sponza.glb"); }
+
+struct C_Static3DMesh : public Component_Base<C_Static3DMesh> {
+  Raw_Mesh_Opaque opaque_mesh;
+  std::vector<vec3> flat_positions;
+  Raw_Mesh_Opaque_Wrapper model_wrapper;
+  UG ug = UG(1.0f, 1.0f);
+  Packed_UG packed_ug;
+  Oct_Tree octree;
+};
+
+REG_COMPONENT(C_Static3DMesh);
+
 TEST(graphics, vulkan_graphics_test_3d_models) {
   ASSERT_PANIC(sizeof(Component_ID) == 8u);
 
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;
-
   Simple_Monitor simple_monitor("../shaders");
-
   Gizmo_Layer gizmo_layer{};
-
-  ////////////////////////
-  // Path tracing state //
-  ////////////////////////
   Random_Factory frand;
-
   Framebuffer_Wrapper framebuffer_wrapper{};
   Pipeline_Wrapper fullscreen_pipeline;
-
+  Pipeline_Wrapper gltf_pipeline;
+  auto test_model = load_gltf_raw("models/sponza-gltf-pbr/sponza.glb");
+  std::vector<Raw_Mesh_Opaque_Wrapper> test_model_wrapper;
+  for (auto &mesh : test_model.meshes) {
+    test_model_wrapper.emplace_back(
+        Raw_Mesh_Opaque_Wrapper::create(device_wrapper, mesh));
+  }
   auto recreate_resources = [&] {
     framebuffer_wrapper = Framebuffer_Wrapper::create(
         device_wrapper, gizmo_layer.example_viewport.extent.width,
@@ -131,14 +147,27 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         vk::Format::eR32G32B32A32Sfloat);
 
     fullscreen_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "../shaders/tests/bufferless_triangle.vert.glsl",
-        "../shaders/tests/simple_1.frag.glsl",
+        device_wrapper, "shaders/tests/bufferless_triangle.vert.glsl",
+        "shaders/tests/simple_1.frag.glsl",
         vk::GraphicsPipelineCreateInfo()
             .setPInputAssemblyState(
                 &vk::PipelineInputAssemblyStateCreateInfo().setTopology(
                     vk::PrimitiveTopology::eTriangleList))
             .setRenderPass(framebuffer_wrapper.render_pass.get()),
         {}, {}, {});
+    gltf_pipeline = Pipeline_Wrapper::create_graphics(
+        device_wrapper, "shaders/gltf.vert.glsl", "shaders/gltf.frag.glsl",
+        vk::GraphicsPipelineCreateInfo()
+            .setPInputAssemblyState(
+                &vk::PipelineInputAssemblyStateCreateInfo().setTopology(
+                    vk::PrimitiveTopology::eTriangleList))
+            .setRenderPass(framebuffer_wrapper.render_pass.get()),
+        test_model.meshes[0].binding,
+        {vk::VertexInputBindingDescription()
+             .setBinding(0)
+             .setStride(test_model.meshes[0].vertex_stride)
+             .setInputRate(vk::VertexInputRate::eVertex)},
+        {}, sizeof(sh_gltf_vert::uniforms));
 
     gizmo_layer.init_vulkan_state(device_wrapper,
                                   framebuffer_wrapper.render_pass.get());
@@ -190,7 +219,26 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     cmd.setScissor(0, {{{0, 0},
                         {gizmo_layer.example_viewport.extent.width,
                          gizmo_layer.example_viewport.extent.height}}});
-
+    {
+      gltf_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
+      sh_gltf_vert::uniforms tmp_pc{};
+      tmp_pc.proj = gizmo_layer.camera_proj;
+      float scale = 0.01f;
+      tmp_pc.view = gizmo_layer.camera_view * mat4(
+        scale, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, scale, 0.0f,
+        0.0f, scale, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f
+      );
+      gltf_pipeline.push_constants(cmd, &tmp_pc,
+                                   sizeof(sh_gltf_vert::uniforms));
+      for (auto &wrap : test_model_wrapper) {
+        cmd.bindVertexBuffers(0, {wrap.vertex_buffer.buffer}, {0});
+        cmd.bindIndexBuffer(wrap.index_buffer.buffer, 0,
+                            vk::IndexType::eUint32);
+        cmd.drawIndexed(wrap.index_count, 1, 0, 0, 0);
+      }
+    }
     fullscreen_pipeline.bind_pipeline(device.get(), cmd);
     gizmo_layer.draw(device_wrapper, cmd);
     framebuffer_wrapper.end_render_pass(cmd);
@@ -220,17 +268,58 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                  ImVec2(gizmo_layer.example_viewport.extent.width,
                         gizmo_layer.example_viewport.extent.height),
                  ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+    static int selected_fish = -1;
+    const char *names[] = {"Bream", "Haddock", "Mackerel", "Pollock",
+                           "Tilefish"};
+    static bool toggles[] = {true, false, false, false, false};
 
+    ImGui::OpenPopupOnItemClick("my_toggle_popup", 1);
+    if (ImGui::BeginPopup("my_toggle_popup")) {
+      for (int i = 0; i < IM_ARRAYSIZE(names); i++)
+        ImGui::MenuItem(names[i], "", &toggles[i]);
+      if (ImGui::BeginMenu("Sub-menu")) {
+        ImGui::MenuItem("Click me");
+        ImGui::EndMenu();
+      }
+
+      ImGui::Separator();
+      ImGui::Text("Tooltip here");
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("I am a tooltip over a popup");
+
+      if (ImGui::Button("Stacked Popup"))
+        ImGui::OpenPopup("another popup");
+      if (ImGui::BeginPopup("another popup")) {
+        for (int i = 0; i < IM_ARRAYSIZE(names); i++)
+          ImGui::MenuItem(names[i], "", &toggles[i]);
+        if (ImGui::BeginMenu("Sub-menu")) {
+          ImGui::MenuItem("Click me");
+          if (ImGui::Button("Stacked Popup"))
+            ImGui::OpenPopup("another popup");
+          if (ImGui::BeginPopup("another popup")) {
+            ImGui::Text("I am the last one here.");
+            ImGui::EndPopup();
+          }
+          ImGui::EndMenu();
+        }
+        ImGui::EndPopup();
+      }
+      ImGui::EndPopup();
+    }
     ImGui::End();
     ImGui::ShowDemoWindow(&show_demo);
     ImGui::Begin("Simulation parameters");
 
     ImGui::End();
     ImGui::Begin("Rendering configuration");
-
+    gizmo_layer.push_line(vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, 1.0f),
+                          vec3(0.0f, 0.0f, 1.0f));
     ImGui::End();
     ImGui::Begin("Metrics");
     ImGui::End();
+    if (ImGui::GetIO().KeysDown[GLFW_KEY_ESCAPE]) {
+      std::exit(0);
+    }
   };
   device_wrapper.window_loop();
 }
