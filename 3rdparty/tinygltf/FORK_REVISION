@@ -1,0 +1,8 @@
+commit 2f044e77f1459165d4a74b8e4e002ad3d333d0bd
+Merge: 6591ba4 af5a5ef
+Author: Syoyo Fujita <syoyo@lighttransport.com>
+Date:   Sat Aug 17 01:09:34 2019 +0900
+
+    Merge pull request #191 from Selmar/animation_extension_properties
+    
+    Animation extension properties
