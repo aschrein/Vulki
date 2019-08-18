@@ -26,9 +26,32 @@ struct Component_Mng {
   Component_Deleter deleter;
 };
 
+struct Component_Info {
+  Entity_ID owner;
+  bool dead = true;
+};
+
+template <typename T> struct Component_Base : public Component_Info {
+  static u32 ID;
+  static char const *NAME;
+  static std::vector<T> &table() {
+    static std::vector<T> _table;
+    return _table;
+  }
+};
+
 class Entity {
 private:
   // ECS methods
+  static void _init() {
+    static bool initialized = false;
+    if (initialized)
+    return;
+    initialized = true;
+    _get_component_mng_table().set_empty_key(UINT32_MAX);
+    // create a null entity
+    create_entity();
+  }
   static u32 _allocate_type_id() {
     static u32 counter = 0;
     return counter++;
@@ -36,7 +59,7 @@ private:
   static google::dense_hash_map<u32, Component_Mng> &
   _get_component_mng_table() {
     static google::dense_hash_map<u32, Component_Mng> table;
-
+    _init();
     return table;
   }
   Component_ID get_component(u32 type) {
@@ -58,12 +81,13 @@ private:
     return table;
   }
 
-public:
-  static void _init() {
-    _get_component_mng_table().set_empty_key(UINT32_MAX);
-    // create a null entity
-    create_entity();
+  static std::vector<std::function<void()>> &get_defer_table() {
+    static std::vector<std::function<void()>> table;
+    return table;
   }
+
+public:
+  
   static u32 register_component(char const *name, Component_Factory factory,
                                 Component_Getter getter,
                                 Component_Deleter deleter) {
@@ -74,16 +98,35 @@ public:
     return id;
   }
   static Entity_ID create_entity() {
+    u32 index = get_entity_table().size();
     get_entity_table().push_back(Entity{});
-    get_entity_table()[get_entity_table().size() - 1].refcnt = 1;
-    return {0u, get_entity_table().size() - 1};
+    get_entity_table()[index].refcnt = 1;
+    get_entity_table()[index].id = {0u, index};
+    return {0u, index};
   };
   static Entity *get_entity_weak(Entity_ID id) {
     return &get_entity_table()[id.index];
   }
-
+  static void defer_function(std::function<void()> func) {
+    get_defer_table().push_back(func);
+  }
+  static void flush() {
+    for (auto func : get_defer_table()) {
+      func();
+    }
+    get_defer_table().clear();
+  }
+  // Methods
   void acquire() { refcnt++; }
-  void release() { refcnt--; }
+  void release() {
+    refcnt--;
+    if (refcnt == 0) {
+      for (auto cid : components) {
+        get_component_ptr<Component_Info>(id, cid)->dead = true;
+      }
+      components.clear();
+    }
+  }
   void check_refcnt() {
     if (refcnt == 0) {
       ASSERT_PANIC(false && "release of zero refcount entity");
@@ -116,15 +159,19 @@ public:
   u32 refcnt;
 };
 
-template <typename T> struct Component_Base {
-  static u32 ID;
-  static char const *NAME;
-  static std::vector<T> &table() {
-    static std::vector<T> _table;
-    return _table;
+struct Entity_StrongPtr {
+  RAW_MOVABLE(Entity_StrongPtr);
+  Entity_StrongPtr(Entity_ID eid): eid(eid) {}
+  Entity *operator->() { return Entity::get_entity_weak(eid); }
+  ~Entity_StrongPtr() {
+    if (eid.index) {
+      auto e = Entity::get_entity_weak(eid);
+      e->release();
+    }
   }
-  Entity_ID owner;
-  bool dead = true;
+
+public:
+  Entity_ID eid;
 };
 
 #define REG_COMPONENT(CLASS)                                                   \
@@ -137,7 +184,7 @@ template <typename T> struct Component_Base {
       },                                                                       \
       [](u32 id) { return &CLASS::table()[id]; },                              \
       [](u32 id) { CLASS::table()[id].dead = true; });                         \
-  template <> char const * Component_Base<CLASS>::NAME = #CLASS;
+  template <> char const *Component_Base<CLASS>::NAME = #CLASS;
 
 struct C_Transform : public Component_Base<C_Transform> {
   vec3 scale;

@@ -54,13 +54,56 @@ struct JobPayload {
 
 using WorkPayload = std::vector<JobPayload>;
 
+struct C_Health : public Component_Base<C_Health> {
+  u32 health = 100;
+};
+
+struct C_Damage : public Component_Base<C_Damage> {
+  bool receive_damage(u32 amount) {
+    auto e = Entity::get_entity_weak(owner);
+    auto health = e->get_component<C_Health>();
+    if (health) {
+
+      auto dealt = amount > health->health ? health->health : amount;
+      auto rest = amount > health->health ? 0u : health->health - amount;
+      // std::cout << dealt << " Damage dealt\n";
+      health->health = rest;
+      if (health->health == 0u) {
+        // std::cout << owner.index << " Entity is dead\n";
+        return false;
+      }
+      return health->health != 0u;
+    } else {
+      // std::cout << "No health found\n";
+      auto owner = this->owner;
+      Entity::defer_function([owner]() {
+        auto ent = Entity::get_entity_weak(owner);
+        ent->get_or_create_component<C_Health>();
+      });
+      return true;
+    }
+    return false;
+  }
+};
+
+REG_COMPONENT(C_Health);
+REG_COMPONENT(C_Damage);
+
 TEST(graphics, ecs_test) {
   auto e_0_id = Entity::create_entity();
-  auto e_0_p = Entity::get_entity_weak(e_0_id);
-  e_0_p->get_or_create_component<C_Transform>();
-  e_0_p->get_or_create_component<C_Name>()->name = "test name";
-  std::cout << e_0_p->get_component<C_Name>()->name << "\n";
-  std::cout << e_0_p->get_component<C_Name>()->owner.index << "\n";
+  Entity_StrongPtr esptr{e_0_id};
+  esptr->get_or_create_component<C_Transform>();
+  esptr->get_or_create_component<C_Name>()->name = "test name";
+  ASSERT_PANIC(esptr->get_component<C_Name>()->name == "test name");
+  ASSERT_PANIC(esptr->get_component<C_Name>()->owner.index == 1);
+  u32 i = 100;
+  while (esptr->get_or_create_component<C_Damage>()->receive_damage(1)) {
+    i--;
+    Entity::flush();
+  }
+  ASSERT_PANIC(esptr->get_component<C_Health>());
+  ASSERT_PANIC(esptr->get_component<C_Health>()->health == 0u);
+  ASSERT_PANIC(i == 0u);
 }
 
 TEST(graphics, vulkan_graphics_test_3d_models) {

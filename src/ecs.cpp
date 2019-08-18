@@ -1,7 +1,7 @@
 #include "../include/ecs.hpp"
 
 onetime {
-  Entity::_init();
+  //Entity::_init();
   //std::cout << "[INIT]\n";
 };
 
