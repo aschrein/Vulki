@@ -236,7 +236,11 @@ struct Gizmo_Layer {
                          vk::RenderPass &render_pass) {
     gizmo_pipeline = Pipeline_Wrapper::create_graphics(
         device_wrapper, "shaders/gizmo.vert.glsl", "shaders/gizmo.frag.glsl",
-        vk::GraphicsPipelineCreateInfo().setRenderPass(render_pass),
+        vk::GraphicsPipelineCreateInfo()
+            // .setPDepthStencilState(&vk::PipelineDepthStencilStateCreateInfo()
+            //                             .setDepthTestEnable(false)
+            //                             .setDepthWriteEnable(false))
+            .setRenderPass(render_pass),
         sh_gizmo_vert::Binding,
         {vk::VertexInputBindingDescription()
              .setBinding(0)
@@ -300,7 +304,6 @@ struct Gizmo_Layer {
             .color = color}});
   }
   void draw(Device_Wrapper &device_wrapper, vk::CommandBuffer &cmd) {
-
     gizmo_drag_state.push_draw(cmds);
     if (cmds.size()) {
       std::vector<Gizmo_Draw_Cmd> cylinders;

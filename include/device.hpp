@@ -270,6 +270,20 @@ struct Framebuffer_Wrapper {
             .setRenderPass(out.render_pass.get()));
     return out;
   }
+  void clear_depth(vk::CommandBuffer &cmd) {
+    // cmd.clearAttachments({vk::ClearAttachment()
+    //                             .
+    //                           .setAspectMask(vk::ImageAspectFlagBits::eDepth)
+    //                           .setClearValue(vk::ClearValue().setDepthStencil(
+    //                               vk::ClearDepthStencilValue(1.0f)))
+
+    //                      },
+    //                      {vk::Rect2D({0, 0}, {width, height})});
+    cmd.clearDepthStencilImage(depth_image.image,
+                               vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                               vk::ClearDepthStencilValue(1.0f),
+                               {vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth,0u, 1u, 0u, 1u)});
+  }
   void begin_render_pass(vk::CommandBuffer &cmd) {
     vk::ClearValue clear_value[] = {
         vk::ClearValue(vk::ClearColorValue().setFloat32({0.0, 0.0, 0.0, 1.0})),
@@ -288,15 +302,6 @@ struct Framebuffer_Wrapper {
                                 },
                                 {width, height})),
                         vk::SubpassContents::eInline);
-    // cmd.clearAttachments(
-    //     {vk::ClearAttachment()
-    //          .setAspectMask(vk::ImageAspectFlagBits::eColor)
-    //          .setClearValue(vk::ClearValue().setColor(
-    //              vk::ClearColorValue().setFloat32({0.0f, 0.1f, 0.0f, 1.0f})
-
-    //                  ))},
-    //     {vk::Rect2D({0, 0}, {example_viewport.extent.width,
-    //                          example_viewport.extent.height})});
   }
   void end_render_pass(vk::CommandBuffer &cmd) { cmd.endRenderPass(); }
   void transition_layout_to_read(Device_Wrapper &device,
@@ -377,8 +382,8 @@ struct Storage_Volume_Wrapper {
   uint32_t height;
   uint32_t depth;
   static Storage_Volume_Wrapper create(Device_Wrapper &device_wrapper,
-                                      uint32_t width, uint32_t height, uint32_t depth,
-                                      vk::Format format) {
+                                       uint32_t width, uint32_t height,
+                                       uint32_t depth, vk::Format format) {
     ASSERT_PANIC(width && height);
     Storage_Volume_Wrapper out{};
     out.width = width;

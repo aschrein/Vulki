@@ -240,6 +240,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       }
     }
     fullscreen_pipeline.bind_pipeline(device.get(), cmd);
+    framebuffer_wrapper.clear_depth(cmd);
     gizmo_layer.draw(device_wrapper, cmd);
     framebuffer_wrapper.end_render_pass(cmd);
     framebuffer_wrapper.transition_layout_to_read(device_wrapper, cmd);
