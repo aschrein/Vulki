@@ -305,7 +305,7 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
   vk::DescriptorPoolSize aPoolSizes[] = {
       {vk::DescriptorType::eSampler, 1000},
       {vk::DescriptorType::eCombinedImageSampler, 1000},
-      {vk::DescriptorType::eSampledImage, 1000},
+      {vk::DescriptorType::eSampledImage, 4096},
       {vk::DescriptorType::eStorageImage, 1000},
       {vk::DescriptorType::eUniformTexelBuffer, 1000},
       {vk::DescriptorType::eStorageTexelBuffer, 1000},
@@ -316,8 +316,10 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
       {vk::DescriptorType::eInputAttachment, 1000}};
   out.descset_pool =
       out.device->createDescriptorPoolUnique(vk::DescriptorPoolCreateInfo(
-          vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 1000 * 11, 11,
-          aPoolSizes));
+          vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet
+          //|vk::DescriptorPoolCreateFlagBits::eUpdateAfterBindEXT
+          ,
+          1000 * 11, 11, aPoolSizes));
 
   out.graphcis_cmd_pool =
       out.device->createCommandPoolUnique(vk::CommandPoolCreateInfo(
@@ -340,7 +342,9 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
   out.timestamp.ns_per_tick = props.limits.timestampPeriod;
   auto queue_props = out.physical_device.getQueueFamilyProperties();
   out.timestamp.valid_bits =
-      (u64(1) << u64(queue_props[out.graphics_queue_family_id].timestampValidBits)) - 1;
+      (u64(1) << u64(
+           queue_props[out.graphics_queue_family_id].timestampValidBits)) -
+      1;
   return out;
 }
 
@@ -399,7 +403,7 @@ void Device_Wrapper::window_loop() {
 
     double xpos, ypos;
     glfwGetCursorPos(this->window, &xpos, &ypos);
-    
+
     if (this->on_gui)
       this->on_gui();
 

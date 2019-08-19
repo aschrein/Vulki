@@ -169,7 +169,7 @@ GLFT_Model load_gltf_raw(std::string const &filename) {
     for (auto &primitive : mesh.primitives) {
       Raw_Mesh_Opaque opaque_mesh;
       auto write_bytes = [&](u8 *src, size_t size) {
-        //f32 *debug = (f32*)src;
+        // f32 *debug = (f32*)src;
         ito(size) opaque_mesh.attributes.push_back(src[i]);
       };
       u32 offset_counter = 0u;
@@ -254,8 +254,55 @@ GLFT_Model load_gltf_raw(std::string const &filename) {
       }
       ASSERT_PANIC(opaque_mesh.attributes.size() ==
                    offset_counter * vertex_count);
-
+      PBR_Material material{.normal_id = -1,
+                            .albedo_id = -1,
+                            .ao_id = -1,
+                            .metalness_roughness_id = -1};
+      {
+        ASSERT_PANIC(primitive.material >= 0u);
+        auto mat = model.materials[primitive.material];
+        auto normal_map_id = mat.normalTexture.index;
+        auto albedo_map_id = mat.pbrMetallicRoughness.baseColorTexture.index;
+        auto ao_map_id = mat.occlusionTexture.index;
+        auto metalness_map_id =
+            mat.pbrMetallicRoughness.metallicRoughnessTexture.index;
+        auto convert_image = [&model](int texture_id) {
+          auto image_id = model.textures[texture_id].source;
+          ASSERT_PANIC(image_id >= 0);
+          auto &image = model.images[image_id];
+          Image_Raw raw_image;
+          raw_image.height = image.height;
+          raw_image.width = image.width;
+          raw_image.data = image.image;
+          switch (image.pixel_type) {
+          case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+            ASSERT_PANIC(image.component == 4);
+            raw_image.format = vk::Format::eR8G8B8A8Unorm;
+            break;
+          default:
+            ASSERT_PANIC(false && "unknown image format");
+          }
+          return raw_image;
+        };
+        if (normal_map_id >= 0) {
+          out.images.push_back(convert_image(normal_map_id));
+          material.normal_id = i32(out.images.size()) - 1;
+        }
+        if (albedo_map_id >= 0) {
+          out.images.push_back(convert_image(albedo_map_id));
+          material.albedo_id = i32(out.images.size()) - 1;
+        }
+        if (ao_map_id >= 0) {
+          out.images.push_back(convert_image(ao_map_id));
+          material.ao_id = i32(out.images.size()) - 1;
+        }
+        if (metalness_map_id >= 0) {
+          out.images.push_back(convert_image(metalness_map_id));
+          material.metalness_roughness_id = i32(out.images.size()) - 1;
+        }
+      }
       out.meshes.push_back(opaque_mesh);
+      out.materials.push_back(material);
     }
   }
   return out;

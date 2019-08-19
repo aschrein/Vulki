@@ -6,12 +6,14 @@ std::vector<Raw_Mesh_Obj> load_obj_raw(char const *filename);
 
 // We are gonna use one simplified material schema for everything
 struct PBR_Material {
-  // R8G8
-  i32 normal_map;
   // R8G8B8A8
-  i32 albedo_ao_map;
-  // R8G8
-  i32 metalness_roughness_map;
+  i32 normal_id;
+  // R8G8B8A8
+  i32 albedo_id;
+  // R8G8B8A8
+  i32 ao_id;
+  // R8G8B8A8
+  i32 metalness_roughness_id;
 };
 
 // To make things simple we use one format of meshes

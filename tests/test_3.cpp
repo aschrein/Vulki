@@ -140,6 +140,15 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     test_model_wrapper.emplace_back(
         Raw_Mesh_Opaque_Wrapper::create(device_wrapper, mesh));
   }
+  std::vector<CPU_Image> test_model_textures;
+  for (auto &image : test_model.images) {
+    CPU_Image cpu_image = CPU_Image::create(device_wrapper, image.width,
+                                            image.height, image.format);
+    void *data = cpu_image.image.map();
+    memcpy(data, &image.data[0], image.width * image.height * 4u);
+    cpu_image.image.unmap();
+    test_model_textures.emplace_back(std::move(cpu_image));
+  }
   auto recreate_resources = [&] {
     framebuffer_wrapper = Framebuffer_Wrapper::create(
         device_wrapper, gizmo_layer.example_viewport.extent.width,
@@ -167,13 +176,18 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
              .setBinding(0)
              .setStride(test_model.meshes[0].vertex_stride)
              .setInputRate(vk::VertexInputRate::eVertex)},
-        {}, sizeof(sh_gltf_vert::uniforms));
+        {}, sizeof(sh_gltf_frag::push_constant));
 
     gizmo_layer.init_vulkan_state(device_wrapper,
                                   framebuffer_wrapper.render_pass.get());
   };
   Alloc_State *alloc_state = device_wrapper.alloc_state.get();
-
+  VmaBuffer gltf_ubo_buffer = alloc_state->allocate_buffer(
+      vk::BufferCreateInfo()
+          .setSize(sizeof(sh_gltf_vert::UBO))
+          .setUsage(vk::BufferUsageFlagBits::eUniformBuffer |
+                    vk::BufferUsageFlagBits::eTransferDst),
+      VMA_MEMORY_USAGE_CPU_TO_GPU);
   // Shared sampler
   vk::UniqueSampler sampler =
       device->createSamplerUnique(vk::SamplerCreateInfo().setMaxLod(1));
@@ -188,6 +202,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     auto &cmd = device_wrapper.graphics_cmds[0].get();
     cmd.reset(vk::CommandBufferResetFlagBits::eReleaseResources);
     cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
+    for (auto &image : test_model_textures)
+      image.transition_layout_to_sampled(device_wrapper, cmd);
     cmd.end();
     device_wrapper.sumbit_and_flush(cmd);
   }
@@ -204,12 +220,24 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
             gizmo_layer.example_viewport.extent.height) {
       recreate_resources();
     }
-
+    {
+      void *data = gltf_ubo_buffer.map();
+      sh_gltf_vert::UBO tmp_pc{};
+      tmp_pc.proj = gizmo_layer.camera_proj;
+      float scale = 0.01f;
+      tmp_pc.view = gizmo_layer.camera_view *
+                    mat4(scale, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, scale, 0.0f, 0.0f,
+                         scale, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+      memcpy(data, &tmp_pc, sizeof(tmp_pc));
+      gltf_ubo_buffer.unmap();
+    }
     /*----------------------------------*/
     /* Update the offscreen framebuffer */
     /*----------------------------------*/
 
     framebuffer_wrapper.transition_layout_to_write(device_wrapper, cmd);
+    framebuffer_wrapper.clear_depth(device_wrapper, cmd);
+    framebuffer_wrapper.clear_color(device_wrapper, cmd);
     framebuffer_wrapper.begin_render_pass(cmd);
     cmd.setViewport(
         0,
@@ -220,27 +248,40 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                         {gizmo_layer.example_viewport.extent.width,
                          gizmo_layer.example_viewport.extent.height}}});
     {
+      // Update descriptor sets
+      ito(test_model_textures.size()) {
+        gltf_pipeline.update_sampled_image_descriptor(
+            device_wrapper.device.get(), "textures",
+            test_model_textures[i].image_view.get(), sampler.get(), i);
+      }
+      gltf_pipeline.update_descriptor(
+          device.get(), "UBO", gltf_ubo_buffer.buffer, 0,
+          sizeof(sh_gltf_vert::UBO), vk::DescriptorType::eUniformBuffer);
       gltf_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
-      sh_gltf_vert::uniforms tmp_pc{};
-      tmp_pc.proj = gizmo_layer.camera_proj;
-      float scale = 0.01f;
-      tmp_pc.view = gizmo_layer.camera_view * mat4(
-        scale, 0.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, scale, 0.0f,
-        0.0f, scale, 0.0f, 0.0f,
-        0.0f, 0.0f, 0.0f, 1.0f
-      );
-      gltf_pipeline.push_constants(cmd, &tmp_pc,
-                                   sizeof(sh_gltf_vert::uniforms));
-      for (auto &wrap : test_model_wrapper) {
+
+      ito(test_model.meshes.size()) {
+        auto &wrap = test_model_wrapper[i];
+        auto &material = test_model.materials[i];
+        // for (auto &wrap : test_model_wrapper) {
         cmd.bindVertexBuffers(0, {wrap.vertex_buffer.buffer}, {0});
         cmd.bindIndexBuffer(wrap.index_buffer.buffer, 0,
                             vk::IndexType::eUint32);
+        if (material.albedo_id >= 0) {
+          sh_gltf_frag::push_constant tmp_pc;
+          tmp_pc.albedo_id = material.albedo_id;
+          gltf_pipeline.push_constants(cmd, &tmp_pc,
+                                       sizeof(sh_gltf_frag::push_constant));
+        }
         cmd.drawIndexed(wrap.index_count, 1, 0, 0, 0);
       }
     }
     fullscreen_pipeline.bind_pipeline(device.get(), cmd);
-    framebuffer_wrapper.clear_depth(cmd);
+
+    framebuffer_wrapper.end_render_pass(cmd);
+    // Gizmo pass
+    framebuffer_wrapper.clear_depth(device_wrapper, cmd);
+
+    framebuffer_wrapper.begin_render_pass(cmd);
     gizmo_layer.draw(device_wrapper, cmd);
     framebuffer_wrapper.end_render_pass(cmd);
     framebuffer_wrapper.transition_layout_to_read(device_wrapper, cmd);

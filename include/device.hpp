@@ -171,6 +171,7 @@ struct Framebuffer_Wrapper {
             .setSharingMode(vk::SharingMode::eExclusive)
             .setTiling(vk::ImageTiling::eOptimal)
             .setUsage(vk::ImageUsageFlagBits::eColorAttachment |
+                      vk::ImageUsageFlagBits::eTransferDst |
                       vk::ImageUsageFlagBits::eSampled),
         VMA_MEMORY_USAGE_GPU_ONLY);
     out.depth_image = device_wrapper.alloc_state->allocate_image(
@@ -186,7 +187,8 @@ struct Framebuffer_Wrapper {
             .setSamples(vk::SampleCountFlagBits::e1)
             .setSharingMode(vk::SharingMode::eExclusive)
             .setTiling(vk::ImageTiling::eOptimal)
-            .setUsage(vk::ImageUsageFlagBits::eDepthStencilAttachment),
+            .setUsage(vk::ImageUsageFlagBits::eDepthStencilAttachment |
+                      vk::ImageUsageFlagBits::eTransferDst),
         VMA_MEMORY_USAGE_GPU_ONLY);
     out.cur_layout = vk::ImageLayout::eUndefined;
     out.cur_access_flags = vk::AccessFlagBits::eMemoryRead;
@@ -211,18 +213,18 @@ struct Framebuffer_Wrapper {
     VkAttachmentDescription attachment = {};
     attachment.format = VkFormat(format);
     attachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     VkAttachmentDescription depth_attachment_desc = {};
     depth_attachment_desc.format = VkFormat(vk::Format::eD32Sfloat);
     depth_attachment_desc.samples = VK_SAMPLE_COUNT_1_BIT;
-    depth_attachment_desc.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_attachment_desc.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     depth_attachment_desc.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    depth_attachment_desc.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_attachment_desc.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     depth_attachment_desc.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     depth_attachment_desc.initialLayout =
         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -270,7 +272,48 @@ struct Framebuffer_Wrapper {
             .setRenderPass(out.render_pass.get()));
     return out;
   }
-  void clear_depth(vk::CommandBuffer &cmd) {
+  void clear_color(Device_Wrapper &device, vk::CommandBuffer &cmd) {
+    cmd.pipelineBarrier(
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::DependencyFlagBits::eByRegion, {}, {},
+        {vk::ImageMemoryBarrier()
+             .setSrcAccessMask(vk::AccessFlagBits::eColorAttachmentWrite)
+             .setDstAccessMask(vk::AccessFlagBits::eColorAttachmentWrite)
+             .setOldLayout(vk::ImageLayout::eColorAttachmentOptimal)
+             .setNewLayout(vk::ImageLayout::eTransferDstOptimal)
+             .setSrcQueueFamilyIndex(device.graphics_queue_family_id)
+             .setDstQueueFamilyIndex(device.graphics_queue_family_id)
+             .setImage(this->image.image)
+             .setSubresourceRange(
+                 vk::ImageSubresourceRange()
+                     .setLayerCount(1)
+                     .setLevelCount(1)
+                     .setAspectMask(vk::ImageAspectFlagBits::eColor))});
+    cmd.clearColorImage(
+        image.image, vk::ImageLayout::eTransferDstOptimal,
+        vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f}),
+        {vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0u, 1u, 0u,
+                                   1u)});
+    cmd.pipelineBarrier(
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::DependencyFlagBits::eByRegion, {}, {},
+        {vk::ImageMemoryBarrier()
+             .setSrcAccessMask(vk::AccessFlagBits::eColorAttachmentWrite)
+             .setDstAccessMask(vk::AccessFlagBits::eColorAttachmentWrite)
+             .setNewLayout(vk::ImageLayout::eColorAttachmentOptimal)
+             .setOldLayout(vk::ImageLayout::eTransferDstOptimal)
+             .setSrcQueueFamilyIndex(device.graphics_queue_family_id)
+             .setDstQueueFamilyIndex(device.graphics_queue_family_id)
+             .setImage(this->image.image)
+             .setSubresourceRange(
+                 vk::ImageSubresourceRange()
+                     .setLayerCount(1)
+                     .setLevelCount(1)
+                     .setAspectMask(vk::ImageAspectFlagBits::eColor))});
+  }
+  void clear_depth(Device_Wrapper &device, vk::CommandBuffer &cmd) {
     // cmd.clearAttachments({vk::ClearAttachment()
     //                             .
     //                           .setAspectMask(vk::ImageAspectFlagBits::eDepth)
@@ -279,10 +322,45 @@ struct Framebuffer_Wrapper {
 
     //                      },
     //                      {vk::Rect2D({0, 0}, {width, height})});
-    cmd.clearDepthStencilImage(depth_image.image,
-                               vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                               vk::ClearDepthStencilValue(1.0f),
-                               {vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth,0u, 1u, 0u, 1u)});
+    cmd.pipelineBarrier(
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::DependencyFlagBits::eByRegion, {}, {},
+        {vk::ImageMemoryBarrier()
+             .setSrcAccessMask(this->cur_access_flags)
+             .setDstAccessMask(vk::AccessFlagBits::eDepthStencilAttachmentWrite)
+             .setOldLayout(vk::ImageLayout::eDepthStencilAttachmentOptimal)
+             .setNewLayout(vk::ImageLayout::eTransferDstOptimal)
+             .setSrcQueueFamilyIndex(device.graphics_queue_family_id)
+             .setDstQueueFamilyIndex(device.graphics_queue_family_id)
+             .setImage(this->depth_image.image)
+             .setSubresourceRange(
+                 vk::ImageSubresourceRange()
+                     .setLayerCount(1)
+                     .setLevelCount(1)
+                     .setAspectMask(vk::ImageAspectFlagBits::eDepth))});
+    cmd.clearDepthStencilImage(
+        depth_image.image, vk::ImageLayout::eTransferDstOptimal,
+        vk::ClearDepthStencilValue(1.0f),
+        {vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0u, 1u, 0u,
+                                   1u)});
+    cmd.pipelineBarrier(
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::DependencyFlagBits::eByRegion, {}, {},
+        {vk::ImageMemoryBarrier()
+             .setSrcAccessMask(this->cur_access_flags)
+             .setDstAccessMask(vk::AccessFlagBits::eDepthStencilAttachmentWrite)
+             .setNewLayout(vk::ImageLayout::eDepthStencilAttachmentOptimal)
+             .setOldLayout(vk::ImageLayout::eTransferDstOptimal)
+             .setSrcQueueFamilyIndex(device.graphics_queue_family_id)
+             .setDstQueueFamilyIndex(device.graphics_queue_family_id)
+             .setImage(this->depth_image.image)
+             .setSubresourceRange(
+                 vk::ImageSubresourceRange()
+                     .setLayerCount(1)
+                     .setLevelCount(1)
+                     .setAspectMask(vk::ImageAspectFlagBits::eDepth))});
   }
   void begin_render_pass(vk::CommandBuffer &cmd) {
     vk::ClearValue clear_value[] = {
@@ -649,6 +727,30 @@ struct CPU_Image {
                      .setAspectMask(vk::ImageAspectFlagBits::eColor))});
     this->cur_access_flags = vk::AccessFlagBits::eShaderRead;
     this->cur_layout = vk::ImageLayout::eGeneral;
+  }
+  void transition_layout_to_sampled(Device_Wrapper &device,
+                                    vk::CommandBuffer &cmd) {
+    if (this->cur_layout == vk::ImageLayout::eShaderReadOnlyOptimal)
+      return;
+    cmd.pipelineBarrier(
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::DependencyFlagBits::eByRegion, {}, {},
+        {vk::ImageMemoryBarrier()
+             .setSrcAccessMask(this->cur_access_flags)
+             .setDstAccessMask(vk::AccessFlagBits::eShaderRead)
+             .setOldLayout(this->cur_layout)
+             .setNewLayout(vk::ImageLayout::eShaderReadOnlyOptimal)
+             .setSrcQueueFamilyIndex(device.graphics_queue_family_id)
+             .setDstQueueFamilyIndex(device.graphics_queue_family_id)
+             .setImage(this->image.image)
+             .setSubresourceRange(
+                 vk::ImageSubresourceRange()
+                     .setLayerCount(1)
+                     .setLevelCount(1)
+                     .setAspectMask(vk::ImageAspectFlagBits::eColor))});
+    this->cur_access_flags = vk::AccessFlagBits::eShaderRead;
+    this->cur_layout = vk::ImageLayout::eShaderReadOnlyOptimal;
   }
 };
 

@@ -9,11 +9,10 @@ layout(location = 1) out vec3 out_normal;
 layout(location = 2) out vec3 out_tangent;
 layout(location = 3) out vec2 out_texcoord;
 
-layout(push_constant) uniform UBO {
+layout(set = 0, binding = 0, std140) uniform UBO {
   mat4 view;
   mat4 proj;
-}
-uniforms;
+} uniforms;
 
 void main() {
   vec4 wpos = uniforms.view * vec4(POSITION, 1.0);

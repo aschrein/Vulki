@@ -163,7 +163,13 @@ static Shader_Parsed create_shader_module(
           comp.get_decoration(item.id, spv::Decoration::DecorationBinding);
       ASSERT_PANIC(out.resource_slots.find(item.name) ==
                    out.resource_slots.end());
-      out.resource_slots[item.name] = {set_id, {bind_id, type, 1, stage}};
+      spirv_cross::SPIRType type_obj = comp.get_type(item.type_id);
+      u32 count = 1;
+      if (type_obj.array.size()) {
+        count = 0u;
+        ito(type_obj.array.size()) count += type_obj.array[i];
+      }
+      out.resource_slots[item.name] = {set_id, {bind_id, type, count, stage}};
     };
     for (auto &item : res.storage_buffers) {
       pushResource(vk::DescriptorType::eStorageBuffer, item);
@@ -337,6 +343,9 @@ struct Pipeline_Wrapper {
     for (auto &set_binding : set_bindings) {
       out.set_layouts.push_back(device.createDescriptorSetLayoutUnique(
           vk::DescriptorSetLayoutCreateInfo()
+              // @TODO: Check for availability
+              //.setFlags(vk::DescriptorSetLayoutCreateFlagBits::
+              //               eUpdateAfterBindPoolEXT)
               .setPBindings(&set_binding[0])
               .setBindingCount(set_binding.size())));
     }
@@ -515,7 +524,7 @@ struct Pipeline_Wrapper {
   void update_sampled_image_descriptor(vk::Device device,
                                        std::string const &name,
                                        vk::ImageView image_view,
-                                       vk::Sampler sampler) {
+                                       vk::Sampler sampler, u32 offset = 0u) {
     ASSERT_PANIC(this->resource_slots.find(name) != this->resource_slots.end());
     auto slot = this->resource_slots[name];
 
@@ -524,6 +533,7 @@ struct Pipeline_Wrapper {
              .setDstSet(desc_sets[slot.set].get())
              .setDstBinding(slot.layout.binding)
              .setDescriptorCount(1)
+             .setDstArrayElement(offset)
              .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
              .setPImageInfo(
                  &vk::DescriptorImageInfo()

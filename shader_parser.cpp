@@ -141,6 +141,7 @@ void parse_shader(
                 << comp.get_decoration(item.id,
                                        spv::Decoration::DecorationBinding)
                 << ";\n";
+
       if (base_type_obj.basetype == spirv_cross::SPIRType::Struct) {
         std::cout << "static const u32 size = "
                   << comp.get_declared_struct_size(type_obj) << ";\n";
@@ -167,17 +168,36 @@ void parse_shader(
                 comp.type_struct_member_matrix_stride(type_obj, i);
           }
           const std::string &name = comp.get_member_name(type_obj.self, i);
+          ito(member_type.array.size()) std::cout
+              << "u32 " << name << "_" << i
+              << "_count = " << member_type.array[i] << ";\n";
           u32 base_size = 0u;
+          std::string ty_str = "unset";
+          std::string vty_str = "unset";
           switch (member_type.basetype) {
           case spirv_cross::SPIRType::UInt:
-          case spirv_cross::SPIRType::Float:
             base_size = 4u;
+            ty_str = "u32";
+            vty_str = "uvec";
+            break;
+          case spirv_cross::SPIRType::Float:
+
+            base_size = 4u;
+            ty_str = "f32";
+            vty_str = "uvec";
+            break;
+          case spirv_cross::SPIRType::Int:
+
+            base_size = 4u;
+            ty_str = "i32";
+            vty_str = "ivec";
             break;
           default: {
             std::cout << "[ERROR] Unknown SPIRType\n";
             ASSERT_PANIC(false);
           }
           }
+
           u32 elem_cnt = member_size / base_size;
           if (current_offset != offset) {
             u32 diff = offset - current_offset;
@@ -188,60 +208,38 @@ void parse_shader(
             }
           }
           current_offset = offset + member_size;
-          if (elem_cnt == 1) {
-            switch (member_type.basetype) {
-            case spirv_cross::SPIRType::UInt:
-              std::cout << "u32 " << name << ";\n";
-              break;
-            case spirv_cross::SPIRType::Float:
-
-              std::cout << "f32 " << name << ";\n";
-              break;
-            default: {
-              std::cout << "[ERROR] Unknown SPIRType\n";
-              ASSERT_PANIC(false);
-            }
-            }
+          if (elem_cnt == 0) {
+            std::cout << ty_str << " " << name << "[];\n";
+          } else if (elem_cnt == 1) {
+            std::cout << ty_str << " " << name << ";\n";
           } else if (elem_cnt == 16) {
-            switch (member_type.basetype) {
-            case spirv_cross::SPIRType::Float:
-              std::cout << "mat4 " << name << ";\n";
-              break;
-            default: {
-              std::cout << "[ERROR] Unknown SPIRType\n";
-              ASSERT_PANIC(false);
-            }
-            }
+            std::cout << "mat4 " << name << ";\n";
           } else {
-            switch (member_type.basetype) {
-            case spirv_cross::SPIRType::UInt:
-              std::cout << "uvec" << elem_cnt << " " << name << ";\n";
-              break;
-            case spirv_cross::SPIRType::Float:
-
-              std::cout << "vec" << elem_cnt << " " << name << ";\n";
-              break;
-            default: {
-              std::cout << "[ERROR] Unknown SPIRType\n";
-              ASSERT_PANIC(false);
-            }
-            }
+            std::cout << vty_str << elem_cnt << " " << name << ";\n";
           }
         }
       } else {
-        switch (type_obj.basetype) {
-        case spirv_cross::SPIRType::UInt:
-          std::cout << "u32 " << item.name << ";\n";
-          break;
-        case spirv_cross::SPIRType::Float:
+       ito(type_obj.array.size()) std::cout
+              << "u32 " << item.name << "_" << i
+              << "_count = " << type_obj.array[i] << ";\n";
+        std::cout << "static char const *NAME =\"" << item.name << "\";\n";
+        // switch (type_obj.basetype) {
+        // case spirv_cross::SPIRType::UInt:
+        //   std::cout << "u32 " << item.name << ";\n";
+        //   break;
+        // case spirv_cross::SPIRType::Float:
 
-          std::cout << "f32 " << item.name << ";\n";
-          break;
-        default: {
-          std::cout << "[ERROR] Unknown SPIRType\n";
-          ASSERT_PANIC(false);
-        }
-        }
+        //   std::cout << "f32 " << item.name << ";\n";
+        //   break;
+        //   case spirv_cross::SPIRType:::
+
+        //   std::cout << "f32 " << item.name << ";\n";
+        //   break;
+        // default: {
+        //   std::cout << "[ERROR] Unknown SPIRType\n";
+        //   ASSERT_PANIC(false);
+        // }
+        // }
       }
       std::cout << "};\n";
     };
@@ -280,42 +278,34 @@ void parse_shader(
         }
         std::cout << "};\n";
       }
-      std::cout << "static std::unordered_map<std::string, Vertex_Input> Binding = {\n";
+      std::cout << "static std::unordered_map<std::string, Vertex_Input> "
+                   "Binding = {\n";
       for (auto &item : bindings) {
-        
+
         for (auto mem_id : item.second) {
           auto desc = input[mem_id];
-          std::cout << "{\"" << desc.name << "\", {" << desc.binding << ", offsetof(_Binding_"
-                    << desc.binding << ", " << desc.name << "), "
-                    << desc.fmt_str << "}},";
+          std::cout << "{\"" << desc.name << "\", {" << desc.binding
+                    << ", offsetof(_Binding_" << desc.binding << ", "
+                    << desc.name << "), " << desc.fmt_str << "}},";
         }
-       
       }
-       std::cout << "};\n";
+      std::cout << "};\n";
     }
 
     for (auto &item : res.storage_buffers) {
-      pushResource(vk::DescriptorType::eStorageBuffer, item);
+      printResource(item);
     }
     for (auto &item : res.sampled_images) {
-      // @Cleanup: Combined/Sampled
-      pushResource(vk::DescriptorType::eCombinedImageSampler, item);
+      printResource(item);
     }
     for (auto &item : res.storage_images) {
-      pushResource(vk::DescriptorType::eStorageImage, item);
+      printResource(item);
     }
     for (auto &item : res.uniform_buffers) {
-      pushResource(vk::DescriptorType::eUniformBuffer, item);
       printResource(item);
     }
-    // @TODO: Do something with push constants
-    // for (auto &item : res.push_constant_buffers) {
-    //   pushResource(vk::DescriptorType::eUniformBuffer, item);
-    // }
     for (auto &item : res.push_constant_buffers) {
       printResource(item);
-      // std::cout << "static u32 in_" << item.name << " = " << location << "
-      // {\n";
     }
     for (auto &item : res.stage_inputs) {
       auto location =
