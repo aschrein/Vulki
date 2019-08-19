@@ -23,6 +23,17 @@ layout(push_constant) uniform PC {
 }
 push_constant;
 
+vec3 apply_light(vec3 n, vec3 l, vec3 v,
+                 float metalness,
+                 float roughness,
+                 vec3 albedo) {
+  float lambert = clamp(dot(l, n), 0.0, 1.0);
+  vec3 r = reflect(v, n);
+  float phong = pow(clamp(dot(r, l), 0.0, 1.0), roughness  * 256.0);
+  vec3 spec_col = mix(albedo, vec3(1.0, 1.0, 1.0), 1.0 - metalness);
+  return albedo * lambert + spec_col * phong;
+}
+
 void main() {
   vec4 albedo = texture(textures[push_constant.albedo_id], in_texcoord);
   if (albedo.w < 0.5)
@@ -31,6 +42,7 @@ void main() {
   vec3 tangent = normalize(in_tangent).xzy;
   vec3 binormal = cross(normal, tangent);
   vec3 nc = texture(textures[push_constant.normal_id], in_texcoord).xyz;
+  vec3 mr = texture(textures[push_constant.metalness_roughness_id], in_texcoord).xyz;
   vec3 new_normal =
   //nc;
   // normal;
@@ -40,12 +52,13 @@ void main() {
   binormal * (2.0 * nc.y - 1.0));
   vec3 l = normalize(uniforms.light_pos - in_position.xzy);
   vec3 v = normalize(uniforms.camera_pos - in_position.xzy);
-  float lambert = clamp(dot(l, new_normal), 0.0, 1.0);
-  vec3 r = reflect(-v, new_normal);
-  float phong = pow(clamp(dot(r, l), 0.0, 1.0), 256.0);
+
+
+
   // lambert += clamp(dot(normalize(vec3(-1, -1, 1)), normal), 0.0, 1.0);
+  vec3 light = apply_light(new_normal, l, -v, mr.y, mr.z, albedo.xyz);
   g_color =
   // vec4(nc.xyz, 1.0);
-  // vec4(abs(new_normal), 1.0);
-  albedo * phong;
+//   vec4(abs(mr.zzz), 1.0);
+   vec4(light, 1.0);
 }

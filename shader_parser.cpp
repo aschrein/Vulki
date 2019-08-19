@@ -67,7 +67,7 @@ std::vector<Input> preprocess(std::string source_name) {
         input.fmt_str = "vk::Format::eR32G32B32A32Sfloat";
         input.format = vk::Format::eR32G32B32A32Sfloat;
       } else {
-        ASSERT_PANIC(false && "Unknown input type");
+        ASSERT_PANIC(false && "Unknown input type")
       }
       out.push_back(input);
       ss << "layout(location = " << location << ") in " << type << " " << name
@@ -222,7 +222,7 @@ void parse_shader(
        ito(type_obj.array.size()) std::cout
               << "u32 " << item.name << "_" << i
               << "_count = " << type_obj.array[i] << ";\n";
-        std::cout << "static char const *NAME =\"" << item.name << "\";\n";
+//        std::cout << "static char const *NAME =\"" << item.name << "\";\n";
         // switch (type_obj.basetype) {
         // case spirv_cross::SPIRType::UInt:
         //   std::cout << "u32 " << item.name << ";\n";

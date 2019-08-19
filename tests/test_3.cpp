@@ -234,9 +234,10 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   Framebuffer_Wrapper framebuffer_wrapper{};
   Pipeline_Wrapper fullscreen_pipeline;
   Pipeline_Wrapper gltf_pipeline;
-  // auto test_model = load_gltf_raw("models/sponza-gltf-pbr/sponza.glb");
-  // auto test_model = load_gltf_raw("models/WaterBottle/WaterBottle.gltf");
-  auto test_model = load_gltf_raw("models/DamagedHelmet/DamagedHelmet.gltf");
+   auto test_model = load_gltf_raw("models/sponza-gltf-pbr/sponza.glb");
+//  auto test_model = load_gltf_raw("models/WaterBottle/WaterBottle.gltf");
+//  auto test_model = load_gltf_raw("models/scene.gltf");
+//  auto test_model = load_gltf_raw("models/DamagedHelmet/DamagedHelmet.gltf");
   std::vector<Raw_Mesh_Opaque_Wrapper> test_model_wrapper;
   for (auto &mesh : test_model.meshes) {
     test_model_wrapper.emplace_back(
@@ -371,12 +372,13 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       void *data = gltf_ubo_buffer.map();
       sh_gltf_vert::UBO tmp_pc{};
       tmp_pc.proj = gizmo_layer.camera_proj;
-      float scale = 10.0f;
-      // float scale = 0.01f;
+//      float scale = 10.0f;
+       float scale = 0.01f;
       tmp_pc.view = gizmo_layer.camera_view *
                     mat4(scale, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, scale, 0.0f, 0.0f,
                          scale, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
       tmp_pc.light_pos = gizmo_layer.gizmo_drag_state.pos;
+      tmp_pc.camera_pos = gizmo_layer.camera_pos;
       memcpy(data, &tmp_pc, sizeof(tmp_pc));
       gltf_ubo_buffer.unmap();
     }

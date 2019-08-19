@@ -224,7 +224,7 @@ GLFT_Model load_gltf_raw(std::string const &filename) {
         opaque_mesh.binding[attr.first] = Vertex_Input{
             .binding = 0u, .offset = offset_counter, .format = format};
         descs.push_back({attr.first, offset_counter, size,
-                         accessor.ByteStride(bview), (u32)attr.second});
+                         u32(accessor.ByteStride(bview)), (u32)attr.second});
         offset_counter += size;
 
         // accessor.type == TINYGLTF_TYPE_SCALAR;
@@ -240,16 +240,26 @@ GLFT_Model load_gltf_raw(std::string const &filename) {
         }
       }
       {
-        ASSERT_PANIC(primitive.indices >= 0u);
+        ASSERT_PANIC(primitive.indices >= 0)
         auto &accessor = model.accessors[primitive.indices];
 
         auto &bview = model.bufferViews[accessor.bufferView];
-        ASSERT_PANIC(accessor.ByteStride(bview) == 2u);
-        u32 stride = accessor.ByteStride(bview);
-        ito(accessor.count) {
-          u16 *src = (u16 *)&model.buffers[bview.buffer]
-                         .data[bview.byteOffset + stride * i];
-          opaque_mesh.indices.push_back(*src);
+        if (accessor.ByteStride(bview) == 2) {
+          u32 stride = accessor.ByteStride(bview);
+          ito(accessor.count) {
+            u16 *src = (u16 *)&model.buffers[bview.buffer]
+                           .data[bview.byteOffset + stride * i];
+            opaque_mesh.indices.push_back(*src);
+          }
+//        } else if (accessor.ByteStride(bview) == 4) {
+//          u32 stride = accessor.ByteStride(bview);
+//          ito(accessor.count) {
+//            u32 *src = (u32 *)&model.buffers[bview.buffer]
+//                           .data[bview.byteOffset + stride * i];
+//            opaque_mesh.indices.push_back(*src);
+//          }
+        } else {
+            ASSERT_PANIC(false)
         }
       }
       ASSERT_PANIC(opaque_mesh.attributes.size() ==
@@ -259,7 +269,7 @@ GLFT_Model load_gltf_raw(std::string const &filename) {
                             .ao_id = -1,
                             .metalness_roughness_id = -1};
       {
-        ASSERT_PANIC(primitive.material >= 0u);
+        ASSERT_PANIC(primitive.material >= 0);
         auto mat = model.materials[primitive.material];
         auto normal_map_id = mat.normalTexture.index;
         auto albedo_map_id = mat.pbrMetallicRoughness.baseColorTexture.index;
