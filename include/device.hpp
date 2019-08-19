@@ -668,18 +668,21 @@ struct CPU_Image {
   vk::AccessFlags cur_access_flags;
   uint32_t width;
   uint32_t height;
+  uint32_t mip_levels;
   static CPU_Image create(Device_Wrapper &device_wrapper, uint32_t width,
-                          uint32_t height, vk::Format format) {
+                          uint32_t height, vk::Format format,
+                          uint32_t mip_levels = 1u) {
     ASSERT_PANIC(width && height);
     CPU_Image out{};
     out.width = width;
     out.height = height;
+    out.mip_levels = mip_levels;
     out.image = device_wrapper.alloc_state->allocate_image(
         vk::ImageCreateInfo()
             .setArrayLayers(1)
             .setExtent(vk::Extent3D(width, height, 1))
             .setFormat(format)
-            .setMipLevels(1)
+            .setMipLevels(mip_levels)
             .setImageType(vk::ImageType::e2D)
             .setInitialLayout(vk::ImageLayout::eUndefined)
             .setPQueueFamilyIndices(&device_wrapper.graphics_queue_family_id)
@@ -699,7 +702,7 @@ struct CPU_Image {
             vk::ComponentMapping(
                 vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG,
                 vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA),
-            vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0,
+            vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, mip_levels, 0,
                                       1)));
 
     return out;
@@ -714,7 +717,7 @@ struct CPU_Image {
         vk::DependencyFlagBits::eByRegion, {}, {},
         {vk::ImageMemoryBarrier()
              .setSrcAccessMask(this->cur_access_flags)
-             .setDstAccessMask(vk::AccessFlagBits::eShaderRead)
+             .setDstAccessMask(vk::AccessFlagBits::eHostRead)
              .setOldLayout(this->cur_layout)
              .setNewLayout(vk::ImageLayout::eGeneral)
              .setSrcQueueFamilyIndex(device.graphics_queue_family_id)
@@ -723,10 +726,34 @@ struct CPU_Image {
              .setSubresourceRange(
                  vk::ImageSubresourceRange()
                      .setLayerCount(1)
-                     .setLevelCount(1)
+                     .setLevelCount(mip_levels)
                      .setAspectMask(vk::ImageAspectFlagBits::eColor))});
-    this->cur_access_flags = vk::AccessFlagBits::eShaderRead;
+    this->cur_access_flags = vk::AccessFlagBits::eHostRead;
     this->cur_layout = vk::ImageLayout::eGeneral;
+  }
+  void transition_layout_to_dst(Device_Wrapper &device,
+                                    vk::CommandBuffer &cmd) {
+    if (this->cur_layout == vk::ImageLayout::eGeneral)
+      return;
+    cmd.pipelineBarrier(
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::DependencyFlagBits::eByRegion, {}, {},
+        {vk::ImageMemoryBarrier()
+             .setSrcAccessMask(this->cur_access_flags)
+             .setDstAccessMask(vk::AccessFlagBits::eTransferWrite)
+             .setOldLayout(this->cur_layout)
+             .setNewLayout(vk::ImageLayout::eTransferDstOptimal)
+             .setSrcQueueFamilyIndex(device.graphics_queue_family_id)
+             .setDstQueueFamilyIndex(device.graphics_queue_family_id)
+             .setImage(this->image.image)
+             .setSubresourceRange(
+                 vk::ImageSubresourceRange()
+                     .setLayerCount(1)
+                     .setLevelCount(mip_levels)
+                     .setAspectMask(vk::ImageAspectFlagBits::eColor))});
+    this->cur_access_flags = vk::AccessFlagBits::eTransferWrite;
+    this->cur_layout = vk::ImageLayout::eTransferDstOptimal;
   }
   void transition_layout_to_sampled(Device_Wrapper &device,
                                     vk::CommandBuffer &cmd) {
@@ -747,7 +774,7 @@ struct CPU_Image {
              .setSubresourceRange(
                  vk::ImageSubresourceRange()
                      .setLayerCount(1)
-                     .setLevelCount(1)
+                     .setLevelCount(mip_levels)
                      .setAspectMask(vk::ImageAspectFlagBits::eColor))});
     this->cur_access_flags = vk::AccessFlagBits::eShaderRead;
     this->cur_layout = vk::ImageLayout::eShaderReadOnlyOptimal;

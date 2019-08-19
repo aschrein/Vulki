@@ -16,5 +16,8 @@ layout(push_constant) uniform PC {
 push_constant;
 
 void main() {
-  g_color = texture(textures[push_constant.albedo_id], texcoord);
+  vec4 albedo = texture(textures[push_constant.albedo_id], texcoord);
+  if (albedo.w < 0.5)
+    discard;
+  g_color = albedo;
 }

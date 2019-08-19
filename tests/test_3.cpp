@@ -123,12 +123,112 @@ struct C_Static3DMesh : public Component_Base<C_Static3DMesh> {
 
 REG_COMPONENT(C_Static3DMesh);
 
+std::vector<u8> build_mips(std::vector<u8> const &data, u32 width, u32 height,
+                           vk::Format format, u32 &out_miplevels,
+                           std::vector<u32> &mip_offsets,
+                           std::vector<uvec2> &mip_sizes) {
+  u32 big_dim = std::max(width, height);
+  out_miplevels = 0u;
+  ito(32u) {
+    if ((big_dim & (1u << i)) != 0u) {
+      out_miplevels = i + 1u;
+    }
+  }
+  ito(out_miplevels) mip_sizes.push_back(
+      uvec2(std::max(1u, width >> i), std::max(1u, height >> i)));
+
+  // @TODO: Add more formats
+  u32 bbp = 4u;
+  ASSERT_PANIC(format == vk::Format::eR8G8B8A8Unorm);
+
+  u32 total_bytes = 0u;
+  ito(out_miplevels) {
+    mip_offsets.push_back(total_bytes);
+    total_bytes += mip_sizes[i].x * mip_sizes[i].y * bbp;
+  }
+  std::vector<u8> out(total_bytes);
+  memcpy(&out[0], &data[0], data.size());
+  auto load = [&](uvec2 coord, u32 level) {
+    uvec2 size = mip_sizes[level];
+    if (coord.x >= size.x)
+      coord.x = size.x - 1;
+    if (coord.y >= size.y)
+      coord.y = size.y - 1;
+    u8 r = out[mip_offsets[level] + coord.x * bbp + coord.y * size.x * bbp];
+    u8 g =
+        out[mip_offsets[level] + coord.x * bbp + coord.y * size.x * bbp + 1u];
+    u8 b =
+        out[mip_offsets[level] + coord.x * bbp + coord.y * size.x * bbp + 2u];
+    u8 a =
+        out[mip_offsets[level] + coord.x * bbp + coord.y * size.x * bbp + 3u];
+    return vec4(float(r) / 255.0f, float(g) / 255.0f, float(b) / 255.0f,
+                float(a) / 255.0f);
+  };
+
+  // auto sample = [&](vec2 uv, u32 level) {
+  //   uvec2 size = mip_sizes[level];
+  //   vec2 suv = uv * vec2(float(size.x - 1u), float(size.y - 1u));
+  //   uvec2 coord[] = {
+  //       uvec2(u32(suv.x), u32(suv.y)),
+  //       uvec2(u32(suv.x), u32(suv.y + 1.0f)),
+  //       uvec2(u32(suv.x + 1.0f), u32(suv.y)),
+  //       uvec2(u32(suv.x + 1.0f), u32(suv.y + 1.0f)),
+  //   };
+  //   ito(4) {
+  //     if (coord[i].x >= size.x)
+  //       coord[i].x = size.x - 1;
+  //     if (coord[i].y >= size.y)
+  //       coord[i].y = size.y - 1;
+  //   }
+  //   vec2 fract = vec2(suv.x - std::floor(suv.x), suv.y - std::floor(suv.y));
+  //   float weights[] = {
+  //       (1.0f - fract.x) * (1.0f - fract.y),
+  //       (1.0f - fract.x) * (fract.y),
+  //       (fract.x) * (1.0f - fract.y),
+  //       (fract.x) * (fract.y),
+  //   };
+  //   vec4 result = vec4(0.0f, 0.0f, 0.0f, 0.0f);
+  //   ito(4) result += load(coord[i], level) * weights[i];
+  //   return result;
+  // };
+  for (u32 mip_level = 1u; mip_level < out_miplevels; mip_level++) {
+    auto size = mip_sizes[mip_level];
+    ito(size.y) {
+      jto(size.x) {
+        vec2 uv = vec2(float(j + 0.5f) / (size.x - 1u),
+                       float(i + 0.5f) / (size.y - 1u));
+        vec4 val_0 = load(uvec2(j * 2u, i * 2u), mip_level - 1u);
+        vec4 val_1 = load(uvec2(j * 2u + 1, i * 2u), mip_level - 1u);
+        vec4 val_2 = load(uvec2(j * 2u, i * 2u + 1), mip_level - 1u);
+        vec4 val_3 = load(uvec2(j * 2u + 1, i * 2u + 1), mip_level - 1u);
+        auto val = (val_0 + val_1 + val_2 + val_3) / 4.0f;
+        u8 r = u8(255.0f * val.x);
+        u8 g = u8(255.0f * val.y);
+        u8 b = u8(255.0f * val.z);
+        u8 a = u8(255.0f * val.w);
+        u8 *dst = &out[mip_offsets[mip_level] + j * bbp + i * size.x * bbp];
+        // dst[0] = u8(float(i * size.x + j) / (size.x * size.y) * 255.0);
+        // dst[1] = u8(i % 255u);
+        // dst[2] = 255u;
+        // dst[3] = 255u;
+        dst[0] = r;
+        dst[1] = g;
+        dst[2] = b;
+        dst[3] = a;
+      }
+      // std::cout << "FINISHED " << i << "\n";
+    }
+  }
+  return out;
+}
+
 TEST(graphics, vulkan_graphics_test_3d_models) {
   ASSERT_PANIC(sizeof(Component_ID) == 8u);
 
   auto device_wrapper = init_device(true);
+  Alloc_State *alloc_state = device_wrapper.alloc_state.get();
   auto &device = device_wrapper.device;
-  Simple_Monitor simple_monitor("../shaders");
+  Simple_Monitor simple_monitor("shaders");
   Gizmo_Layer gizmo_layer{};
   Random_Factory frand;
   Framebuffer_Wrapper framebuffer_wrapper{};
@@ -142,11 +242,48 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   }
   std::vector<CPU_Image> test_model_textures;
   for (auto &image : test_model.images) {
-    CPU_Image cpu_image = CPU_Image::create(device_wrapper, image.width,
-                                            image.height, image.format);
-    void *data = cpu_image.image.map();
-    memcpy(data, &image.data[0], image.width * image.height * 4u);
-    cpu_image.image.unmap();
+    u32 mip_levels;
+    std::vector<uvec2> mip_sizes;
+    std::vector<u32> mip_offsets;
+    auto with_mips =
+        build_mips(image.data, image.width, image.height, image.format,
+                   mip_levels, mip_offsets, mip_sizes);
+    CPU_Image cpu_image = CPU_Image::create(
+        device_wrapper, image.width, image.height, image.format, mip_levels);
+    auto cpu_buffer = alloc_state->allocate_buffer(
+        vk::BufferCreateInfo()
+            .setSize(with_mips.size())
+            .setUsage(vk::BufferUsageFlagBits::eTransferSrc),
+        VMA_MEMORY_USAGE_CPU_TO_GPU);
+    {
+      void *data = cpu_buffer.map();
+      memcpy(data, &with_mips[0], with_mips.size());
+      cpu_buffer.unmap();
+    }
+    {
+      auto &cmd = device_wrapper.graphics_cmds[0].get();
+      cmd.reset(vk::CommandBufferResetFlagBits::eReleaseResources);
+      cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
+      cpu_image.transition_layout_to_dst(device_wrapper, cmd);
+      ito(mip_levels) cmd.copyBufferToImage(
+          cpu_buffer.buffer, cpu_image.image.image,
+          vk::ImageLayout::eTransferDstOptimal,
+          vk::ArrayProxy<const vk::BufferImageCopy>{
+              vk::BufferImageCopy()
+                  .setBufferOffset(mip_offsets[i])
+                  //  .setBufferRowLength(mip_sizes[i].x * 4u)
+                  //  .setBufferImageHeight(mip_sizes[i].y)
+                  .setImageSubresource(vk::ImageSubresourceLayers(
+                      vk::ImageAspectFlagBits::eColor, i, 0u, 1u))
+                  .setImageOffset(vk::Offset3D(0u, 0u, 0u))
+                  .setImageExtent(
+                      vk::Extent3D(mip_sizes[i].x, mip_sizes[i].y, 1u))});
+      cmd.end();
+      device_wrapper.sumbit_and_flush(cmd);
+    }
+    // void *data = cpu_image.image.map();
+    // memcpy(data, &with_mips[0], with_mips.size());
+    // cpu_image.image.unmap();
     test_model_textures.emplace_back(std::move(cpu_image));
   }
   auto recreate_resources = [&] {
@@ -181,7 +318,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     gizmo_layer.init_vulkan_state(device_wrapper,
                                   framebuffer_wrapper.render_pass.get());
   };
-  Alloc_State *alloc_state = device_wrapper.alloc_state.get();
+
   VmaBuffer gltf_ubo_buffer = alloc_state->allocate_buffer(
       vk::BufferCreateInfo()
           .setSize(sizeof(sh_gltf_vert::UBO))
@@ -196,6 +333,14 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                                       .setMinFilter(vk::Filter::eNearest)
                                       .setMagFilter(vk::Filter::eNearest)
                                       .setMaxLod(1));
+  vk::UniqueSampler mip_sampler = device->createSamplerUnique(
+      vk::SamplerCreateInfo()
+          .setMinFilter(vk::Filter::eLinear)
+          .setMagFilter(vk::Filter::eLinear)
+          .setMipmapMode(vk::SamplerMipmapMode::eLinear)
+          .setMaxLod(10)
+          .setAnisotropyEnable(true)
+          .setMaxAnisotropy(16.0f));
   // Init device stuff
   {
 
@@ -252,7 +397,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       ito(test_model_textures.size()) {
         gltf_pipeline.update_sampled_image_descriptor(
             device_wrapper.device.get(), "textures",
-            test_model_textures[i].image_view.get(), sampler.get(), i);
+            test_model_textures[i].image_view.get(), mip_sampler.get(), i);
       }
       gltf_pipeline.update_descriptor(
           device.get(), "UBO", gltf_ubo_buffer.buffer, 0,

@@ -74,8 +74,9 @@ struct Alloc_State {
     VkImage image;
     VmaAllocation allocation;
     VkImageCreateInfo tmp_create_info = create_info;
+    VmaAllocationInfo AllocationInfo;
     vmaCreateImage(allocator, &tmp_create_info, &allocInfo, &image, &allocation,
-                   nullptr);
+                   &AllocationInfo);
     VmaImage out;
     out.allocator = allocator;
     out.image = image;
