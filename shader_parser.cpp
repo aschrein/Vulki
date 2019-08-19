@@ -184,7 +184,7 @@ void parse_shader(
 
             base_size = 4u;
             ty_str = "f32";
-            vty_str = "uvec";
+            vty_str = "vec";
             break;
           case spirv_cross::SPIRType::Int:
 

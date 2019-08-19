@@ -234,7 +234,9 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   Framebuffer_Wrapper framebuffer_wrapper{};
   Pipeline_Wrapper fullscreen_pipeline;
   Pipeline_Wrapper gltf_pipeline;
-  auto test_model = load_gltf_raw("models/sponza-gltf-pbr/sponza.glb");
+  // auto test_model = load_gltf_raw("models/sponza-gltf-pbr/sponza.glb");
+  // auto test_model = load_gltf_raw("models/WaterBottle/WaterBottle.gltf");
+  auto test_model = load_gltf_raw("models/DamagedHelmet/DamagedHelmet.gltf");
   std::vector<Raw_Mesh_Opaque_Wrapper> test_model_wrapper;
   for (auto &mesh : test_model.meshes) {
     test_model_wrapper.emplace_back(
@@ -369,10 +371,12 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       void *data = gltf_ubo_buffer.map();
       sh_gltf_vert::UBO tmp_pc{};
       tmp_pc.proj = gizmo_layer.camera_proj;
-      float scale = 0.01f;
+      float scale = 10.0f;
+      // float scale = 0.01f;
       tmp_pc.view = gizmo_layer.camera_view *
                     mat4(scale, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, scale, 0.0f, 0.0f,
                          scale, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+      tmp_pc.light_pos = gizmo_layer.gizmo_drag_state.pos;
       memcpy(data, &tmp_pc, sizeof(tmp_pc));
       gltf_ubo_buffer.unmap();
     }
@@ -411,12 +415,18 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         cmd.bindVertexBuffers(0, {wrap.vertex_buffer.buffer}, {0});
         cmd.bindIndexBuffer(wrap.index_buffer.buffer, 0,
                             vk::IndexType::eUint32);
+        sh_gltf_frag::push_constant tmp_pc{};
         if (material.albedo_id >= 0) {
-          sh_gltf_frag::push_constant tmp_pc;
           tmp_pc.albedo_id = material.albedo_id;
-          gltf_pipeline.push_constants(cmd, &tmp_pc,
-                                       sizeof(sh_gltf_frag::push_constant));
         }
+        if (material.normal_id >= 0) {
+          tmp_pc.normal_id = material.normal_id;
+        }
+        if (material.metalness_roughness_id >= 0) {
+          tmp_pc.metalness_roughness_id = material.metalness_roughness_id;
+        }
+        gltf_pipeline.push_constants(cmd, &tmp_pc,
+                                     sizeof(sh_gltf_frag::push_constant));
         cmd.drawIndexed(wrap.index_count, 1, 0, 0, 0);
       }
     }

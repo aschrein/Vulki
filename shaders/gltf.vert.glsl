@@ -12,13 +12,15 @@ layout(location = 3) out vec2 out_texcoord;
 layout(set = 0, binding = 0, std140) uniform UBO {
   mat4 view;
   mat4 proj;
+  vec3 camera_pos;
+  vec3 light_pos;
 } uniforms;
 
 void main() {
   vec4 wpos = uniforms.view * vec4(POSITION, 1.0);
-  out_position = wpos.xyz;
-  out_normal = (uniforms.view *  vec4(NORMAL, 0.0)).xyz;
-  out_tangent = (uniforms.view *  vec4(TANGENT.xyz, 0.0)).xyz;
+  out_position = POSITION;
+  out_normal = NORMAL;
+  out_tangent = TANGENT.xyz;
   out_texcoord = TEXCOORD_0;
   gl_Position = uniforms.proj * wpos;
 }

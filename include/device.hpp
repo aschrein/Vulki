@@ -690,7 +690,7 @@ struct CPU_Image {
             .setSamples(vk::SampleCountFlagBits::e1)
             .setSharingMode(vk::SharingMode::eExclusive)
             .setTiling(vk::ImageTiling::eLinear)
-            .setUsage(vk::ImageUsageFlagBits::eSampled),
+            .setUsage(vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst),
 
         VMA_MEMORY_USAGE_CPU_TO_GPU);
     out.cur_layout = vk::ImageLayout::eUndefined;
