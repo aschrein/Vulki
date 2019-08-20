@@ -138,33 +138,91 @@ std::vector<u8> build_mips(std::vector<u8> const &data, u32 width, u32 height,
       uvec2(std::max(1u, width >> i), std::max(1u, height >> i)));
 
   // @TODO: Add more formats
-  u32 bbp = 4u;
-  ASSERT_PANIC(format == vk::Format::eR8G8B8A8Unorm);
-
+  // Bytes per pixel
+  u32 bpc = 4u;
+  switch (format) {
+  case vk::Format::eR8G8B8A8Unorm:
+    bpc = 4u;
+    break;
+  case vk::Format::eR32G32B32Sfloat:
+    bpc = 12u;
+    break;
+  default:
+    ASSERT_PANIC(false && "unsupported format");
+  }
   u32 total_bytes = 0u;
   ito(out_miplevels) {
     mip_offsets.push_back(total_bytes);
-    total_bytes += mip_sizes[i].x * mip_sizes[i].y * bbp;
+    total_bytes += mip_sizes[i].x * mip_sizes[i].y * bpc;
   }
   std::vector<u8> out(total_bytes);
   memcpy(&out[0], &data[0], data.size());
+  auto load_f32 = [&](uvec2 coord, u32 level, u32 component) {
+    uvec2 size = mip_sizes[level];
+    return *(f32 *)&out[mip_offsets[level] + coord.x * bpc +
+                        coord.y * size.x * bpc + component * 4u];
+  };
   auto load = [&](uvec2 coord, u32 level) {
     uvec2 size = mip_sizes[level];
     if (coord.x >= size.x)
       coord.x = size.x - 1;
     if (coord.y >= size.y)
       coord.y = size.y - 1;
-    u8 r = out[mip_offsets[level] + coord.x * bbp + coord.y * size.x * bbp];
-    u8 g =
-        out[mip_offsets[level] + coord.x * bbp + coord.y * size.x * bbp + 1u];
-    u8 b =
-        out[mip_offsets[level] + coord.x * bbp + coord.y * size.x * bbp + 2u];
-    u8 a =
-        out[mip_offsets[level] + coord.x * bbp + coord.y * size.x * bbp + 3u];
-    return vec4(float(r) / 255.0f, float(g) / 255.0f, float(b) / 255.0f,
-                float(a) / 255.0f);
+    switch (format) {
+    case vk::Format::eR8G8B8A8Unorm: {
+      u8 r = out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc];
+      u8 g =
+          out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc + 1u];
+      u8 b =
+          out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc + 2u];
+      u8 a =
+          out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc + 3u];
+      return vec4(float(r) / 255.0f, float(g) / 255.0f, float(b) / 255.0f,
+                  float(a) / 255.0f);
+    }
+    case vk::Format::eR32G32B32Sfloat: {
+      f32 r = load_f32(coord, level, 0u);
+      f32 g = load_f32(coord, level, 1u);
+      f32 b = load_f32(coord, level, 2u);
+      return vec4(r, g, b, 0.0f);
+    }
+    default:
+      ASSERT_PANIC(false && "unsupported format");
+    }
   };
-
+  auto write = [&](vec4 val, uvec2 coord, u32 level) {
+    uvec2 size = mip_sizes[level];
+    if (coord.x >= size.x)
+      coord.x = size.x - 1;
+    if (coord.y >= size.y)
+      coord.y = size.y - 1;
+    switch (format) {
+    case vk::Format::eR8G8B8A8Unorm: {
+      auto size = mip_sizes[level];
+      u8 r = u8(255.0f * val.x);
+      u8 g = u8(255.0f * val.y);
+      u8 b = u8(255.0f * val.z);
+      u8 a = u8(255.0f * val.w);
+      u8 *dst =
+          &out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc];
+      dst[0] = r;
+      dst[1] = g;
+      dst[2] = b;
+      dst[3] = a;
+      return;
+    }
+    case vk::Format::eR32G32B32Sfloat: {
+      f32 *dst = (f32 *)&out[mip_offsets[level] + coord.x * bpc +
+                             coord.y * size.x * bpc];
+      dst[0] = val.x;
+      dst[1] = val.y;
+      dst[2] = val.z;
+      return;
+    }
+    default:
+      ASSERT_PANIC(false && "unsupported format");
+    }
+  };
   // auto sample = [&](vec2 uv, u32 level) {
   //   uvec2 size = mip_sizes[level];
   //   vec2 suv = uv * vec2(float(size.x - 1u), float(size.y - 1u));
@@ -202,19 +260,7 @@ std::vector<u8> build_mips(std::vector<u8> const &data, u32 width, u32 height,
         vec4 val_2 = load(uvec2(j * 2u, i * 2u + 1), mip_level - 1u);
         vec4 val_3 = load(uvec2(j * 2u + 1, i * 2u + 1), mip_level - 1u);
         auto val = (val_0 + val_1 + val_2 + val_3) / 4.0f;
-        u8 r = u8(255.0f * val.x);
-        u8 g = u8(255.0f * val.y);
-        u8 b = u8(255.0f * val.z);
-        u8 a = u8(255.0f * val.w);
-        u8 *dst = &out[mip_offsets[mip_level] + j * bbp + i * size.x * bbp];
-        // dst[0] = u8(float(i * size.x + j) / (size.x * size.y) * 255.0);
-        // dst[1] = u8(i % 255u);
-        // dst[2] = 255u;
-        // dst[3] = 255u;
-        dst[0] = r;
-        dst[1] = g;
-        dst[2] = b;
-        dst[3] = a;
+        write(val, uvec2(j, i), mip_level);
       }
       // std::cout << "FINISHED " << i << "\n";
     }
@@ -239,16 +285,23 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   auto cubemap = open_cubemap("cubemaps/industrial.hdr");
   CPU_Image cubemap_image;
   {
-    cubemap_image = CPU_Image::create(device_wrapper, cubemap.width,
-                                      cubemap.height, cubemap.format);
+    u32 mip_levels;
+    std::vector<uvec2> mip_sizes;
+    std::vector<u32> mip_offsets;
+    auto with_mips =
+        build_mips(cubemap.data, cubemap.width, cubemap.height, cubemap.format,
+                   mip_levels, mip_offsets, mip_sizes);
+    cubemap_image =
+        CPU_Image::create(device_wrapper, cubemap.width, cubemap.height,
+                          cubemap.format, mip_levels);
     auto cpu_buffer = alloc_state->allocate_buffer(
         vk::BufferCreateInfo()
-            .setSize(cubemap.data.size())
+            .setSize(with_mips.size())
             .setUsage(vk::BufferUsageFlagBits::eTransferSrc),
         VMA_MEMORY_USAGE_CPU_TO_GPU);
     {
       void *data = cpu_buffer.map();
-      memcpy(data, &cubemap.data[0], cubemap.data.size());
+      memcpy(data, &with_mips[0], with_mips.size());
       cpu_buffer.unmap();
     }
     {
@@ -256,17 +309,17 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       cmd.reset(vk::CommandBufferResetFlagBits::eReleaseResources);
       cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
       cubemap_image.transition_layout_to_dst(device_wrapper, cmd);
-      cmd.copyBufferToImage(
+      ito(mip_levels) cmd.copyBufferToImage(
           cpu_buffer.buffer, cubemap_image.image.image,
           vk::ImageLayout::eTransferDstOptimal,
           vk::ArrayProxy<const vk::BufferImageCopy>{
               vk::BufferImageCopy()
-                  .setBufferOffset(0)
+                  .setBufferOffset(mip_offsets[i])
                   .setImageSubresource(vk::ImageSubresourceLayers(
-                      vk::ImageAspectFlagBits::eColor, 0u, 0u, 1u))
+                      vk::ImageAspectFlagBits::eColor, i, 0u, 1u))
                   .setImageOffset(vk::Offset3D(0u, 0u, 0u))
                   .setImageExtent(
-                      vk::Extent3D(cubemap.width, cubemap.height, 1u))});
+                      vk::Extent3D(mip_sizes[i].x, mip_sizes[i].y, 1u))});
       cubemap_image.transition_layout_to_sampled(device_wrapper, cmd);
       cmd.end();
       device_wrapper.sumbit_and_flush(cmd);

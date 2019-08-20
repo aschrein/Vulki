@@ -24,24 +24,42 @@ layout(push_constant) uniform PC {
 }
 push_constant;
 
+#define PI 3.141592
+
+float atan2(in float y, in float x)
+{
+    bool s = (abs(x) > abs(y));
+    return mix(PI/2.0 - atan(x,y), atan(y,x), s);
+}
+
+vec3 sample_cubemap(vec3 r, float roughness) {
+float theta = acos(r.z);
+//  vec2 xy = normalize(r.xy);
+float phi = atan2(r.x, r.y);
+//  if (xy.y < 0.0)
+//    phi = 2.0 * 3.141592 - phi;
+int max_lod = textureQueryLevels(textures[push_constant.cubemap_id]);
+return textureLod(textures[push_constant.cubemap_id],
+  vec2(
+  phi/PI/2,
+  theta/PI
+), float(max_lod) * (1.0 - roughness)).xyz;
+}
+
 vec3 apply_light(vec3 n, vec3 l, vec3 v,
                  float metalness,
                  float roughness,
                  vec3 albedo) {
   float lambert = clamp(dot(l, n), 0.0, 1.0);
   vec3 r = reflect(v, n);
-  float theta = acos(r.z);
-  float phi = acos(r.x);
-  if (r.y < 0.0)
-    phi = 2.0 * 3.141592 - phi;
-  vec3 env = texture(textures[push_constant.cubemap_id],
-    vec2(
-    phi/2.0/3.141592,
-    theta/3.141592
-  )).xyz;
+
+  vec3 spec_env = sample_cubemap(r, roughness);
+  vec3 diffuse_env = sample_cubemap(r, 0.1);
+
   float phong = pow(clamp(dot(r, l), 0.0, 1.0), (roughness + 1.0) * 256.0);
-  vec3 spec_col = mix(albedo, vec3(1.0, 1.0, 1.0), 1.0 - metalness);
-  return albedo * lambert + spec_col * (phong + env);
+  vec3 spec_col = mix(albedo, vec3(1.0, 1.0, 1.0),
+  clamp(1.0 - metalness, 0.0, 1.0));
+  return albedo * lambert + albedo * diffuse_env + spec_col * phong + spec_col * spec_env;
 }
 
 void main() {
