@@ -232,12 +232,51 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   Gizmo_Layer gizmo_layer{};
   Random_Factory frand;
   Framebuffer_Wrapper framebuffer_wrapper{};
+  Storage_Image_Wrapper storage_image_wrapper{};
   Pipeline_Wrapper fullscreen_pipeline;
   Pipeline_Wrapper gltf_pipeline;
-   auto test_model = load_gltf_raw("models/sponza-gltf-pbr/sponza.glb");
-//  auto test_model = load_gltf_raw("models/WaterBottle/WaterBottle.gltf");
-//  auto test_model = load_gltf_raw("models/scene.gltf");
-//  auto test_model = load_gltf_raw("models/DamagedHelmet/DamagedHelmet.gltf");
+  Pipeline_Wrapper compute_pipeline_wrapped;
+  auto cubemap = open_cubemap("cubemaps/industrial.hdr");
+  CPU_Image cubemap_image;
+  {
+    cubemap_image = CPU_Image::create(device_wrapper, cubemap.width,
+                                      cubemap.height, cubemap.format);
+    auto cpu_buffer = alloc_state->allocate_buffer(
+        vk::BufferCreateInfo()
+            .setSize(cubemap.data.size())
+            .setUsage(vk::BufferUsageFlagBits::eTransferSrc),
+        VMA_MEMORY_USAGE_CPU_TO_GPU);
+    {
+      void *data = cpu_buffer.map();
+      memcpy(data, &cubemap.data[0], cubemap.data.size());
+      cpu_buffer.unmap();
+    }
+    {
+      auto &cmd = device_wrapper.graphics_cmds[0].get();
+      cmd.reset(vk::CommandBufferResetFlagBits::eReleaseResources);
+      cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
+      cubemap_image.transition_layout_to_dst(device_wrapper, cmd);
+      cmd.copyBufferToImage(
+          cpu_buffer.buffer, cubemap_image.image.image,
+          vk::ImageLayout::eTransferDstOptimal,
+          vk::ArrayProxy<const vk::BufferImageCopy>{
+              vk::BufferImageCopy()
+                  .setBufferOffset(0)
+                  .setImageSubresource(vk::ImageSubresourceLayers(
+                      vk::ImageAspectFlagBits::eColor, 0u, 0u, 1u))
+                  .setImageOffset(vk::Offset3D(0u, 0u, 0u))
+                  .setImageExtent(
+                      vk::Extent3D(cubemap.width, cubemap.height, 1u))});
+      cubemap_image.transition_layout_to_sampled(device_wrapper, cmd);
+      cmd.end();
+      device_wrapper.sumbit_and_flush(cmd);
+    }
+  }
+  //   auto test_model = load_gltf_raw("models/sponza-gltf-pbr/sponza.glb");
+  auto test_model = load_gltf_raw("models/WaterBottle/WaterBottle.gltf");
+  //  auto test_model = load_gltf_raw("models/scene.gltf");
+  //  auto test_model =
+  //  load_gltf_raw("models/DamagedHelmet/DamagedHelmet.gltf");
   std::vector<Raw_Mesh_Opaque_Wrapper> test_model_wrapper;
   for (auto &mesh : test_model.meshes) {
     test_model_wrapper.emplace_back(
@@ -294,7 +333,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         device_wrapper, gizmo_layer.example_viewport.extent.width,
         gizmo_layer.example_viewport.extent.height,
         vk::Format::eR32G32B32A32Sfloat);
-
+    compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
+        device_wrapper, "shaders/postprocess.comp.glsl", {});
     fullscreen_pipeline = Pipeline_Wrapper::create_graphics(
         device_wrapper, "shaders/tests/bufferless_triangle.vert.glsl",
         "shaders/tests/simple_1.frag.glsl",
@@ -304,6 +344,10 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                     vk::PrimitiveTopology::eTriangleList))
             .setRenderPass(framebuffer_wrapper.render_pass.get()),
         {}, {}, {});
+    storage_image_wrapper = Storage_Image_Wrapper::create(
+        device_wrapper, gizmo_layer.example_viewport.extent.width,
+        gizmo_layer.example_viewport.extent.height,
+        vk::Format::eR32G32B32A32Sfloat);
     gltf_pipeline = Pipeline_Wrapper::create_graphics(
         device_wrapper, "shaders/gltf.vert.glsl", "shaders/gltf.frag.glsl",
         vk::GraphicsPipelineCreateInfo()
@@ -356,9 +400,9 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     device_wrapper.sumbit_and_flush(cmd);
   }
 
-  /*--------------------------*/
-  /* Offscreen rendering loop */
-  /*--------------------------*/
+  /*---------------------*/
+  /* Offscreen rendering */
+  /*---------------------*/
   device_wrapper.pre_tick = [&](vk::CommandBuffer &cmd) {
     // Update backbuffer if the viewport size has changed
     if (simple_monitor.is_updated() ||
@@ -372,8 +416,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       void *data = gltf_ubo_buffer.map();
       sh_gltf_vert::UBO tmp_pc{};
       tmp_pc.proj = gizmo_layer.camera_proj;
-//      float scale = 10.0f;
-       float scale = 0.01f;
+      float scale = 10.0f;
+      //       float scale = 0.01f;
       tmp_pc.view = gizmo_layer.camera_view *
                     mat4(scale, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, scale, 0.0f, 0.0f,
                          scale, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
@@ -390,6 +434,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     framebuffer_wrapper.clear_depth(device_wrapper, cmd);
     framebuffer_wrapper.clear_color(device_wrapper, cmd);
     framebuffer_wrapper.begin_render_pass(cmd);
+    // Set up the rendering area
     cmd.setViewport(
         0,
         {vk::Viewport(0, 0, gizmo_layer.example_viewport.extent.width,
@@ -398,6 +443,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     cmd.setScissor(0, {{{0, 0},
                         {gizmo_layer.example_viewport.extent.width,
                          gizmo_layer.example_viewport.extent.height}}});
+    u32 cubemap_id = test_model_textures.size();
     {
       // Update descriptor sets
       ito(test_model_textures.size()) {
@@ -405,11 +451,21 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
             device_wrapper.device.get(), "textures",
             test_model_textures[i].image_view.get(), mip_sampler.get(), i);
       }
+
+      gltf_pipeline.update_sampled_image_descriptor(
+          device_wrapper.device.get(), "textures",
+          cubemap_image.image_view.get(), mip_sampler.get(), cubemap_id);
       gltf_pipeline.update_descriptor(
           device.get(), "UBO", gltf_ubo_buffer.buffer, 0,
           sizeof(sh_gltf_vert::UBO), vk::DescriptorType::eUniformBuffer);
       gltf_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
+      compute_pipeline_wrapped.update_storage_image_descriptor(
+          device.get(), "out_image", storage_image_wrapper.image_view.get());
+      compute_pipeline_wrapped.update_sampled_image_descriptor(
+          device_wrapper.device.get(), "in_image",
+          framebuffer_wrapper.image_view.get(), nearest_sampler.get());
 
+      // Main geometry pass
       ito(test_model.meshes.size()) {
         auto &wrap = test_model_wrapper[i];
         auto &material = test_model.materials[i];
@@ -417,6 +473,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         cmd.bindVertexBuffers(0, {wrap.vertex_buffer.buffer}, {0});
         cmd.bindIndexBuffer(wrap.index_buffer.buffer, 0,
                             vk::IndexType::eUint32);
+        // Push constants with texture IDs
         sh_gltf_frag::push_constant tmp_pc{};
         if (material.albedo_id >= 0) {
           tmp_pc.albedo_id = material.albedo_id;
@@ -427,6 +484,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         if (material.metalness_roughness_id >= 0) {
           tmp_pc.metalness_roughness_id = material.metalness_roughness_id;
         }
+        tmp_pc.cubemap_id = cubemap_id;
         gltf_pipeline.push_constants(cmd, &tmp_pc,
                                      sizeof(sh_gltf_frag::push_constant));
         cmd.drawIndexed(wrap.index_count, 1, 0, 0, 0);
@@ -435,18 +493,26 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     fullscreen_pipeline.bind_pipeline(device.get(), cmd);
 
     framebuffer_wrapper.end_render_pass(cmd);
-    // Gizmo pass
-    framebuffer_wrapper.clear_depth(device_wrapper, cmd);
 
+    // Gizmo pass
+    // Here we clear the depth to make Xray gizmo
+    framebuffer_wrapper.clear_depth(device_wrapper, cmd);
     framebuffer_wrapper.begin_render_pass(cmd);
     gizmo_layer.draw(device_wrapper, cmd);
     framebuffer_wrapper.end_render_pass(cmd);
+
+    // POST PROCESS PASS
     framebuffer_wrapper.transition_layout_to_read(device_wrapper, cmd);
+    storage_image_wrapper.transition_layout_to_write(device_wrapper, cmd);
+    compute_pipeline_wrapped.bind_pipeline(device.get(), cmd);
+    cmd.dispatch((gizmo_layer.example_viewport.extent.width + 15) / 16,
+                 (gizmo_layer.example_viewport.extent.height + 15) / 16, 1);
+    storage_image_wrapper.transition_layout_to_read(device_wrapper, cmd);
   };
 
-  /////////////////////
-  // Render the image
-  /////////////////////
+  /*--------------------*/
+  /* Onscreen rendering */
+  /*--------------------*/
   device_wrapper.on_tick = [&](vk::CommandBuffer &cmd) {
 
   };
@@ -462,7 +528,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     gizmo_layer.on_imgui_viewport();
 
     ImGui::Image(ImGui_ImplVulkan_AddTexture(
-                     sampler.get(), framebuffer_wrapper.image_view.get(),
+                     sampler.get(), storage_image_wrapper.image_view.get(),
                      VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
                  ImVec2(gizmo_layer.example_viewport.extent.width,
                         gizmo_layer.example_viewport.extent.height),
@@ -480,7 +546,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         ImGui::MenuItem("Click me");
         ImGui::EndMenu();
       }
-
+      if (ImGui::Button("Exit"))
+        std::exit(0);
       ImGui::Separator();
       ImGui::Text("Tooltip here");
       if (ImGui::IsItemHovered())

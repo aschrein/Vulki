@@ -24,3 +24,5 @@ struct GLFT_Model {
 };
 
 GLFT_Model load_gltf_raw(std::string const &filename);
+
+Image_Raw open_cubemap(std::string const &filename);

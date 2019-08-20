@@ -251,15 +251,15 @@ GLFT_Model load_gltf_raw(std::string const &filename) {
                            .data[bview.byteOffset + stride * i];
             opaque_mesh.indices.push_back(*src);
           }
-//        } else if (accessor.ByteStride(bview) == 4) {
-//          u32 stride = accessor.ByteStride(bview);
-//          ito(accessor.count) {
-//            u32 *src = (u32 *)&model.buffers[bview.buffer]
-//                           .data[bview.byteOffset + stride * i];
-//            opaque_mesh.indices.push_back(*src);
-//          }
+          //        } else if (accessor.ByteStride(bview) == 4) {
+          //          u32 stride = accessor.ByteStride(bview);
+          //          ito(accessor.count) {
+          //            u32 *src = (u32 *)&model.buffers[bview.buffer]
+          //                           .data[bview.byteOffset + stride * i];
+          //            opaque_mesh.indices.push_back(*src);
+          //          }
         } else {
-            ASSERT_PANIC(false)
+          ASSERT_PANIC(false)
         }
       }
       ASSERT_PANIC(opaque_mesh.attributes.size() ==
@@ -315,5 +315,31 @@ GLFT_Model load_gltf_raw(std::string const &filename) {
       out.materials.push_back(material);
     }
   }
+  return out;
+}
+
+Image_Raw open_cubemap(std::string const &filename) {
+  int width, height, channels;
+  unsigned char *result;
+  FILE *f = stbi__fopen(filename.c_str(), "rb");
+  ASSERT_PANIC(f);
+  stbi__context s;
+  stbi__start_file(&s, f);
+  stbi__result_info ri;
+  memset(&ri, 0, sizeof(ri));
+  ri.bits_per_channel = 8;
+  ri.channel_order = STBI_ORDER_RGB;
+  ri.num_channels = 0;
+  float *hdr = stbi__hdr_load(&s, &width, &height, &channels, STBI_rgb, &ri);
+
+  fclose(f);
+  ASSERT_PANIC(hdr)
+  Image_Raw out;
+  out.width = width;
+  out.height = height;
+  out.format = vk::Format::eR32G32B32Sfloat;
+  out.data.resize(width * height * 3 * 4);
+  memcpy(&out.data[0], hdr, out.data.size());
+  stbi_image_free(hdr);
   return out;
 }

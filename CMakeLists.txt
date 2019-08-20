@@ -105,6 +105,10 @@ target_include_directories(test_3 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui 
 target_link_libraries(test_3 ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(test_3 PRIVATE shaderc_shared)
 
+add_executable(test_4 tests/test_4.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
+target_include_directories(test_4 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
+target_link_libraries(test_4 ${Vulkan_LIBRARY} ${LIBS})
+target_link_libraries(test_4 PRIVATE shaderc_shared)
 
 if(NOT EXISTS ${CMAKE_BINARY_DIR}/models)
     execute_process(
@@ -121,3 +125,17 @@ if(NOT EXISTS ${CMAKE_BINARY_DIR}/models)
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/models/
         )
 endif()
+
+if(NOT EXISTS ${CMAKE_BINARY_DIR}/cubemaps)
+    execute_process(
+        COMMAND mkdir ${CMAKE_BINARY_DIR}/cubemaps
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        )
+    file(DOWNLOAD https://hdrihaven.com/files/hdris/industrial_pipe_and_valve_01_2k.hdr cubemaps/industrial.hdr SHOW_PROGRESS)
+    execute_process(
+        COMMAND unzip -o *.zip
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/cubemaps/
+        )
+endif()
+
+

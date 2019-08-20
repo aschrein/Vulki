@@ -20,6 +20,7 @@ layout(push_constant) uniform PC {
   int albedo_id;
   int normal_id;
   int metalness_roughness_id;
+  int cubemap_id;
 }
 push_constant;
 
@@ -29,9 +30,18 @@ vec3 apply_light(vec3 n, vec3 l, vec3 v,
                  vec3 albedo) {
   float lambert = clamp(dot(l, n), 0.0, 1.0);
   vec3 r = reflect(v, n);
-  float phong = pow(clamp(dot(r, l), 0.0, 1.0), roughness  * 256.0);
+  float theta = acos(r.z);
+  float phi = acos(r.x);
+  if (r.y < 0.0)
+    phi = 2.0 * 3.141592 - phi;
+  vec3 env = texture(textures[push_constant.cubemap_id],
+    vec2(
+    phi/2.0/3.141592,
+    theta/3.141592
+  )).xyz;
+  float phong = pow(clamp(dot(r, l), 0.0, 1.0), (roughness + 1.0) * 256.0);
   vec3 spec_col = mix(albedo, vec3(1.0, 1.0, 1.0), 1.0 - metalness);
-  return albedo * lambert + spec_col * phong;
+  return albedo * lambert + spec_col * (phong + env);
 }
 
 void main() {
@@ -56,7 +66,8 @@ void main() {
 
 
   // lambert += clamp(dot(normalize(vec3(-1, -1, 1)), normal), 0.0, 1.0);
-  vec3 light = apply_light(new_normal, l, -v, mr.y, mr.z, albedo.xyz);
+  vec3 light = apply_light(new_normal, l, -v,
+  mr.z, mr.y, albedo.xyz);
   g_color =
   // vec4(nc.xyz, 1.0);
 //   vec4(abs(mr.zzz), 1.0);
