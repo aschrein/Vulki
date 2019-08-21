@@ -282,7 +282,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   Pipeline_Wrapper fullscreen_pipeline;
   Pipeline_Wrapper gltf_pipeline;
   Pipeline_Wrapper compute_pipeline_wrapped;
-  auto cubemap = open_cubemap("cubemaps/industrial.hdr");
+  auto cubemap = open_cubemap("cubemaps/pink_sunrise.hdr");
   CPU_Image cubemap_image;
   {
     u32 mip_levels;
@@ -453,6 +453,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     device_wrapper.sumbit_and_flush(cmd);
   }
 
+  u32 cubemap_id = test_model_textures.size();
+
   /*---------------------*/
   /* Offscreen rendering */
   /*---------------------*/
@@ -464,6 +466,12 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         framebuffer_wrapper.height !=
             gizmo_layer.example_viewport.extent.height) {
       recreate_resources();
+      // Workaround for validation layer error
+      for (u32 i = cubemap_id + 1u; i < 4096; i++) {
+        gltf_pipeline.update_sampled_image_descriptor(
+            device_wrapper.device.get(), "textures",
+            cubemap_image.image_view.get(), mip_sampler.get(), i);
+      }
     }
     {
       void *data = gltf_ubo_buffer.map();
@@ -496,7 +504,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     cmd.setScissor(0, {{{0, 0},
                         {gizmo_layer.example_viewport.extent.width,
                          gizmo_layer.example_viewport.extent.height}}});
-    u32 cubemap_id = test_model_textures.size();
+
     {
       // Update descriptor sets
       ito(test_model_textures.size()) {
@@ -508,6 +516,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       gltf_pipeline.update_sampled_image_descriptor(
           device_wrapper.device.get(), "textures",
           cubemap_image.image_view.get(), mip_sampler.get(), cubemap_id);
+
       gltf_pipeline.update_descriptor(
           device.get(), "UBO", gltf_ubo_buffer.buffer, 0,
           sizeof(sh_gltf_vert::UBO), vk::DescriptorType::eUniformBuffer);

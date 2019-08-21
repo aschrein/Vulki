@@ -54,7 +54,7 @@ vec3 apply_light(vec3 n, vec3 l, vec3 v,
   vec3 r = reflect(v, n);
 
   vec3 spec_env = sample_cubemap(r, roughness);
-  vec3 diffuse_env = sample_cubemap(r, 0.1);
+  vec3 diffuse_env = sample_cubemap(n, 0.1);
 
   float phong = pow(clamp(dot(r, l), 0.0, 1.0), (roughness + 1.0) * 256.0);
   vec3 spec_col = mix(albedo, vec3(1.0, 1.0, 1.0),

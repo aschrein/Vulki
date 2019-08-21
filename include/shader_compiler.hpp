@@ -229,7 +229,9 @@ struct Pipeline_Wrapper {
       std::unordered_map<std::string, Shader_Descriptor> const &slots) {
     // @TODO: Check for duplicates
     for (auto &slot : slots) {
-      this->resource_slots[slot.first] = slot.second;
+      auto cpy = slot.second;
+      cpy.layout.setStageFlags(vk::ShaderStageFlagBits::eAll);
+      this->resource_slots[slot.first] = cpy;
     }
   }
   std::vector<std::vector<vk::DescriptorSetLayoutBinding>> collect_sets() {

@@ -132,10 +132,9 @@ if(NOT EXISTS ${CMAKE_BINARY_DIR}/cubemaps)
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         )
     file(DOWNLOAD https://hdrihaven.com/files/hdris/industrial_pipe_and_valve_01_2k.hdr cubemaps/industrial.hdr SHOW_PROGRESS)
-    execute_process(
-        COMMAND unzip -o *.zip
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/cubemaps/
-        )
+    file(DOWNLOAD https://hdrihaven.com/files/hdris/lythwood_field_2k.hdr cubemaps/lythwood_field.hdr SHOW_PROGRESS)
+    file(DOWNLOAD https://hdrihaven.com/files/hdris/pink_sunrise_2k.hdr cubemaps/pink_sunrise.hdr SHOW_PROGRESS)
+
 endif()
 
 
