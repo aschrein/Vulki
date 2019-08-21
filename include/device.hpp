@@ -516,4 +516,50 @@ struct CPU_Image {
   }
 };
 
+struct GPU_Image2D {
+  RAW_MOVABLE(GPU_Image2D)
+  VmaImage image;
+  uint32_t width;
+  uint32_t height;
+  uint32_t mip_levels;
+  static GPU_Image2D create(Device_Wrapper &device_wrapper, uint32_t width,
+                            uint32_t height, vk::Format format,
+                            uint32_t mip_levels = 1u) {
+    ASSERT_PANIC(width && height);
+    GPU_Image2D out{};
+    out.width = width;
+    out.height = height;
+    out.mip_levels = mip_levels;
+    out.image = device_wrapper.alloc_state->allocate_image(
+        vk::ImageCreateInfo()
+            .setArrayLayers(1)
+            .setExtent(vk::Extent3D(width, height, 1))
+            .setFormat(format)
+            .setMipLevels(mip_levels)
+            .setImageType(vk::ImageType::e2D)
+            .setInitialLayout(vk::ImageLayout::eUndefined)
+            .setPQueueFamilyIndices(&device_wrapper.graphics_queue_family_id)
+            .setQueueFamilyIndexCount(1)
+            .setSamples(vk::SampleCountFlagBits::e1)
+            .setSharingMode(vk::SharingMode::eExclusive)
+            .setTiling(vk::ImageTiling::eLinear)
+            .setUsage(vk::ImageUsageFlagBits::eSampled |
+                      vk::ImageUsageFlagBits::eTransferDst),
+        VMA_MEMORY_USAGE_GPU_ONLY);
+    return out;
+  }
+  void transition_layout_to_dst(Device_Wrapper &device,
+                                vk::CommandBuffer &cmd) {
+    image.barrier(cmd, device.graphics_queue_family_id,
+                  vk::ImageLayout::eTransferDstOptimal,
+                  vk::AccessFlagBits::eTransferWrite);
+  }
+  void transition_layout_to_sampled(Device_Wrapper &device,
+                                    vk::CommandBuffer &cmd) {
+    image.barrier(cmd, device.graphics_queue_family_id,
+                  vk::ImageLayout::eShaderReadOnlyOptimal,
+                  vk::AccessFlagBits::eShaderRead);
+  }
+};
+
 extern "C" Device_Wrapper init_device(bool init_glfw = false);

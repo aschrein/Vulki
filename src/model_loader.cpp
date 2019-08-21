@@ -318,28 +318,43 @@ GLFT_Model load_gltf_raw(std::string const &filename) {
   return out;
 }
 
-Image_Raw open_cubemap(std::string const &filename) {
-  int width, height, channels;
-  unsigned char *result;
-  FILE *f = stbi__fopen(filename.c_str(), "rb");
-  ASSERT_PANIC(f);
-  stbi__context s;
-  stbi__start_file(&s, f);
-  stbi__result_info ri;
-  memset(&ri, 0, sizeof(ri));
-  ri.bits_per_channel = 8;
-  ri.channel_order = STBI_ORDER_RGB;
-  ri.num_channels = 0;
-  float *hdr = stbi__hdr_load(&s, &width, &height, &channels, STBI_rgb, &ri);
+Image_Raw load_image(std::string const &filename) {
+  if (filename.find(".hdr") != std::string::npos) {
+    int width, height, channels;
+    unsigned char *result;
+    FILE *f = stbi__fopen(filename.c_str(), "rb");
+    ASSERT_PANIC(f);
+    stbi__context s;
+    stbi__start_file(&s, f);
+    stbi__result_info ri;
+    memset(&ri, 0, sizeof(ri));
+    ri.bits_per_channel = 8;
+    ri.channel_order = STBI_ORDER_RGB;
+    ri.num_channels = 0;
+    float *hdr = stbi__hdr_load(&s, &width, &height, &channels, STBI_rgb, &ri);
 
-  fclose(f);
-  ASSERT_PANIC(hdr)
-  Image_Raw out;
-  out.width = width;
-  out.height = height;
-  out.format = vk::Format::eR32G32B32Sfloat;
-  out.data.resize(width * height * 3 * 4);
-  memcpy(&out.data[0], hdr, out.data.size());
-  stbi_image_free(hdr);
-  return out;
+    fclose(f);
+    ASSERT_PANIC(hdr)
+    Image_Raw out;
+    out.width = width;
+    out.height = height;
+    out.format = vk::Format::eR32G32B32Sfloat;
+    out.data.resize(width * height * 3u * 4u);
+    memcpy(&out.data[0], hdr, out.data.size());
+    stbi_image_free(hdr);
+    return out;
+  } else {
+    int width, height, channels;
+    auto image =
+        stbi_load(filename.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+    ASSERT_PANIC(image);
+    Image_Raw out;
+    out.width = width;
+    out.height = height;
+    out.format = vk::Format::eR8G8B8A8Unorm;
+    out.data.resize(width * height * 4u);
+    memcpy(&out.data[0], image, out.data.size());
+    stbi_image_free(image);
+    return out;
+  }
 }

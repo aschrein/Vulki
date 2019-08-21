@@ -32,7 +32,7 @@ TEST(graphics, hdr_test) {
   auto device_wrapper = init_device(true);
   Alloc_State *alloc_state = device_wrapper.alloc_state.get();
   auto &device = device_wrapper.device;
-  auto cubemap = open_cubemap("cubemaps/industrial.hdr");
+  auto cubemap = load_image("cubemaps/industrial.hdr");
   CPU_Image cubemap_image;
   {
     cubemap_image = CPU_Image::create(device_wrapper, cubemap.width,

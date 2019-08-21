@@ -268,6 +268,51 @@ std::vector<u8> build_mips(std::vector<u8> const &data, u32 width, u32 height,
   return out;
 }
 
+GPU_Image2D wrap_image(Device_Wrapper &device_wrapper,
+                       Image_Raw const &image_raw) {
+  u32 mip_levels;
+  std::vector<uvec2> mip_sizes;
+  std::vector<u32> mip_offsets;
+  Alloc_State *alloc_state = device_wrapper.alloc_state.get();
+  auto with_mips =
+      build_mips(image_raw.data, image_raw.width, image_raw.height,
+                 image_raw.format, mip_levels, mip_offsets, mip_sizes);
+  GPU_Image2D out_image =
+      GPU_Image2D::create(device_wrapper, image_raw.width, image_raw.height,
+                          image_raw.format, mip_levels);
+  auto cpu_buffer = alloc_state->allocate_buffer(
+      vk::BufferCreateInfo()
+          .setSize(with_mips.size())
+          .setUsage(vk::BufferUsageFlagBits::eTransferSrc),
+      VMA_MEMORY_USAGE_CPU_TO_GPU);
+  {
+    void *data = cpu_buffer.map();
+    memcpy(data, &with_mips[0], with_mips.size());
+    cpu_buffer.unmap();
+  }
+  {
+    auto &cmd = device_wrapper.graphics_cmds[0].get();
+    cmd.reset(vk::CommandBufferResetFlagBits::eReleaseResources);
+    cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
+    out_image.transition_layout_to_dst(device_wrapper, cmd);
+    ito(mip_levels) cmd.copyBufferToImage(
+        cpu_buffer.buffer, out_image.image.image,
+        vk::ImageLayout::eTransferDstOptimal,
+        vk::ArrayProxy<const vk::BufferImageCopy>{
+            vk::BufferImageCopy()
+                .setBufferOffset(mip_offsets[i])
+                .setImageSubresource(vk::ImageSubresourceLayers(
+                    vk::ImageAspectFlagBits::eColor, i, 0u, 1u))
+                .setImageOffset(vk::Offset3D(0u, 0u, 0u))
+                .setImageExtent(
+                    vk::Extent3D(mip_sizes[i].x, mip_sizes[i].y, 1u))});
+    out_image.transition_layout_to_sampled(device_wrapper, cmd);
+    cmd.end();
+    device_wrapper.sumbit_and_flush(cmd);
+  }
+  return out_image;
+}
+
 TEST(graphics, vulkan_graphics_test_3d_models) {
   ASSERT_PANIC(sizeof(Component_ID) == 8u);
 
@@ -282,49 +327,10 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   Pipeline_Wrapper fullscreen_pipeline;
   Pipeline_Wrapper gltf_pipeline;
   Pipeline_Wrapper compute_pipeline_wrapped;
-  auto cubemap = open_cubemap("cubemaps/pink_sunrise.hdr");
-  CPU_Image cubemap_image;
-  {
-    u32 mip_levels;
-    std::vector<uvec2> mip_sizes;
-    std::vector<u32> mip_offsets;
-    auto with_mips =
-        build_mips(cubemap.data, cubemap.width, cubemap.height, cubemap.format,
-                   mip_levels, mip_offsets, mip_sizes);
-    cubemap_image =
-        CPU_Image::create(device_wrapper, cubemap.width, cubemap.height,
-                          cubemap.format, mip_levels);
-    auto cpu_buffer = alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(with_mips.size())
-            .setUsage(vk::BufferUsageFlagBits::eTransferSrc),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-    {
-      void *data = cpu_buffer.map();
-      memcpy(data, &with_mips[0], with_mips.size());
-      cpu_buffer.unmap();
-    }
-    {
-      auto &cmd = device_wrapper.graphics_cmds[0].get();
-      cmd.reset(vk::CommandBufferResetFlagBits::eReleaseResources);
-      cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
-      cubemap_image.transition_layout_to_dst(device_wrapper, cmd);
-      ito(mip_levels) cmd.copyBufferToImage(
-          cpu_buffer.buffer, cubemap_image.image.image,
-          vk::ImageLayout::eTransferDstOptimal,
-          vk::ArrayProxy<const vk::BufferImageCopy>{
-              vk::BufferImageCopy()
-                  .setBufferOffset(mip_offsets[i])
-                  .setImageSubresource(vk::ImageSubresourceLayers(
-                      vk::ImageAspectFlagBits::eColor, i, 0u, 1u))
-                  .setImageOffset(vk::Offset3D(0u, 0u, 0u))
-                  .setImageExtent(
-                      vk::Extent3D(mip_sizes[i].x, mip_sizes[i].y, 1u))});
-      cubemap_image.transition_layout_to_sampled(device_wrapper, cmd);
-      cmd.end();
-      device_wrapper.sumbit_and_flush(cmd);
-    }
-  }
+  auto cubemap = load_image("cubemaps/pink_sunrise.hdr");
+  GPU_Image2D cubemap_image = wrap_image(device_wrapper, cubemap);
+  GPU_Image2D test_image =
+      wrap_image(device_wrapper, load_image("../images/screenshot_1.png"));
   //   auto test_model = load_gltf_raw("models/sponza-gltf-pbr/sponza.glb");
   auto test_model = load_gltf_raw("models/WaterBottle/WaterBottle.gltf");
   //  auto test_model = load_gltf_raw("models/scene.gltf");
@@ -335,51 +341,10 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     test_model_wrapper.emplace_back(
         Raw_Mesh_Opaque_Wrapper::create(device_wrapper, mesh));
   }
-  std::vector<CPU_Image> test_model_textures;
+  std::vector<GPU_Image2D> test_model_textures;
   for (auto &image : test_model.images) {
-    u32 mip_levels;
-    std::vector<uvec2> mip_sizes;
-    std::vector<u32> mip_offsets;
-    auto with_mips =
-        build_mips(image.data, image.width, image.height, image.format,
-                   mip_levels, mip_offsets, mip_sizes);
-    CPU_Image cpu_image = CPU_Image::create(
-        device_wrapper, image.width, image.height, image.format, mip_levels);
-    auto cpu_buffer = alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(with_mips.size())
-            .setUsage(vk::BufferUsageFlagBits::eTransferSrc),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-    {
-      void *data = cpu_buffer.map();
-      memcpy(data, &with_mips[0], with_mips.size());
-      cpu_buffer.unmap();
-    }
-    {
-      auto &cmd = device_wrapper.graphics_cmds[0].get();
-      cmd.reset(vk::CommandBufferResetFlagBits::eReleaseResources);
-      cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
-      cpu_image.transition_layout_to_dst(device_wrapper, cmd);
-      ito(mip_levels) cmd.copyBufferToImage(
-          cpu_buffer.buffer, cpu_image.image.image,
-          vk::ImageLayout::eTransferDstOptimal,
-          vk::ArrayProxy<const vk::BufferImageCopy>{
-              vk::BufferImageCopy()
-                  .setBufferOffset(mip_offsets[i])
-                  //  .setBufferRowLength(mip_sizes[i].x * 4u)
-                  //  .setBufferImageHeight(mip_sizes[i].y)
-                  .setImageSubresource(vk::ImageSubresourceLayers(
-                      vk::ImageAspectFlagBits::eColor, i, 0u, 1u))
-                  .setImageOffset(vk::Offset3D(0u, 0u, 0u))
-                  .setImageExtent(
-                      vk::Extent3D(mip_sizes[i].x, mip_sizes[i].y, 1u))});
-      cmd.end();
-      device_wrapper.sumbit_and_flush(cmd);
-    }
-    // void *data = cpu_image.image.map();
-    // memcpy(data, &with_mips[0], with_mips.size());
-    // cpu_image.image.unmap();
-    test_model_textures.emplace_back(std::move(cpu_image));
+    test_model_textures.emplace_back(
+        std::move(wrap_image(device_wrapper, image)));
   }
   auto recreate_resources = [&] {
     framebuffer_wrapper = Framebuffer_Wrapper::create(
