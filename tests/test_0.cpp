@@ -542,7 +542,7 @@ TEST(graphics, vulkan_graphics_shader_test_1) {
     }
     storage_image_wrapper.transition_layout_to_write(device_wrapper, cmd);
     compute_pipeline_wrapped.update_storage_image_descriptor(
-        device.get(), "resultImage", storage_image_wrapper.image_view.get());
+        device.get(), "resultImage", storage_image_wrapper.image.view.get());
     compute_pipeline_wrapped.bind_pipeline(device.get(), cmd);
     cmd.dispatch(4, 1, 1);
     storage_image_wrapper.transition_layout_to_read(device_wrapper, cmd);
@@ -555,7 +555,7 @@ TEST(graphics, vulkan_graphics_shader_test_1) {
   device_wrapper.on_tick = [&](vk::CommandBuffer &cmd) {
     my_pipeline.bind_pipeline(device.get(), cmd);
     my_pipeline.update_sampled_image_descriptor(
-        device.get(), "tex", storage_image_wrapper.image_view.get(),
+        device.get(), "tex", storage_image_wrapper.image.view.get(),
         sampler.get());
     cmd.setViewport(
         0, {vk::Viewport(example_viewport.offset.x, example_viewport.offset.y,
@@ -713,7 +713,7 @@ TEST(graphics, vulkan_graphics_shader_test_2) {
         device.get(), "UBO", ubo_buffer.buffer, 0, sizeof(UBO),
         vk::DescriptorType::eUniformBuffer);
     compute_pipeline_wrapped.update_storage_image_descriptor(
-        device.get(), "resultImage", storage_image_wrapper.image_view.get());
+        device.get(), "resultImage", storage_image_wrapper.image.view.get());
     {
       void *data = ubo_buffer.map();
       UBO *typed_data = (UBO *)data;
@@ -835,7 +835,7 @@ TEST(graphics, vulkan_graphics_shader_test_2) {
 
     ImGui::Image(
         ImGui_ImplVulkan_AddTexture(
-            sampler.get(), storage_image_wrapper.image_view.get(),
+            sampler.get(), storage_image_wrapper.image.view.get(),
             VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
         ImVec2(example_viewport.extent.width, example_viewport.extent.height));
     // ImGui::ShowDemoWindow(&show_demo);

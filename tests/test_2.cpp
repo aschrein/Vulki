@@ -113,8 +113,7 @@ TEST(graphics, vulkan_graphics_test_1) {
   auto recreate_resources = [&] {
     // Raymarching kernel
     compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
-        device_wrapper, "shaders/raymarch.comp.1.glsl",
-        {{"GROUP_DIM", "16"}});
+        device_wrapper, "shaders/raymarch.comp.1.glsl", {{"GROUP_DIM", "16"}});
     framebuffer_wrapper = Framebuffer_Wrapper::create(
         device_wrapper, gizmo_layer.example_viewport.extent.width,
         gizmo_layer.example_viewport.extent.height,
@@ -288,9 +287,9 @@ TEST(graphics, vulkan_graphics_test_1) {
           sizeof(Compute_UBO), vk::DescriptorType::eUniformBuffer);
 
       compute_pipeline_wrapped.update_storage_image_descriptor(
-          device.get(), "resultImage", storage_image_wrapper.image_view.get());
+          device.get(), "resultImage", storage_image_wrapper.image.view.get());
       fullscreen_pipeline.update_sampled_image_descriptor(
-          device.get(), "tex", storage_image_wrapper.image_view.get(),
+          device.get(), "tex", storage_image_wrapper.image.view.get(),
           sampler.get());
       cpu_frametime_stack.set_value("descriptor update", __timestamp.end());
     }
@@ -381,7 +380,7 @@ TEST(graphics, vulkan_graphics_test_1) {
     // ImGui::Button("Press me");
 
     ImGui::Image(ImGui_ImplVulkan_AddTexture(
-                     sampler.get(), framebuffer_wrapper.image_view.get(),
+                     sampler.get(), framebuffer_wrapper.image.view.get(),
                      VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
                  ImVec2(gizmo_layer.example_viewport.extent.width,
                         gizmo_layer.example_viewport.extent.height),
@@ -469,7 +468,7 @@ TEST(graphics, vulkan_graphics_test_1) {
     }
     if (cpu_frametime_stack.values.size()) {
       ImGui::Image(
-          ImGui_ImplVulkan_AddTexture(sampler.get(), cpu_time.image_view.get(),
+          ImGui_ImplVulkan_AddTexture(sampler.get(), cpu_time.image.view.get(),
                                       VkImageLayout::VK_IMAGE_LAYOUT_GENERAL),
           ImVec2(cpu_time.width, cpu_time.height), ImVec2(0.0f, 1.0f),
           ImVec2(1.0f, 0.0f));
@@ -615,7 +614,7 @@ TEST(graphics, vulkan_graphics_test_gizmo) {
     // ImGui::Button("Press me");
 
     ImGui::Image(ImGui_ImplVulkan_AddTexture(
-                     sampler.get(), framebuffer_wrapper.image_view.get(),
+                     sampler.get(), framebuffer_wrapper.image.view.get(),
                      VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
                  ImVec2(gizmo_layer.example_viewport.extent.width,
                         gizmo_layer.example_viewport.extent.height),
@@ -773,22 +772,23 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       //   Bit_Stream ug_bitstream;
       //   scene_node.ug.to_bit_table(ug_bitstream);
       //   {
-      //     std::ofstream out("ug_bitstream", std::ios::binary | std::ios::out);
-      //     out.write((char *)&ug_bitstream.bytes[0], ug_bitstream.bytes.size());
-      //     std::cout << "[Packing] entropy of ug_bitstream: "
+      //     std::ofstream out("ug_bitstream", std::ios::binary |
+      //     std::ios::out); out.write((char *)&ug_bitstream.bytes[0],
+      //     ug_bitstream.bytes.size()); std::cout << "[Packing] entropy of
+      //     ug_bitstream: "
       //               << ug_bitstream.shannon_entropy() << "\n";
       //   }
       //   {
-      //     std::ofstream out("ug_runlength4", std::ios::binary | std::ios::out);
-      //     Bit_Stream runlength;
+      //     std::ofstream out("ug_runlength4", std::ios::binary |
+      //     std::ios::out); Bit_Stream runlength;
       //     ug_bitstream.run_length_encode4(runlength);
       //     out.write((char *)&runlength.bytes[0], runlength.bytes.size());
       //     std::cout << "[Packing] entropy of ug_runlength4: "
       //               << runlength.shannon_entropy() << "\n";
       //   }
       //   {
-      //     std::ofstream out("ug_runlength8", std::ios::binary | std::ios::out);
-      //     Bit_Stream runlength;
+      //     std::ofstream out("ug_runlength8", std::ios::binary |
+      //     std::ios::out); Bit_Stream runlength;
       //     ug_bitstream.run_length_encode8(runlength);
       //     Bit_Stream inverserunlength;
       //     runlength.decode_run_length8(inverserunlength);
@@ -796,7 +796,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       //       if (ug_bitstream.bytes[i] != inverserunlength.bytes[i])
       //         std::cout << "[ERROR] @ " << i << "\n";
       //     }
-          
+
       //     std::cout << "[Packing] entropy of ug_runlength8: "
       //               << runlength.shannon_entropy() << "\n";
       //     vec3 dim = scene_node.ug.max - scene_node.ug.min;
@@ -808,8 +808,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       //     std::cout << "const uint BINS_X = " << scene_node.ug.bin_count.x
       //               << "u, BINS_Y = " << scene_node.ug.bin_count.y
       //               << "u, BINS_Z = " << scene_node.ug.bin_count.z << "u;\n";
-      //     std::cout << "const uint DATA_SIZE = " << (runlength.bytes.size() + 3) / 4 << "u;\n";        
-      //     std::cout << "const uint raw_data[] = uint[](";
+      //     std::cout << "const uint DATA_SIZE = " << (runlength.bytes.size() +
+      //     3) / 4 << "u;\n"; std::cout << "const uint raw_data[] = uint[](";
       //     // Assume Little endian
       //     u32 *u32_data = (u32 *)&runlength.bytes[0];
       //     for (u32 i = 0; i < (runlength.bytes.size() + 3) / 4; i++) {
@@ -819,8 +819,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       //     out.write((char *)&runlength.bytes[0], runlength.bytes.size());
       //   }
       //   {
-      //     std::ofstream out("ug_runlength16", std::ios::binary | std::ios::out);
-      //     Bit_Stream runlength;
+      //     std::ofstream out("ug_runlength16", std::ios::binary |
+      //     std::ios::out); Bit_Stream runlength;
       //     ug_bitstream.run_length_encode16(runlength);
       //     out.write((char *)&runlength.bytes[0], runlength.bytes.size());
       //     std::cout << "[Packing] entropy of ug_runlength16: "
@@ -1227,8 +1227,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
              .setInputRate(vk::VertexInputRate::eVertex)},
         {}, sizeof(Test_Model_Push_Constants));
     test_model_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "shaders/3p3n2t.vert.glsl",
-        "shaders/lambert.frag.glsl",
+        device_wrapper, "shaders/3p3n2t.vert.glsl", "shaders/lambert.frag.glsl",
         vk::GraphicsPipelineCreateInfo().setRenderPass(
             framebuffer_wrapper.render_pass.get()),
         {
@@ -1364,7 +1363,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       path_tracing_plane_pipeline.push_constants(
           cmd, &tmp_pc, sizeof(Path_Tracing_Plane_Push));
       path_tracing_plane_pipeline.update_sampled_image_descriptor(
-          device.get(), "tex", path_tracing_gpu_image.image_view.get(),
+          device.get(), "tex", path_tracing_gpu_image.image.view.get(),
           nearest_sampler.get());
       cmd.draw(6, 1, 0, 0);
     }
@@ -1458,7 +1457,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     // ImGui::Button("Press me");
 
     ImGui::Image(ImGui_ImplVulkan_AddTexture(
-                     sampler.get(), framebuffer_wrapper.image_view.get(),
+                     sampler.get(), framebuffer_wrapper.image.view.get(),
                      VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
                  ImVec2(gizmo_layer.example_viewport.extent.width,
                         gizmo_layer.example_viewport.extent.height),
@@ -1520,7 +1519,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                                 min_col.position + min_col.normal,
                                 vec3(0.0f, 0.0f, 1.0f));
           gizmo_layer.push_line(min_col.position, path_tracing_camera.pos,
-                                 vec3(1.0f, 1.0f, 0.0f));
+                                vec3(1.0f, 1.0f, 0.0f));
           mat4 path_tracing_camera_viewproj =
               glm::perspective(float(M_PI) / 2.0f, path_tracing_camera.fov,
                                1.0e-1f, 1.0e3f) *
@@ -1654,7 +1653,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
 
       path_tracing_gpu_image.image.unmap();
       ImGui::Image(ImGui_ImplVulkan_AddTexture(
-                       sampler.get(), path_tracing_gpu_image.image_view.get(),
+                       sampler.get(), path_tracing_gpu_image.image.view.get(),
                        VkImageLayout::VK_IMAGE_LAYOUT_GENERAL),
                    ImVec2(path_tracing_image.width, path_tracing_image.height),
                    ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
@@ -1810,8 +1809,7 @@ TEST(graphics, vulkan_graphics_test_volume_rendering) {
   auto recreate_resources = [&] {
     // Raymarching kernel
     compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
-        device_wrapper, "shaders/raymarch.comp.2.glsl",
-        {{"GROUP_DIM", "16"}});
+        device_wrapper, "shaders/raymarch.comp.2.glsl", {{"GROUP_DIM", "16"}});
     framebuffer_wrapper = Framebuffer_Wrapper::create(
         device_wrapper, gizmo_layer.example_viewport.extent.width,
         gizmo_layer.example_viewport.extent.height,
@@ -1946,7 +1944,7 @@ TEST(graphics, vulkan_graphics_test_volume_rendering) {
                             float(bins_x) * 0.5f;
           if (length(v) > 1.0e-7f)
             gizmo_layer.push_line(origin, origin + 5.0f * (vec3(v.x, v.y, v.z)),
-                                 
+
                                   vec3(1.0f, 0.0f, 0.0f));
         }
         ito(typed_data_y.size() / 4) {
@@ -1961,7 +1959,7 @@ TEST(graphics, vulkan_graphics_test_volume_rendering) {
                             float(bins_x) * 0.5f;
           if (length(v) > 1.0e-7f)
             gizmo_layer.push_line(origin, origin + 5.0f * (vec3(v.x, v.y, v.z)),
-                                 
+
                                   vec3(0.0f, 1.0f, 0.0f));
         }
         ito(typed_data_z.size() / 4) {
@@ -1976,7 +1974,7 @@ TEST(graphics, vulkan_graphics_test_volume_rendering) {
                             float(bins_x) * 0.5f;
           if (length(v) > 1.0e-7f)
             gizmo_layer.push_line(origin, origin + 5.0f * (vec3(v.x, v.y, v.z)),
-                                  
+
                                   vec3(0.0f, 0.0f, 1.0f));
         }
         memcpy(data, &typed_data_x[0], 4 * typed_data_x.size());
@@ -2026,9 +2024,9 @@ TEST(graphics, vulkan_graphics_test_volume_rendering) {
           sizeof(Compute_UBO), vk::DescriptorType::eUniformBuffer);
 
       compute_pipeline_wrapped.update_storage_image_descriptor(
-          device.get(), "resultImage", storage_image_wrapper.image_view.get());
+          device.get(), "resultImage", storage_image_wrapper.image.view.get());
       fullscreen_pipeline.update_sampled_image_descriptor(
-          device.get(), "tex", storage_image_wrapper.image_view.get(),
+          device.get(), "tex", storage_image_wrapper.image.view.get(),
           sampler.get());
       cpu_frametime_stack.set_value("descriptor update", __timestamp.end());
     }
@@ -2119,7 +2117,7 @@ TEST(graphics, vulkan_graphics_test_volume_rendering) {
     // ImGui::Button("Press me");
 
     ImGui::Image(ImGui_ImplVulkan_AddTexture(
-                     sampler.get(), framebuffer_wrapper.image_view.get(),
+                     sampler.get(), framebuffer_wrapper.image.view.get(),
                      VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
                  ImVec2(gizmo_layer.example_viewport.extent.width,
                         gizmo_layer.example_viewport.extent.height),
@@ -2207,7 +2205,7 @@ TEST(graphics, vulkan_graphics_test_volume_rendering) {
     }
     if (cpu_frametime_stack.values.size()) {
       ImGui::Image(
-          ImGui_ImplVulkan_AddTexture(sampler.get(), cpu_time.image_view.get(),
+          ImGui_ImplVulkan_AddTexture(sampler.get(), cpu_time.image.view.get(),
                                       VkImageLayout::VK_IMAGE_LAYOUT_GENERAL),
           ImVec2(cpu_time.width, cpu_time.height), ImVec2(0.0f, 1.0f),
           ImVec2(1.0f, 0.0f));

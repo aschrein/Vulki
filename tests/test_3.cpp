@@ -470,7 +470,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       for (u32 i = cubemap_id + 1u; i < 4096; i++) {
         gltf_pipeline.update_sampled_image_descriptor(
             device_wrapper.device.get(), "textures",
-            cubemap_image.image_view.get(), mip_sampler.get(), i);
+            cubemap_image.image.view.get(), mip_sampler.get(), i);
       }
     }
     {
@@ -510,22 +510,22 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       ito(test_model_textures.size()) {
         gltf_pipeline.update_sampled_image_descriptor(
             device_wrapper.device.get(), "textures",
-            test_model_textures[i].image_view.get(), mip_sampler.get(), i);
+            test_model_textures[i].image.view.get(), mip_sampler.get(), i);
       }
 
       gltf_pipeline.update_sampled_image_descriptor(
           device_wrapper.device.get(), "textures",
-          cubemap_image.image_view.get(), mip_sampler.get(), cubemap_id);
+          cubemap_image.image.view.get(), mip_sampler.get(), cubemap_id);
 
       gltf_pipeline.update_descriptor(
           device.get(), "UBO", gltf_ubo_buffer.buffer, 0,
           sizeof(sh_gltf_vert::UBO), vk::DescriptorType::eUniformBuffer);
       gltf_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
       compute_pipeline_wrapped.update_storage_image_descriptor(
-          device.get(), "out_image", storage_image_wrapper.image_view.get());
+          device.get(), "out_image", storage_image_wrapper.image.view.get());
       compute_pipeline_wrapped.update_sampled_image_descriptor(
           device_wrapper.device.get(), "in_image",
-          framebuffer_wrapper.image_view.get(), nearest_sampler.get());
+          framebuffer_wrapper.image.view.get(), nearest_sampler.get());
 
       // Main geometry pass
       ito(test_model.meshes.size()) {
@@ -590,7 +590,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
     gizmo_layer.on_imgui_viewport();
 
     ImGui::Image(ImGui_ImplVulkan_AddTexture(
-                     sampler.get(), storage_image_wrapper.image_view.get(),
+                     sampler.get(), storage_image_wrapper.image.view.get(),
                      VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
                  ImVec2(gizmo_layer.example_viewport.extent.width,
                         gizmo_layer.example_viewport.extent.height),

@@ -362,7 +362,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     u32 GRID_DIM;
     {
       CPU_timestamp __timestamp;
-      UG ug(rendering_grid_size , rendering_grid_size/GRID_CELL_SIZE);
+      UG ug(rendering_grid_size, rendering_grid_size / GRID_CELL_SIZE);
 
       for (u32 i = 0; i < particle_system.particles.size(); i++) {
         ug.put(particle_system.particles[i],
@@ -520,7 +520,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
           device.get(), "UBO", particle_ubo_buffer.buffer, 0,
           sizeof(Particle_UBO), vk::DescriptorType::eUniformBuffer);
       compute_pipeline_wrapped.update_storage_image_descriptor(
-          device.get(), "resultImage", storage_image_wrapper.image_view.get());
+          device.get(), "resultImage", storage_image_wrapper.image.view.get());
       cpu_frametime_stack.set_value("descriptor update", __timestamp.end());
     }
     /*------------------------------*/
@@ -553,7 +553,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
       if (render_raymarch) {
         fullscreen_pipeline.bind_pipeline(device.get(), cmd);
         fullscreen_pipeline.update_sampled_image_descriptor(
-            device.get(), "tex", storage_image_wrapper.image_view.get(),
+            device.get(), "tex", storage_image_wrapper.image.view.get(),
             sampler.get());
 
         cmd.draw(3, 1, 0, 0);
@@ -623,7 +623,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
 
     gizmo_layer.on_imgui_viewport();
     ImGui::Image(ImGui_ImplVulkan_AddTexture(
-                     sampler.get(), framebuffer_wrapper.image_view.get(),
+                     sampler.get(), framebuffer_wrapper.image.view.get(),
                      VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
                  ImVec2(gizmo_layer.example_viewport.extent.width,
                         gizmo_layer.example_viewport.extent.height),
@@ -666,8 +666,8 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     ImGui::DragFloat("[Debug] rendering grid size", &rendering_grid_size,
                      0.025f, 0.025f, 10.0f);
     f32 step = 0.1f;
-    ImGui::InputScalar("raymarch grid cell size", ImGuiDataType_Float, &GRID_CELL_SIZE,
-                       &step);
+    ImGui::InputScalar("raymarch grid cell size", ImGuiDataType_Float,
+                       &GRID_CELL_SIZE, &step);
     ImGui::SliderInt("raymarch max iterations", (i32 *)&raymarch_iterations, 1,
                      64);
     ImGui::End();
@@ -730,7 +730,7 @@ TEST(graphics, vulkan_graphics_shader_test_4) {
     }
     if (cpu_frametime_stack.values.size()) {
       ImGui::Image(
-          ImGui_ImplVulkan_AddTexture(sampler.get(), cpu_time.image_view.get(),
+          ImGui_ImplVulkan_AddTexture(sampler.get(), cpu_time.image.view.get(),
                                       VkImageLayout::VK_IMAGE_LAYOUT_GENERAL),
           ImVec2(cpu_time.width, cpu_time.height), ImVec2(0.0f, 1.0f),
           ImVec2(1.0f, 0.0f));

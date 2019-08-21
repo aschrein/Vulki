@@ -79,9 +79,9 @@ TEST(graphics, hdr_test) {
                                       .setMaxLod(1));
   device_wrapper.pre_tick = [&](vk::CommandBuffer &cmd) {
     compute_pipeline_wrapped.update_storage_image_descriptor(
-        device.get(), "out_image", storage_image_wrapper.image_view.get());
+        device.get(), "out_image", storage_image_wrapper.image.view.get());
     compute_pipeline_wrapped.update_sampled_image_descriptor(
-        device_wrapper.device.get(), "in_image", cubemap_image.image_view.get(),
+        device_wrapper.device.get(), "in_image", cubemap_image.image.view.get(),
         nearest_sampler.get());
 
     // POST PROCESS PASS
