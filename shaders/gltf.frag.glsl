@@ -26,24 +26,34 @@ push_constant;
 
 #define PI 3.141592
 
-float atan2(in float y, in float x)
+float angle_normalized(in float x, in float y)
 {
-    bool s = (abs(x) > abs(y));
-    return mix(PI/2.0 - atan(x,y), atan(y,x), s);
+    vec2 xy = normalize(vec2(x, y));
+    float phi = acos(xy.x) / 2.0 / PI;
+    if (xy.y < 0.0)
+        phi = 1.0 - phi;
+    return phi;
 }
 
 vec3 sample_cubemap(vec3 r, float roughness) {
 float theta = acos(r.z);
-//  vec2 xy = normalize(r.xy);
-float phi = atan2(r.x, r.y);
-//  if (xy.y < 0.0)
-//    phi = 2.0 * 3.141592 - phi;
+float phi = angle_normalized(r.x, r.y);
 int max_lod = textureQueryLevels(textures[push_constant.cubemap_id]);
 return textureLod(textures[push_constant.cubemap_id],
   vec2(
-  phi/PI/2,
+  phi,
   theta/PI
 ), float(max_lod) * (1.0 - roughness)).xyz;
+}
+
+vec3 sample_diffuse_cubemap(vec3 r, float roughness) {
+float theta = acos(r.z);
+float phi = angle_normalized(r.x, r.y);
+return texture(textures[push_constant.cubemap_id + 1],
+  vec2(
+  phi,
+  theta/PI
+)).xyz;
 }
 
 vec3 apply_light(vec3 n, vec3 l, vec3 v,
@@ -54,12 +64,16 @@ vec3 apply_light(vec3 n, vec3 l, vec3 v,
   vec3 r = reflect(v, n);
 
   vec3 spec_env = sample_cubemap(r, roughness);
-  vec3 diffuse_env = sample_cubemap(n, 0.1);
+  vec3 diffuse_env = sample_diffuse_cubemap(n, 0.1);
 
   float phong = pow(clamp(dot(r, l), 0.0, 1.0), (roughness + 1.0) * 256.0);
   vec3 spec_col = mix(albedo, vec3(1.0, 1.0, 1.0),
   clamp(1.0 - metalness, 0.0, 1.0));
-  return albedo * lambert + albedo * diffuse_env + spec_col * phong + spec_col * spec_env;
+  return
+  //albedo * lambert +
+  albedo * diffuse_env
+  //+ spec_col * phong + spec_col * spec_env
+  ;
 }
 
 void main() {

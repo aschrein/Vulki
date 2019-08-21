@@ -1298,6 +1298,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       path_tracing_gpu_image.transition_layout_to_general(device_wrapper, cmd);
     }
     framebuffer_wrapper.transition_layout_to_write(device_wrapper, cmd);
+    framebuffer_wrapper.clear_depth(device_wrapper, cmd);
+    framebuffer_wrapper.clear_color(device_wrapper, cmd);
     framebuffer_wrapper.begin_render_pass(cmd);
     cmd.setViewport(
         0,
@@ -1402,9 +1404,14 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
 
       cmd.draw(lines.size(), 1, 0, 0);
     }
-    gizmo_layer.draw(device_wrapper, cmd);
     fullscreen_pipeline.bind_pipeline(device.get(), cmd);
 
+    framebuffer_wrapper.end_render_pass(cmd);
+    // Gizmo pass
+    // Here we clear the depth to make Xray gizmo
+    framebuffer_wrapper.clear_depth(device_wrapper, cmd);
+    framebuffer_wrapper.begin_render_pass(cmd);
+    gizmo_layer.draw(device_wrapper, cmd);
     framebuffer_wrapper.end_render_pass(cmd);
     framebuffer_wrapper.transition_layout_to_read(device_wrapper, cmd);
   };

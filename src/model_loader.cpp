@@ -251,13 +251,13 @@ GLFT_Model load_gltf_raw(std::string const &filename) {
                            .data[bview.byteOffset + stride * i];
             opaque_mesh.indices.push_back(*src);
           }
-          //        } else if (accessor.ByteStride(bview) == 4) {
-          //          u32 stride = accessor.ByteStride(bview);
-          //          ito(accessor.count) {
-          //            u32 *src = (u32 *)&model.buffers[bview.buffer]
-          //                           .data[bview.byteOffset + stride * i];
-          //            opaque_mesh.indices.push_back(*src);
-          //          }
+        } else if (accessor.ByteStride(bview) == 4) {
+          u32 stride = accessor.ByteStride(bview);
+          ito(accessor.count) {
+            u32 *src = (u32 *)&model.buffers[bview.buffer]
+                           .data[bview.byteOffset + stride * i];
+            opaque_mesh.indices.push_back(*src);
+          }
         } else {
           ASSERT_PANIC(false)
         }
@@ -357,4 +357,33 @@ Image_Raw load_image(std::string const &filename) {
     stbi_image_free(image);
     return out;
   }
+}
+
+void save_image(std::string const &filename, Image_Raw const &image) {
+  std::vector<u8> data;
+  data.resize(image.width * image.height * 4);
+  switch (image.format) {
+  case vk::Format::eR32G32B32Sfloat: {
+
+    ito(image.height) {
+      jto(image.width) {
+        vec3 *src = (vec3 *)&image.data[i * image.width * 12 + j * 12];
+        u8 *dst = &data[i * image.width * 4 + j * 4];
+        vec3 val = *src;
+        u8 r = u8(255.0f * clamp(val.x, 0.0f, 1.0f));
+        u8 g = u8(255.0f * clamp(val.y, 0.0f, 1.0f));
+        u8 b = u8(255.0f * clamp(val.z, 0.0f, 1.0f));
+        u8 a = 255u;
+        dst[0] = r;
+        dst[1] = g;
+        dst[2] = b;
+        dst[3] = a;
+      }
+    }
+  } break;
+  default:
+    ASSERT_PANIC(false && "Unsupported format");
+  }
+  stbi_write_png(filename.c_str(), image.width, image.height, STBI_rgb_alpha,
+                 &data[0], image.width * 4);
 }

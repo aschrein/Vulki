@@ -26,3 +26,4 @@ struct GLFT_Model {
 GLFT_Model load_gltf_raw(std::string const &filename);
 
 Image_Raw load_image(std::string const &filename);
+void save_image(std::string const &filename, Image_Raw const &image);

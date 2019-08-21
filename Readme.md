@@ -45,3 +45,5 @@ Models downloaded from Morgan McGuire's [Computer Graphics Archive](https://casu
 Models downloaded from [free3d](https://free3d.com/3d-model/low-poly-male-26691.html)  
 
 Cubemap downloaded from [hdrihaven](https://hdrihaven.com/hdri/?h=industrial_pipe_and_valve_01)
+
+Models downloaded from [glTF-Sample-Models](https://github.com/KhronosGroup/glTF-Sample-Models)

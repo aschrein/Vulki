@@ -268,15 +268,113 @@ std::vector<u8> build_mips(std::vector<u8> const &data, u32 width, u32 height,
   return out;
 }
 
+std::vector<u8> build_diffuse(std::vector<u8> const &data, u32 width,
+                              u32 height, vk::Format format, u32 &out_width,
+                              u32 &out_height) {
+
+  // @TODO: Add more formats
+  // Bytes per pixel
+  u32 bpc = 4u;
+  switch (format) {
+  case vk::Format::eR32G32B32Sfloat:
+    bpc = 12u;
+    break;
+  default:
+    ASSERT_PANIC(false && "unsupported format");
+  }
+  out_width = 32;
+  out_height = 16;
+  std::vector<u8> out(out_width * out_height * 12u);
+  auto load_f32 = [&](uvec2 coord, u32 component) {
+    return *(
+        f32 *)&data[coord.x * bpc + coord.y * width * bpc + component * 4u];
+  };
+  auto load = [&](uvec2 coord) {
+    uvec2 size{width, height};
+    if (coord.x >= size.x)
+      coord.x = size.x - 1;
+    if (coord.y >= size.y)
+      coord.y = size.y - 1;
+    switch (format) {
+    case vk::Format::eR32G32B32Sfloat: {
+      f32 r = load_f32(coord, 0u);
+      f32 g = load_f32(coord, 1u);
+      f32 b = load_f32(coord, 2u);
+      return vec4(r, g, b, 0.0f);
+    }
+    default:
+      ASSERT_PANIC(false && "unsupported format");
+    }
+  };
+  auto write = [&](vec4 val, uvec2 coord) {
+    uvec2 size{width, height};
+    if (coord.x >= size.x)
+      coord.x = size.x - 1;
+    if (coord.y >= size.y)
+      coord.y = size.y - 1;
+    switch (format) {
+    case vk::Format::eR32G32B32Sfloat: {
+      f32 *dst = (f32 *)&out[coord.x * 12 + coord.y * size.x * 12];
+      dst[0] = val.x;
+      dst[1] = val.y;
+      dst[2] = val.z;
+      return;
+    }
+    default:
+      ASSERT_PANIC(false && "unsupported format");
+    }
+  };
+  uvec2 size{width, height};
+  auto get_dir = [](uvec2 coord, uvec2 size) {
+    vec2 uv =
+        vec2(float(coord.x + 0.5f) / size.x, float(coord.y + 0.5f) / size.y);
+    float theta = uv.y * M_PI;
+    float phi = (uv.x * 2.0 - 1.0) * M_PI;
+    return vec3(std::sin(theta) * std::cos(phi),
+                std::sin(theta) * std::sin(phi), std::cos(theta));
+  };
+#pragma omp parallel for
+  for (u32 pixel_y = 0u; pixel_y < out_height; pixel_y++) {
+
+    vec3 *dst = (vec3 *)&out[pixel_y * out_width * 12];
+    for (u32 pixel_x = 0u; pixel_x < out_width; pixel_x++) {
+      auto base_dir = get_dir({pixel_x, pixel_y}, {out_width, out_height});
+      vec3 val{0.0f, 0.0f, 0.0f};
+      u32 cnt = 0;
+      ito(size.y) {
+        float theta = float(i + 0.5f) / height * M_PI;
+        vec3 *src = (vec3 *)&data[i * width * 12];
+        jto(size.x) {
+          uvec2 coord{j, i};
+          auto that_dir = get_dir({j, i}, size);
+
+          float d = dot(base_dir, that_dir);
+          if (d > 0.0f) {
+            val += std::sin(theta) * src[j] * d;
+            cnt++;
+          }
+        }
+      }
+
+      dst[pixel_x] = M_PI * val / float(cnt);
+      // write(val / M_PI / float(cnt), {pixel_x, pixel_y});
+    }
+  }
+  return out;
+}
+
 GPU_Image2D wrap_image(Device_Wrapper &device_wrapper,
-                       Image_Raw const &image_raw) {
+                       Image_Raw const &image_raw, bool do_mips = true) {
   u32 mip_levels;
   std::vector<uvec2> mip_sizes;
   std::vector<u32> mip_offsets;
   Alloc_State *alloc_state = device_wrapper.alloc_state.get();
-  auto with_mips =
+  std::vector<u8> with_mips =
       build_mips(image_raw.data, image_raw.width, image_raw.height,
                  image_raw.format, mip_levels, mip_offsets, mip_sizes);
+  // @TODO: Fix the hack
+  if (!do_mips)
+    mip_levels = 1u;
   GPU_Image2D out_image =
       GPU_Image2D::create(device_wrapper, image_raw.width, image_raw.height,
                           image_raw.format, mip_levels);
@@ -328,11 +426,31 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   Pipeline_Wrapper gltf_pipeline;
   Pipeline_Wrapper compute_pipeline_wrapped;
   auto cubemap = load_image("cubemaps/pink_sunrise.hdr");
+  save_image("src.png", cubemap);
+  u32 cubemap_diffuse_width, cubemap_diffuse_height;
+  auto cubemap_diffuse =
+      build_diffuse(cubemap.data, cubemap.width, cubemap.height, cubemap.format,
+                    cubemap_diffuse_width, cubemap_diffuse_height);
+  save_image("data.png", Image_Raw{
+                             .width = cubemap_diffuse_width,
+                             .height = cubemap_diffuse_height,
+                             .format = vk::Format::eR32G32B32Sfloat,
+                             .data = cubemap_diffuse,
+                         });
+  // std::exit(0);
+  GPU_Image2D diffuse_cubemap_image =
+      wrap_image(device_wrapper, Image_Raw{
+                                     .width = cubemap_diffuse_width,
+                                     .height = cubemap_diffuse_height,
+                                     .format = vk::Format::eR32G32B32Sfloat,
+                                     .data = cubemap_diffuse,
+                                 });
   GPU_Image2D cubemap_image = wrap_image(device_wrapper, cubemap);
   GPU_Image2D test_image =
       wrap_image(device_wrapper, load_image("../images/screenshot_1.png"));
   //   auto test_model = load_gltf_raw("models/sponza-gltf-pbr/sponza.glb");
-  auto test_model = load_gltf_raw("models/WaterBottle/WaterBottle.gltf");
+  //  auto test_model = load_gltf_raw("models/WaterBottle/WaterBottle.gltf");
+  auto test_model = load_gltf_raw("models/SciFiHelmet.gltf");
   //  auto test_model = load_gltf_raw("models/scene.gltf");
   //  auto test_model =
   //  load_gltf_raw("models/DamagedHelmet/DamagedHelmet.gltf");
@@ -347,6 +465,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
         std::move(wrap_image(device_wrapper, image)));
   }
   auto recreate_resources = [&] {
+    usleep(10000u);
     framebuffer_wrapper = Framebuffer_Wrapper::create(
         device_wrapper, gizmo_layer.example_viewport.extent.width,
         gizmo_layer.example_viewport.extent.height,
@@ -391,8 +510,14 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                     vk::BufferUsageFlagBits::eTransferDst),
       VMA_MEMORY_USAGE_CPU_TO_GPU);
   // Shared sampler
-  vk::UniqueSampler sampler =
-      device->createSamplerUnique(vk::SamplerCreateInfo().setMaxLod(1));
+  vk::UniqueSampler sampler = device->createSamplerUnique(
+      vk::SamplerCreateInfo()
+          .setMinFilter(vk::Filter::eLinear)
+          .setMagFilter(vk::Filter::eLinear)
+          .setAddressModeU(vk::SamplerAddressMode::eClampToBorder)
+          .setAddressModeV(vk::SamplerAddressMode::eClampToBorder)
+          .setMaxLod(1));
+
   vk::UniqueSampler nearest_sampler =
       device->createSamplerUnique(vk::SamplerCreateInfo()
                                       .setMinFilter(vk::Filter::eNearest)
@@ -481,6 +606,10 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       gltf_pipeline.update_sampled_image_descriptor(
           device_wrapper.device.get(), "textures",
           cubemap_image.image.view.get(), mip_sampler.get(), cubemap_id);
+      gltf_pipeline.update_sampled_image_descriptor(
+          device_wrapper.device.get(), "textures",
+          diffuse_cubemap_image.image.view.get(), sampler.get(),
+          cubemap_id + 1);
 
       gltf_pipeline.update_descriptor(
           device.get(), "UBO", gltf_ubo_buffer.buffer, 0,
