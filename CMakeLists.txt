@@ -3,6 +3,7 @@ cmake_policy(VERSION 2.8)
 
 set(NAME GRAPHICS_EXPERIMENTS)
 include_directories(3rdparty)
+include_directories(3rdparty/marl/include)
 include_directories(src)
 project(${NAME})
 
@@ -36,6 +37,7 @@ set(SPIRV_CROSS_SHARED ON)
 add_subdirectory(3rdparty/SPIRV-Cross)
 add_subdirectory(3rdparty/tinyobjloader)
 add_subdirectory(3rdparty/meshoptimizer)
+add_subdirectory(3rdparty/marl)
 
 
 file(GLOB SOURCE ${CMAKE_SOURCE_DIR}/shaders/shaders.h "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widgets.cpp 3rdparty/imgui/imgui_draw.cpp 3rdparty/imgui/imgui_demo.cpp 3rdparty/imgui/examples/imgui_impl_vulkan.cpp 3rdparty/imgui/examples/imgui_impl_glfw.cpp)
@@ -49,7 +51,7 @@ add_custom_command(OUTPUT kernel.o
                    DEPENDS "src/kernel.ispc")
 
 
-set(LIBS OpenMP::OpenMP_CXX meshoptimizer tinyobjloader glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util pthread boost_system boost_filesystem boost_thread)
+set(LIBS marl OpenMP::OpenMP_CXX meshoptimizer tinyobjloader glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util pthread boost_system boost_filesystem boost_thread)
 
 
 add_executable(shader_parser shader_parser.cpp  ${3RD_SOURCE})
