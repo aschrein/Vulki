@@ -1,6 +1,7 @@
 #include "include/shader_compiler.hpp"
 #include <filesystem>
 #include <set>
+#include <vector>
 namespace fs = std::filesystem;
 
 // https://stackoverflow.com/questions/8520560/get-a-file-name-from-a-path

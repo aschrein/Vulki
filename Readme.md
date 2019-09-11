@@ -17,12 +17,23 @@ cmake ../
 cmake --build . --target all
 ```
 ## Features
+* PBR framework
+  * Mipmap generation
+  * GLTF import
 * Vulkan framework skeleton
 * Shader reload with inotify/dir_update
 * Gizmos
   * Translation
 * ISPC/Naive path tracing
 ## TODO
+* PBR rasterization framework
+  * IBL
+	* Irradiance integration
+	* Specular integration
+  * Lightprobes
+* PBR pathtracing framework
+  * SAH BVH
+  * Importance sampling
 * Asset pipeline
   * Proper serialization framework
   * Zip/Unzip

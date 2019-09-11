@@ -76,6 +76,31 @@ bool checkLayers(std::vector<char const *> const &layers,
       });
 }
 
+void print_supported_extensions() {
+  uint32_t count;
+  vkEnumerateInstanceExtensionProperties(nullptr, &count,
+                                         nullptr); // get number of extensions
+  std::vector<VkExtensionProperties> extensions(count);
+  vkEnumerateInstanceExtensionProperties(nullptr, &count,
+                                         extensions.data()); // populate buffer
+
+  for (auto &extension : extensions) {
+    std::cout << "Supported extension: " << extension.extensionName << "\n";
+  }
+}
+
+void print_supported_device_extensions(vk::Instance instance) {
+  auto devices = instance.enumeratePhysicalDevices();
+  for (auto &device : devices) {
+    vk::PhysicalDeviceFeatures features;
+    device.getFeatures(&features);
+    auto extensions = device.enumerateDeviceExtensionProperties();
+    for (auto &extension : extensions) {
+      std::cout << "Supported extension: " << extension.extensionName << "\n";
+    }
+  }
+}
+
 void Device_Wrapper::update_swap_chain() {
   ASSERT_PANIC(this->window);
   vk::SurfaceCapabilitiesKHR caps;
@@ -188,6 +213,7 @@ void Device_Wrapper::update_swap_chain() {
 */
 
 extern "C" Device_Wrapper init_device(bool init_glfw) {
+  print_supported_extensions();
   Device_Wrapper out{};
   std::vector<vk::LayerProperties> instanceLayerProperties =
       vk::enumerateInstanceLayerProperties();
@@ -213,7 +239,7 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
     if (!glfwInit())
       exit(EXIT_FAILURE);
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    //    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     out.window = glfwCreateWindow(512, 512, "Vulkan Window", NULL, NULL);
     ASSERT_PANIC(out.window);
 
@@ -221,7 +247,7 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
     const char **glfw_extensions =
         glfwGetRequiredInstanceExtensions(&glfw_extensions_count);
 
-    // instanceExtensionNames.push_back("VK_KHR_surface");
+    // instanceExtensionNames.push_back("VK_EXT_descriptor_indexing");
 
     for (auto i = 0u; i < glfw_extensions_count; i++) {
       instanceExtensionNames.push_back(glfw_extensions[i]);
@@ -254,6 +280,7 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
   //         dbgFunc));
 
   ASSERT_PANIC(out.instance);
+  // print_supported_device_extensions(out.instance.get());
   out.physical_device = out.instance->enumeratePhysicalDevices().front();
   if (init_glfw) {
 
@@ -289,7 +316,9 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
           {vk::DeviceQueueCreateFlags(),
            static_cast<uint32_t>(graphics_queue_id), 1, &queuePriority},
       };
-  const std::vector<const char *> deviceExtensions;
+  std::vector<const char *> deviceExtensions;
+  // @TODO: Check for availability
+  deviceExtensions.emplace_back("VK_EXT_descriptor_indexing");
   if (init_glfw) {
     deviceExtensions.emplace_back(
         (const char *)VK_KHR_SWAPCHAIN_EXTENSION_NAME);
@@ -316,9 +345,8 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
       {vk::DescriptorType::eInputAttachment, 1000}};
   out.descset_pool =
       out.device->createDescriptorPoolUnique(vk::DescriptorPoolCreateInfo(
-          vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet
-          //|vk::DescriptorPoolCreateFlagBits::eUpdateAfterBindEXT
-          ,
+          vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
+              vk::DescriptorPoolCreateFlagBits::eUpdateAfterBindEXT,
           1000 * 11, 11, aPoolSizes));
 
   out.graphcis_cmd_pool =

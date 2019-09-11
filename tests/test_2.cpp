@@ -9,6 +9,11 @@
 #include "../include/shader_compiler.hpp"
 #include "f32_f16.hpp"
 
+#include <marl/defer.h>
+#include <marl/scheduler.h>
+#include <marl/thread.h>
+#include <marl/waitgroup.h>
+
 #include "../include/random.hpp"
 #include "imgui.h"
 
@@ -672,6 +677,11 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
   // * Use canonical, system-wide approach to numerical errors
   //   * Unify all EPSILON crap
 
+  marl::Scheduler scheduler;
+  scheduler.setWorkerThreadCount(marl::Thread::numLogicalCPUs());
+  scheduler.bind();
+  defer(scheduler.unbind());
+
   auto device_wrapper = init_device(true);
   auto &device = device_wrapper.device;
 
@@ -991,8 +1001,8 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       // @PathTracing
       if (jobs_sofar > 0) {
         if (use_jobs) {
-          WorkPayload work_payload;
 
+          WorkPayload work_payload;
           ito((ray_jobs.size() + jobs_per_item - 1) / jobs_per_item) {
             work_payload.push_back(JobPayload{
                 .func =
@@ -1020,12 +1030,20 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
                     .size = std::min(u32(ray_jobs.size()) - i * jobs_per_item,
                                      jobs_per_item)}});
           }
-#pragma omp parallel for
-          for (u32 i = 0; i < work_payload.size(); i++) {
-            auto work = work_payload[i];
-            work.func(work.desc);
-          }
+          marl::WaitGroup wg(work_payload.size());
+          // #pragma omp parallel for
 
+          for (u32 i = 0; i < work_payload.size(); i++) {
+            marl::schedule([=] {
+              // Before this task returns, decrement the wait group counter.
+              // This is used to indicate that the task is done.
+              defer(wg.done());
+
+              auto work = work_payload[i];
+              work.func(work.desc);
+            });
+          }
+          wg.wait();
         } else {
           for (auto &node : scene_nodes) {
             ISPC_Packed_UG ispc_packed_ug;

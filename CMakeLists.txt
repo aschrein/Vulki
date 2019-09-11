@@ -87,6 +87,9 @@ target_include_directories(GRAPHICS_EXPERIMENTS PRIVATE ${Vulkan_INCLUDE_DIRS} 3
 target_link_libraries(GRAPHICS_EXPERIMENTS ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(GRAPHICS_EXPERIMENTS PRIVATE shaderc_shared)
 
+####################
+# @Cleanup: Pretty much this is copy paste
+
 add_executable(test_0 tests/test_0.cpp ${SOURCE} ${3RD_SOURCE})
 target_include_directories(test_0 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
 target_link_libraries(test_0 ${Vulkan_LIBRARY} ${LIBS})
@@ -111,6 +114,13 @@ add_executable(test_4 tests/test_4.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
 target_include_directories(test_4 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
 target_link_libraries(test_4 ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(test_4 PRIVATE shaderc_shared)
+
+add_executable(test_5 tests/test_5.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
+target_include_directories(test_5 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
+target_link_libraries(test_5 ${Vulkan_LIBRARY} ${LIBS})
+target_link_libraries(test_5 PRIVATE shaderc_shared)
+
+##########################
 
 if(NOT EXISTS ${CMAKE_BINARY_DIR}/models)
     execute_process(

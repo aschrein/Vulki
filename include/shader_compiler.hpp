@@ -346,8 +346,8 @@ struct Pipeline_Wrapper {
       out.set_layouts.push_back(device.createDescriptorSetLayoutUnique(
           vk::DescriptorSetLayoutCreateInfo()
               // @TODO: Check for availability
-              //.setFlags(vk::DescriptorSetLayoutCreateFlagBits::
-              //               eUpdateAfterBindPoolEXT)
+              .setFlags(vk::DescriptorSetLayoutCreateFlagBits::
+                            eUpdateAfterBindPoolEXT)
               .setPBindings(&set_binding[0])
               .setBindingCount(set_binding.size())));
     }

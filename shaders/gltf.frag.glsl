@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : require
 
 layout(location = 0) out vec4 g_color;
 
@@ -38,8 +39,8 @@ float angle_normalized(in float x, in float y)
 vec3 sample_cubemap(vec3 r, float roughness) {
 float theta = acos(r.z);
 float phi = angle_normalized(r.x, r.y);
-int max_lod = textureQueryLevels(textures[push_constant.cubemap_id]);
-return textureLod(textures[push_constant.cubemap_id],
+int max_lod = textureQueryLevels(textures[nonuniformEXT(push_constant.cubemap_id)]);
+return textureLod(textures[nonuniformEXT(push_constant.cubemap_id)],
   vec2(
   phi,
   theta/PI
@@ -49,11 +50,12 @@ return textureLod(textures[push_constant.cubemap_id],
 vec3 sample_diffuse_cubemap(vec3 r, float roughness) {
 float theta = acos(r.z);
 float phi = angle_normalized(r.x, r.y);
-return texture(textures[push_constant.cubemap_id + 1],
-  vec2(
-  phi,
-  theta/PI
-)).xyz;
+return vec3(theta/3.141592);
+//return texture(textures[nonuniformEXT(push_constant.cubemap_id + 1)],
+//  vec2(
+//  phi,
+//  theta/PI
+//)).xyz;
 }
 
 vec3 apply_light(vec3 n, vec3 l, vec3 v,
@@ -77,14 +79,14 @@ vec3 apply_light(vec3 n, vec3 l, vec3 v,
 }
 
 void main() {
-  vec4 albedo = texture(textures[push_constant.albedo_id], in_texcoord);
+  vec4 albedo = texture(textures[nonuniformEXT(push_constant.albedo_id)], in_texcoord);
   if (albedo.w < 0.5)
     discard;
   vec3 normal = normalize(in_normal).xzy;
   vec3 tangent = normalize(in_tangent).xzy;
   vec3 binormal = cross(normal, tangent);
-  vec3 nc = texture(textures[push_constant.normal_id], in_texcoord).xyz;
-  vec3 mr = texture(textures[push_constant.metalness_roughness_id], in_texcoord).xyz;
+  vec3 nc = texture(textures[nonuniformEXT(push_constant.normal_id)], in_texcoord).xyz;
+  vec3 mr = texture(textures[nonuniformEXT(push_constant.metalness_roughness_id)], in_texcoord).xyz;
   vec3 new_normal =
   //nc;
   // normal;
