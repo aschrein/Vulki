@@ -54,64 +54,6 @@ struct JobPayload {
 
 using WorkPayload = std::vector<JobPayload>;
 
-struct C_Health : public Component_Base<C_Health> {
-  u32 health = 100;
-};
-
-struct C_Damage : public Component_Base<C_Damage> {
-  bool receive_damage(u32 amount) {
-    auto e = Entity::get_entity_weak(owner);
-    auto health = e->get_component<C_Health>();
-    if (health) {
-
-      auto dealt = amount > health->health ? health->health : amount;
-      auto rest = amount > health->health ? 0u : health->health - amount;
-      // std::cout << dealt << " Damage dealt\n";
-      health->health = rest;
-      if (health->health == 0u) {
-        // std::cout << owner.index << " Entity is dead\n";
-        return false;
-      }
-      return health->health != 0u;
-    } else {
-      // std::cout << "No health found\n";
-      auto owner = this->owner;
-      Entity::defer_function([owner]() {
-        auto ent = Entity::get_entity_weak(owner);
-        ent->get_or_create_component<C_Health>();
-      });
-      return true;
-    }
-    return false;
-  }
-};
-
-REG_COMPONENT(C_Health);
-REG_COMPONENT(C_Damage);
-
-#define CPT(eid, ctype) Entity::get_entity_weak(eid)->get_component<ctype>()
-
-TEST(graphics, ecs_test) {
-  auto eid = Entity::create_entity();
-  ASSERT_PANIC(1u == eid.index);
-  Entity_StrongPtr esptr{eid};
-  esptr->get_or_create_component<C_Transform>();
-  esptr->get_or_create_component<C_Damage>();
-  esptr->get_or_create_component<C_Name>()->name = "test name";
-  ASSERT_PANIC(CPT(eid, C_Name)->name == "test name");
-  ASSERT_PANIC(CPT(eid, C_Name)->owner.index == eid.index);
-  u32 i = 100u;
-  while (CPT(eid, C_Damage)->receive_damage(1)) {
-    i--;
-    Entity::flush();
-  }
-  ASSERT_PANIC(esptr->get_component<C_Health>());
-  ASSERT_PANIC(esptr->get_component<C_Health>()->health == 0u);
-  ASSERT_PANIC(i == 0u);
-}
-
-TEST(graphics, glb_test) { load_gltf_raw("models/sponza-gltf-pbr/sponza.glb"); }
-
 struct C_Static3DMesh : public Component_Base<C_Static3DMesh> {
   Raw_Mesh_Opaque opaque_mesh;
   std::vector<vec3> flat_positions;
@@ -223,32 +165,6 @@ std::vector<u8> build_mips(std::vector<u8> const &data, u32 width, u32 height,
       ASSERT_PANIC(false && "unsupported format");
     }
   };
-  // auto sample = [&](vec2 uv, u32 level) {
-  //   uvec2 size = mip_sizes[level];
-  //   vec2 suv = uv * vec2(float(size.x - 1u), float(size.y - 1u));
-  //   uvec2 coord[] = {
-  //       uvec2(u32(suv.x), u32(suv.y)),
-  //       uvec2(u32(suv.x), u32(suv.y + 1.0f)),
-  //       uvec2(u32(suv.x + 1.0f), u32(suv.y)),
-  //       uvec2(u32(suv.x + 1.0f), u32(suv.y + 1.0f)),
-  //   };
-  //   ito(4) {
-  //     if (coord[i].x >= size.x)
-  //       coord[i].x = size.x - 1;
-  //     if (coord[i].y >= size.y)
-  //       coord[i].y = size.y - 1;
-  //   }
-  //   vec2 fract = vec2(suv.x - std::floor(suv.x), suv.y - std::floor(suv.y));
-  //   float weights[] = {
-  //       (1.0f - fract.x) * (1.0f - fract.y),
-  //       (1.0f - fract.x) * (fract.y),
-  //       (fract.x) * (1.0f - fract.y),
-  //       (fract.x) * (fract.y),
-  //   };
-  //   vec4 result = vec4(0.0f, 0.0f, 0.0f, 0.0f);
-  //   ito(4) result += load(coord[i], level) * weights[i];
-  //   return result;
-  // };
   for (u32 mip_level = 1u; mip_level < out_miplevels; mip_level++) {
     auto size = mip_sizes[mip_level];
     ito(size.y) {
@@ -262,102 +178,6 @@ std::vector<u8> build_mips(std::vector<u8> const &data, u32 width, u32 height,
         auto val = (val_0 + val_1 + val_2 + val_3) / 4.0f;
         write(val, uvec2(j, i), mip_level);
       }
-      // std::cout << "FINISHED " << i << "\n";
-    }
-  }
-  return out;
-}
-
-std::vector<u8> build_diffuse(std::vector<u8> const &data, u32 width,
-                              u32 height, vk::Format format, u32 &out_width,
-                              u32 &out_height) {
-
-  // @TODO: Add more formats
-  // Bytes per pixel
-  u32 bpc = 4u;
-  switch (format) {
-  case vk::Format::eR32G32B32Sfloat:
-    bpc = 12u;
-    break;
-  default:
-    ASSERT_PANIC(false && "unsupported format");
-  }
-  out_width = 32;
-  out_height = 16;
-  std::vector<u8> out(out_width * out_height * 12u);
-  auto load_f32 = [&](uvec2 coord, u32 component) {
-    return *(
-        f32 *)&data[coord.x * bpc + coord.y * width * bpc + component * 4u];
-  };
-  auto load = [&](uvec2 coord) {
-    uvec2 size{width, height};
-    if (coord.x >= size.x)
-      coord.x = size.x - 1;
-    if (coord.y >= size.y)
-      coord.y = size.y - 1;
-    switch (format) {
-    case vk::Format::eR32G32B32Sfloat: {
-      f32 r = load_f32(coord, 0u);
-      f32 g = load_f32(coord, 1u);
-      f32 b = load_f32(coord, 2u);
-      return vec4(r, g, b, 0.0f);
-    }
-    default:
-      ASSERT_PANIC(false && "unsupported format");
-    }
-  };
-  auto write = [&](vec4 val, uvec2 coord) {
-    uvec2 size{width, height};
-    if (coord.x >= size.x)
-      coord.x = size.x - 1;
-    if (coord.y >= size.y)
-      coord.y = size.y - 1;
-    switch (format) {
-    case vk::Format::eR32G32B32Sfloat: {
-      f32 *dst = (f32 *)&out[coord.x * 12 + coord.y * size.x * 12];
-      dst[0] = val.x;
-      dst[1] = val.y;
-      dst[2] = val.z;
-      return;
-    }
-    default:
-      ASSERT_PANIC(false && "unsupported format");
-    }
-  };
-  uvec2 size{width, height};
-  auto get_dir = [](uvec2 coord, uvec2 size) {
-    vec2 uv =
-        vec2(float(coord.x + 0.5f) / size.x, float(coord.y + 0.5f) / size.y);
-    float theta = uv.y * M_PI;
-    float phi = (uv.x * 2.0 - 1.0) * M_PI;
-    return vec3(std::sin(theta) * std::cos(phi),
-                std::sin(theta) * std::sin(phi), std::cos(theta));
-  };
-#pragma omp parallel for
-  for (u32 pixel_y = 0u; pixel_y < out_height; pixel_y++) {
-
-    vec3 *dst = (vec3 *)&out[pixel_y * out_width * 12];
-    for (u32 pixel_x = 0u; pixel_x < out_width; pixel_x++) {
-      auto base_dir = get_dir({pixel_x, pixel_y}, {out_width, out_height});
-      vec3 val{0.0f, 0.0f, 0.0f};
-      u32 cnt = 0;
-      ito(size.y) {
-        float theta = float(i + 0.5f) / height * M_PI;
-        vec3 *src = (vec3 *)&data[i * width * 12];
-        jto(size.x) {
-          uvec2 coord{j, i};
-          auto that_dir = get_dir({j, i}, size);
-
-          float d = dot(base_dir, that_dir);
-          if (d > 0.0f) {
-            val += std::sin(theta) * src[j] * d;
-            cnt++;
-          }
-        }
-      }
-
-      dst[pixel_x] = M_PI * val / float(cnt);
-      // write(val / M_PI / float(cnt), {pixel_x, pixel_y});
     }
   }
   return out;
@@ -450,7 +270,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       wrap_image(device_wrapper, load_image("../images/screenshot_1.png"));
   //   auto test_model = load_gltf_raw("models/sponza-gltf-pbr/sponza.glb");
   //  auto test_model = load_gltf_raw("models/WaterBottle/WaterBottle.gltf");
-  auto test_model = load_gltf_raw("models/SciFiHelmet.gltf");
+  auto test_model = load_gltf_pbr("models/SciFiHelmet.gltf");
   //  auto test_model = load_gltf_raw("models/scene.gltf");
   //  auto test_model =
   //  load_gltf_raw("models/DamagedHelmet/DamagedHelmet.gltf");

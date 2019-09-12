@@ -144,9 +144,21 @@ std::vector<Raw_Mesh_Obj> load_obj_raw(char const *filename) {
 
   return out;
 }
+PBR_Model load_obj_pbr(char const *filename) {
+  auto out = load_obj_raw(filename);
+  PBR_Model pbr_out;
+  ito(out.size()) {
+    pbr_out.meshes.push_back(out[i].get_opaque());
+    pbr_out.materials.push_back(PBR_Material{.normal_id = -1,
+                                             .albedo_id = -1,
+                                             .ao_id = -1,
+                                             .metalness_roughness_id = -1});
+  }
+  return pbr_out;
+}
 
 using namespace tinygltf;
-GLFT_Model load_gltf_raw(std::string const &filename) {
+PBR_Model load_gltf_pbr(std::string const &filename) {
   Model model;
   TinyGLTF loader;
   std::string err;
@@ -164,7 +176,7 @@ GLFT_Model load_gltf_raw(std::string const &filename) {
   if (!ret) {
     ASSERT_PANIC(false);
   }
-  GLFT_Model out;
+  PBR_Model out;
   for (auto &mesh : model.meshes) {
     for (auto &primitive : mesh.primitives) {
       Raw_Mesh_Opaque opaque_mesh;

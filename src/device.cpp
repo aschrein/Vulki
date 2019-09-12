@@ -280,7 +280,7 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
   //         dbgFunc));
 
   ASSERT_PANIC(out.instance);
-  // print_supported_device_extensions(out.instance.get());
+  //  print_supported_device_extensions(out.instance.get());
   out.physical_device = out.instance->enumeratePhysicalDevices().front();
   if (init_glfw) {
 
@@ -323,12 +323,26 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
     deviceExtensions.emplace_back(
         (const char *)VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   }
-  out.device = std::move(out.physical_device.createDeviceUnique(
+  vk::PhysicalDeviceFeatures2 pd_features2;
+
+  vk::PhysicalDeviceDescriptorIndexingFeaturesEXT pd_index_features;
+  pd_features2.setPNext((void *)&pd_index_features);
+  out.physical_device.getFeatures2(&pd_features2);
+  // @TODO: Right now it's not used
+  // a workaround of binding 'error' textures does the job
+  // looks like enabling vk::DescriptorBindingFlagBitsEXT::ePartiallyBound
+  // for everything crushes the driver so it has to be selectevely enabled
+  // maybe a preprocessor command?
+  ASSERT_PANIC(pd_index_features.shaderSampledImageArrayNonUniformIndexing);
+  ASSERT_PANIC(pd_index_features.descriptorBindingPartiallyBound);
+
+  out.device = out.physical_device.createDeviceUnique(
       vk::DeviceCreateInfo(vk::DeviceCreateFlags(), 1, deviceQueueCreateInfo)
+          .setPNext((void *)&pd_index_features)
           .setPpEnabledLayerNames(&instanceLayerNames[0])
           .setEnabledLayerCount(instanceLayerNames.size())
           .setPpEnabledExtensionNames(&deviceExtensions[0])
-          .setEnabledExtensionCount(deviceExtensions.size())));
+          .setEnabledExtensionCount(deviceExtensions.size()));
   ASSERT_PANIC(out.device);
 
   vk::DescriptorPoolSize aPoolSizes[] = {

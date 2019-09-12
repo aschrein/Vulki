@@ -123,6 +123,25 @@ struct Raw_Mesh_Obj {
     }
     return out;
   }
+  Raw_Mesh_Opaque get_opaque() {
+    Raw_Mesh_Opaque out;
+    out.attributes.resize(vertices.size() * sizeof(Vertex_3p3n2t));
+    Vertex_3p3n2t *t_v = (Vertex_3p3n2t *)&out.attributes[0];
+    ito(vertices.size()) {
+      t_v[i].position = vertices[i].position;
+      t_v[i].normal = vertices[i].normal;
+      t_v[i].texcoord = vertices[i].texcoord;
+    }
+    out.indices.resize(indices.size() * sizeof(u32_face));
+    memcpy(&out.indices[0], &indices[0], indices.size() * sizeof(u32_face));
+    out.binding = {
+        {"POSITION", {0, 0, vk::Format::eR32G32B32Sfloat}},
+        {"NORMAL", {0, 12, vk::Format::eR32G32B32Sfloat}},
+        {"TEXCOORD_0", {0, 24, vk::Format::eR32G32Sfloat}},
+    };
+    out.vertex_stride = sizeof(Vertex_3p3n2t);
+    return out;
+  }
 };
 
 static Raw_Mesh_3p16i subdivide_cylinder(uint32_t level, float radius,
@@ -237,13 +256,32 @@ static Raw_Mesh_3p16i subdivide_cone(uint32_t level, float radius,
   return out;
 }
 
+// We are gonna use one simplified material schema for everything
+struct PBR_Material {
+  // R8G8B8A8
+  i32 normal_id;
+  // R8G8B8A8
+  i32 albedo_id;
+  // R8G8B8A8
+  i32 ao_id;
+  // R8G8B8A8
+  i32 metalness_roughness_id;
+};
+
+// To make things simple we use one format of meshes
+struct PBR_Model {
+  std::vector<Image_Raw> images;
+  std::vector<Raw_Mesh_Opaque> meshes;
+  std::vector<PBR_Material> materials;
+};
+
 struct Raw_Mesh_Opaque_Wrapper {
   RAW_MOVABLE(Raw_Mesh_Opaque_Wrapper)
   VmaBuffer vertex_buffer;
   VmaBuffer index_buffer;
   u32 index_count;
   static Raw_Mesh_Opaque_Wrapper create(Device_Wrapper &device,
-                                     Raw_Mesh_Opaque const &in) {
+                                        Raw_Mesh_Opaque const &in) {
     Raw_Mesh_Opaque_Wrapper out{};
     out.index_count = in.indices.size();
     out.vertex_buffer = device.alloc_state->allocate_buffer(
@@ -258,8 +296,7 @@ struct Raw_Mesh_Opaque_Wrapper {
         VMA_MEMORY_USAGE_CPU_TO_GPU);
     {
       void *data = out.vertex_buffer.map();
-      memcpy(data, &in.attributes[0],
-             in.attributes.size());
+      memcpy(data, &in.attributes[0], in.attributes.size());
       out.vertex_buffer.unmap();
     }
     {

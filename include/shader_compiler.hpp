@@ -231,6 +231,7 @@ struct Pipeline_Wrapper {
     for (auto &slot : slots) {
       auto cpy = slot.second;
       cpy.layout.setStageFlags(vk::ShaderStageFlagBits::eAll);
+
       this->resource_slots[slot.first] = cpy;
     }
   }
@@ -343,8 +344,23 @@ struct Pipeline_Wrapper {
 
     auto set_bindings = out.collect_sets();
     for (auto &set_binding : set_bindings) {
+      vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT binding_infos;
+      std::vector<vk::DescriptorBindingFlagsEXT> binding_flags;
+      ito(set_binding.size()) {
+        binding_flags.push_back(
+            // vk::DescriptorBindingFlagBitsEXT::eUpdateAfterBind |
+            vk::DescriptorBindingFlagBitsEXT::ePartiallyBound
+            //| vk::DescriptorBindingFlagBitsEXT::eVariableDescriptorCount
+        );
+      }
+      binding_infos.setBindingCount(set_binding.size())
+          .setPBindingFlags(&binding_flags[0]);
       out.set_layouts.push_back(device.createDescriptorSetLayoutUnique(
           vk::DescriptorSetLayoutCreateInfo()
+              // @TODO: Enable partially bound resources where it's needed
+              // @See: device.cpp
+              //.setPNext((void *)&binding_infos)
+              //
               // @TODO: Check for availability
               .setFlags(vk::DescriptorSetLayoutCreateFlagBits::
                             eUpdateAfterBindPoolEXT)

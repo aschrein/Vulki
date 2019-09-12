@@ -110,7 +110,7 @@ TEST(graphics, ecs_test) {
   ASSERT_PANIC(i == 0u);
 }
 
-TEST(graphics, glb_test) { load_gltf_raw("models/sponza-gltf-pbr/sponza.glb"); }
+TEST(graphics, glb_test) { load_gltf_pbr("models/sponza-gltf-pbr/sponza.glb"); }
 
 struct C_Static3DMesh : public Component_Base<C_Static3DMesh> {
   Raw_Mesh_Opaque opaque_mesh;
@@ -450,7 +450,7 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       wrap_image(device_wrapper, load_image("../images/screenshot_1.png"));
   //   auto test_model = load_gltf_raw("models/sponza-gltf-pbr/sponza.glb");
   //  auto test_model = load_gltf_raw("models/WaterBottle/WaterBottle.gltf");
-  auto test_model = load_gltf_raw("models/SciFiHelmet.gltf");
+  auto test_model = load_gltf_pbr("models/SciFiHelmet.gltf");
   //  auto test_model = load_gltf_raw("models/scene.gltf");
   //  auto test_model =
   //  load_gltf_raw("models/DamagedHelmet/DamagedHelmet.gltf");
