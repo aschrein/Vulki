@@ -33,7 +33,6 @@ struct Input {
   std::string fmt_str;
   vk::Format format;
   std::string name;
-
   u32 rate;
 };
 
@@ -58,6 +57,13 @@ std::vector<Input> preprocess(std::string source_name) {
       input.location = location;
       input.name = name;
       input.type = type;
+      if (rate == "per_vertex")
+        input.rate = 0;
+      else if (rate == "per_instance")
+        input.rate = 1;
+      else {
+        ASSERT_PANIC(false);
+      }
       if (type == "vec2") {
         input.fmt_str = "vk::Format::eR32G32Sfloat";
         input.format = vk::Format::eR32G32Sfloat;
@@ -83,9 +89,9 @@ std::vector<Input> preprocess(std::string source_name) {
   return out;
 }
 
-void parse_shader(
-    const std::string &source_name, vk::ShaderStageFlagBits stage,
-    std::vector<std::pair<std::string, std::string>> const &defines) {
+std::vector<Input>
+parse_shader(const std::string &source_name, vk::ShaderStageFlagBits stage,
+             std::vector<std::pair<std::string, std::string>> const &defines) {
   auto input = preprocess(source_name);
   std::ifstream is(source_name,
                    std::ios::binary | std::ios::in | std::ios::ate);
@@ -220,10 +226,11 @@ void parse_shader(
           }
         }
       } else {
-       ito(type_obj.array.size()) std::cout
-              << "u32 " << item.name << "_" << i
-              << "_count = " << type_obj.array[i] << ";\n";
-//        std::cout << "static char const *NAME =\"" << item.name << "\";\n";
+        ito(type_obj.array.size()) std::cout << "u32 " << item.name << "_" << i
+                                             << "_count = " << type_obj.array[i]
+                                             << ";\n";
+        //        std::cout << "static char const *NAME =\"" << item.name <<
+        //        "\";\n";
         // switch (type_obj.basetype) {
         // case spirv_cross::SPIRType::UInt:
         //   std::cout << "u32 " << item.name << ";\n";
@@ -326,9 +333,10 @@ void parse_shader(
     }
     std::cout << "}\n";
   }
+  return input;
 }
 
-void main_entry(std::string source_name) {
+std::vector<Input> main_entry(std::string source_name) {
   auto splits = splitpath(source_name, {'.'});
   vk::ShaderStageFlagBits stage = vk::ShaderStageFlagBits::eAll;
   for (auto const &split : splits) {
@@ -339,19 +347,93 @@ void main_entry(std::string source_name) {
     if (split == "frag")
       stage = vk::ShaderStageFlagBits::eFragment;
   }
-  parse_shader(source_name, stage, {});
+  return parse_shader(source_name, stage, {});
 }
 
 int main(int argc, char **argv) {
   std::cout << "#pragma once\n";
+  std::unordered_map<std::string, std::vector<Input>> inputs;
   if (argc == 1) {
+    // @TODO: Recursive traversal
     for (const auto &entry : fs::directory_iterator("."))
       if (entry.path().filename().string().find(".glsl") != std::string::npos) {
-        main_entry(entry.path().filename().string());
+        auto filename = entry.path().filename().string();
+        inputs[filename] = main_entry(filename);
       }
-    return;
+
+  } else {
+    std::string source_name = argv[1];
+    inputs[source_name] = main_entry(source_name);
   }
-  std::string source_name = argv[1];
-  main_entry(source_name);
+  // Now spit the global binding table
+  // With eantry for each vertex table
+  // It's used to auto-fill Vulkan data structures
+  // having only shader filename
+  std::cout
+      << "static std::unordered_map<std::string, "
+         "std::unordered_map<std::string, Vertex_Input>> g_binding_table = {\n";
+  for (auto const &item : inputs) {
+    std::string namespace_name = item.first;
+    // remove extension
+    size_t lastindex = namespace_name.find_last_of(".");
+    namespace_name = namespace_name.substr(0, lastindex);
+    std::replace(namespace_name.begin(), namespace_name.end(), '.', '_');
+    auto input = item.second;
+    if (input.size()) {
+      std::unordered_map<u32, std::vector<u32>> bindings;
+      u32 i = 0;
+      for (auto &in : input) {
+        bindings[in.binding].push_back(i);
+        i++;
+      }
+
+      std::cout << "{\"" << item.first << "\", {\n";
+      for (auto &item : bindings) {
+
+        for (auto mem_id : item.second) {
+          auto desc = input[mem_id];
+          std::cout << "{\"" << desc.name << "\", {" << desc.binding
+                    << ", offsetof(sh_" << namespace_name << "::_Binding_"
+                    << desc.binding << ", " << desc.name << "), "
+                    << desc.fmt_str << "}},\n";
+        }
+      }
+      std::cout << "}},\n";
+    }
+  }
+  std::cout << "};\n";
+  // utility table
+  // Array of (buffer_stride, buffer_rate)
+  // i.e. strides and per vertex/instance rate
+  // true = per instance
+  // false = per vertex
+  std::cout << "static std::unordered_map<std::string, "
+               "std::vector<std::pair<size_t, bool>>> g_binding_strides = {\n";
+
+  for (auto const &item : inputs) {
+    std::string namespace_name = item.first;
+    // remove extension
+    size_t lastindex = namespace_name.find_last_of(".");
+    namespace_name = namespace_name.substr(0, lastindex);
+    std::replace(namespace_name.begin(), namespace_name.end(), '.', '_');
+    auto input = item.second;
+    if (input.size()) {
+      std::unordered_map<u32, std::vector<u32>> bindings;
+      u32 i = 0;
+      for (auto &in : input) {
+        bindings[in.binding].push_back(i);
+        i++;
+      }
+      std::cout << "{\"" << item.first << "\", {\n";
+      ito(bindings.size()) {
+        auto &item = bindings[i];
+        auto desc = input[item[0]];
+        std::cout << "{sizeof(sh_" << namespace_name << "::_Binding_"
+                  << desc.binding << "), " << (bool)desc.rate << "},\n";
+      }
+      std::cout << "}},\n";
+    }
+  }
+  std::cout << "};\n";
   return 0;
 }

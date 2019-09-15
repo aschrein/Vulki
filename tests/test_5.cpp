@@ -7,6 +7,7 @@
 #include "../include/model_loader.hpp"
 #include "../include/particle_sim.hpp"
 #include "../include/profiling.hpp"
+#include "../include/render_graph.hpp"
 #include "../include/shader_compiler.hpp"
 #include "f32_f16.hpp"
 
@@ -231,287 +232,16 @@ GPU_Image2D wrap_image(Device_Wrapper &device_wrapper,
   return out_image;
 }
 
-TEST(graphics, vulkan_graphics_test_3d_models) {
-  ASSERT_PANIC(sizeof(Component_ID) == 8u);
+TEST(graphics, vulkan_graphics_test_render_graph) {
 
-  auto device_wrapper = init_device(true);
-  Alloc_State *alloc_state = device_wrapper.alloc_state.get();
-  auto &device = device_wrapper.device;
-  Simple_Monitor simple_monitor("shaders");
-  Gizmo_Layer gizmo_layer{};
+  // Gizmo_Layer gizmo_layer{};
   Random_Factory frand;
-  Framebuffer_Wrapper framebuffer_wrapper{};
-  Storage_Image_Wrapper storage_image_wrapper{};
-  Pipeline_Wrapper fullscreen_pipeline;
-  Pipeline_Wrapper gltf_pipeline;
-  Pipeline_Wrapper compute_pipeline_wrapped;
-  auto cubemap = load_image("cubemaps/pink_sunrise.hdr");
-  save_image("src.png", cubemap);
-  u32 cubemap_diffuse_width, cubemap_diffuse_height;
-  /*auto cubemap_diffuse =
-      build_diffuse(cubemap.data, cubemap.width, cubemap.height, cubemap.format,
-                    cubemap_diffuse_width, cubemap_diffuse_height);*/
-  /*save_image("data.png", Image_Raw{
-                             .width = cubemap_diffuse_width,
-                             .height = cubemap_diffuse_height,
-                             .format = vk::Format::eR32G32B32Sfloat,
-                             .data = cubemap_diffuse,
-                         });*/
-  // std::exit(0);
-  /*GPU_Image2D diffuse_cubemap_image =
-      wrap_image(device_wrapper, Image_Raw{
-                                     .width = cubemap_diffuse_width,
-                                     .height = cubemap_diffuse_height,
-                                     .format = vk::Format::eR32G32B32Sfloat,
-                                     .data = cubemap_diffuse,
-                                 });*/
-  GPU_Image2D cubemap_image = wrap_image(device_wrapper, cubemap);
-  GPU_Image2D test_image =
-      wrap_image(device_wrapper, load_image("../images/screenshot_1.png"));
-  //   auto test_model = load_gltf_raw("models/sponza-gltf-pbr/sponza.glb");
-  //  auto test_model = load_gltf_raw("models/WaterBottle/WaterBottle.gltf");
-  auto test_model = load_gltf_pbr("models/SciFiHelmet.gltf");
-  //  auto test_model = load_gltf_raw("models/scene.gltf");
-  //  auto test_model =
-  //  load_gltf_raw("models/DamagedHelmet/DamagedHelmet.gltf");
-  std::vector<Raw_Mesh_Opaque_Wrapper> test_model_wrapper;
-  for (auto &mesh : test_model.meshes) {
-    test_model_wrapper.emplace_back(
-        Raw_Mesh_Opaque_Wrapper::create(device_wrapper, mesh));
-  }
-  std::vector<GPU_Image2D> test_model_textures;
-  for (auto &image : test_model.images) {
-    test_model_textures.emplace_back(
-        std::move(wrap_image(device_wrapper, image)));
-  }
-  auto recreate_resources = [&] {
-    // @Cleanup: When file is modified event goes before the actual contents
-    // update
-    usleep(10000u);
-    framebuffer_wrapper = Framebuffer_Wrapper::create(
-        device_wrapper, gizmo_layer.example_viewport.extent.width,
-        gizmo_layer.example_viewport.extent.height,
-        vk::Format::eR32G32B32A32Sfloat);
-    compute_pipeline_wrapped = Pipeline_Wrapper::create_compute(
-        device_wrapper, "shaders/postprocess.comp.glsl", {});
-    fullscreen_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "shaders/tests/bufferless_triangle.vert.glsl",
-        "shaders/tests/simple_1.frag.glsl",
-        vk::GraphicsPipelineCreateInfo()
-            .setPInputAssemblyState(
-                &vk::PipelineInputAssemblyStateCreateInfo().setTopology(
-                    vk::PrimitiveTopology::eTriangleList))
-            .setRenderPass(framebuffer_wrapper.render_pass.get()),
-        {}, {}, {});
-    storage_image_wrapper = Storage_Image_Wrapper::create(
-        device_wrapper, gizmo_layer.example_viewport.extent.width,
-        gizmo_layer.example_viewport.extent.height,
-        vk::Format::eR32G32B32A32Sfloat);
-    gltf_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "shaders/gltf.vert.glsl", "shaders/gltf.frag.glsl",
-        vk::GraphicsPipelineCreateInfo()
-            .setPInputAssemblyState(
-                &vk::PipelineInputAssemblyStateCreateInfo().setTopology(
-                    vk::PrimitiveTopology::eTriangleList))
-            .setRenderPass(framebuffer_wrapper.render_pass.get()),
-        test_model.meshes[0].binding,
-        {vk::VertexInputBindingDescription()
-             .setBinding(0)
-             .setStride(test_model.meshes[0].vertex_stride)
-             .setInputRate(vk::VertexInputRate::eVertex)},
-        {}, sizeof(sh_gltf_frag::push_constant));
 
-    gizmo_layer.init_vulkan_state(device_wrapper,
-                                  framebuffer_wrapper.render_pass.get());
-  };
+  auto recreate_resources = [&] { usleep(10000u); };
 
-  VmaBuffer gltf_ubo_buffer = alloc_state->allocate_buffer(
-      vk::BufferCreateInfo()
-          .setSize(sizeof(sh_gltf_vert::UBO))
-          .setUsage(vk::BufferUsageFlagBits::eUniformBuffer |
-                    vk::BufferUsageFlagBits::eTransferDst),
-      VMA_MEMORY_USAGE_CPU_TO_GPU);
-  // Shared sampler
-  vk::UniqueSampler sampler = device->createSamplerUnique(
-      vk::SamplerCreateInfo()
-          .setMinFilter(vk::Filter::eLinear)
-          .setMagFilter(vk::Filter::eLinear)
-          .setAddressModeU(vk::SamplerAddressMode::eClampToBorder)
-          .setAddressModeV(vk::SamplerAddressMode::eClampToBorder)
-          .setMaxLod(1));
-
-  vk::UniqueSampler nearest_sampler =
-      device->createSamplerUnique(vk::SamplerCreateInfo()
-                                      .setMinFilter(vk::Filter::eNearest)
-                                      .setMagFilter(vk::Filter::eNearest)
-                                      .setMaxLod(1));
-  vk::UniqueSampler mip_sampler = device->createSamplerUnique(
-      vk::SamplerCreateInfo()
-          .setMinFilter(vk::Filter::eLinear)
-          .setMagFilter(vk::Filter::eLinear)
-          .setMipmapMode(vk::SamplerMipmapMode::eLinear)
-          .setMaxLod(10)
-          .setAnisotropyEnable(true)
-          .setMaxAnisotropy(16.0f));
-  // Init device stuff
-  {
-
-    auto &cmd = device_wrapper.graphics_cmds[0].get();
-    cmd.reset(vk::CommandBufferResetFlagBits::eReleaseResources);
-    cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
-    for (auto &image : test_model_textures)
-      image.transition_layout_to_sampled(device_wrapper, cmd);
-    cmd.end();
-    device_wrapper.sumbit_and_flush(cmd);
-  }
-
-  u32 cubemap_id = test_model_textures.size();
-
-  /*---------------------*/
-  /* Offscreen rendering */
-  /*---------------------*/
-  device_wrapper.pre_tick = [&](vk::CommandBuffer &cmd) {
-    // Update backbuffer if the viewport size has changed
-    if (simple_monitor.is_updated() ||
-        framebuffer_wrapper.width !=
-            gizmo_layer.example_viewport.extent.width ||
-        framebuffer_wrapper.height !=
-            gizmo_layer.example_viewport.extent.height) {
-      recreate_resources();
-      // @Workaround for validation layer error
-      for (u32 i = cubemap_id + 1u; i < 4096; i++) {
-        gltf_pipeline.update_sampled_image_descriptor(
-            device_wrapper.device.get(), "textures",
-            cubemap_image.image.view.get(), mip_sampler.get(), i);
-      }
-    }
-    {
-      void *data = gltf_ubo_buffer.map();
-      sh_gltf_vert::UBO tmp_pc{};
-      tmp_pc.proj = gizmo_layer.camera_proj;
-      float scale = 10.0f;
-      //       float scale = 0.01f;
-      tmp_pc.view = gizmo_layer.camera_view *
-                    mat4(scale, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, scale, 0.0f, 0.0f,
-                         scale, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
-      tmp_pc.light_pos = gizmo_layer.gizmo_drag_state.pos;
-      tmp_pc.camera_pos = gizmo_layer.camera_pos;
-      memcpy(data, &tmp_pc, sizeof(tmp_pc));
-      gltf_ubo_buffer.unmap();
-    }
-    /*----------------------------------*/
-    /* Update the offscreen framebuffer */
-    /*----------------------------------*/
-
-    framebuffer_wrapper.transition_layout_to_write(device_wrapper, cmd);
-    framebuffer_wrapper.clear_depth(device_wrapper, cmd);
-    framebuffer_wrapper.clear_color(device_wrapper, cmd);
-    framebuffer_wrapper.begin_render_pass(cmd);
-    // Set up the rendering area
-    cmd.setViewport(
-        0,
-        {vk::Viewport(0, 0, gizmo_layer.example_viewport.extent.width,
-                      gizmo_layer.example_viewport.extent.height, 0.0f, 1.0f)});
-
-    cmd.setScissor(0, {{{0, 0},
-                        {gizmo_layer.example_viewport.extent.width,
-                         gizmo_layer.example_viewport.extent.height}}});
-
-    {
-      // Update descriptor sets
-      ito(test_model_textures.size()) {
-        gltf_pipeline.update_sampled_image_descriptor(
-            device_wrapper.device.get(), "textures",
-            test_model_textures[i].image.view.get(), mip_sampler.get(), i);
-      }
-
-      gltf_pipeline.update_sampled_image_descriptor(
-          device_wrapper.device.get(), "textures",
-          cubemap_image.image.view.get(), mip_sampler.get(), cubemap_id);
-      /*gltf_pipeline.update_sampled_image_descriptor(
-          device_wrapper.device.get(), "textures",
-          diffuse_cubemap_image.image.view.get(), sampler.get(),
-          cubemap_id + 1);*/
-
-      gltf_pipeline.update_descriptor(
-          device.get(), "UBO", gltf_ubo_buffer.buffer, 0,
-          sizeof(sh_gltf_vert::UBO), vk::DescriptorType::eUniformBuffer);
-      gltf_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
-      compute_pipeline_wrapped.update_storage_image_descriptor(
-          device.get(), "out_image", storage_image_wrapper.image.view.get());
-      compute_pipeline_wrapped.update_sampled_image_descriptor(
-          device_wrapper.device.get(), "in_image",
-          framebuffer_wrapper.image.view.get(), nearest_sampler.get());
-
-      // Main geometry pass
-      ito(test_model.meshes.size()) {
-        auto &wrap = test_model_wrapper[i];
-        auto &material = test_model.materials[i];
-        // for (auto &wrap : test_model_wrapper) {
-        cmd.bindVertexBuffers(0, {wrap.vertex_buffer.buffer}, {0});
-        cmd.bindIndexBuffer(wrap.index_buffer.buffer, 0,
-                            vk::IndexType::eUint32);
-        // Push constants with texture IDs
-        sh_gltf_frag::push_constant tmp_pc{};
-        if (material.albedo_id >= 0) {
-          tmp_pc.albedo_id = material.albedo_id;
-        }
-        if (material.normal_id >= 0) {
-          tmp_pc.normal_id = material.normal_id;
-        }
-        if (material.metalness_roughness_id >= 0) {
-          tmp_pc.metalness_roughness_id = material.metalness_roughness_id;
-        }
-        tmp_pc.cubemap_id = cubemap_id;
-        gltf_pipeline.push_constants(cmd, &tmp_pc,
-                                     sizeof(sh_gltf_frag::push_constant));
-        cmd.drawIndexed(wrap.index_count, 1, 0, 0, 0);
-      }
-    }
-    fullscreen_pipeline.bind_pipeline(device.get(), cmd);
-
-    framebuffer_wrapper.end_render_pass(cmd);
-
-    // Gizmo pass
-    // Here we clear the depth to make Xray gizmo
-    framebuffer_wrapper.clear_depth(device_wrapper, cmd);
-    framebuffer_wrapper.begin_render_pass(cmd);
-    gizmo_layer.draw(device_wrapper, cmd);
-    framebuffer_wrapper.end_render_pass(cmd);
-
-    // POST PROCESS PASS
-    framebuffer_wrapper.transition_layout_to_read(device_wrapper, cmd);
-    storage_image_wrapper.transition_layout_to_write(device_wrapper, cmd);
-    compute_pipeline_wrapped.bind_pipeline(device.get(), cmd);
-    cmd.dispatch((gizmo_layer.example_viewport.extent.width + 15) / 16,
-                 (gizmo_layer.example_viewport.extent.height + 15) / 16, 1);
-    storage_image_wrapper.transition_layout_to_read(device_wrapper, cmd);
-  };
-
-  /*--------------------*/
-  /* Onscreen rendering */
-  /*--------------------*/
-  device_wrapper.on_tick = [&](vk::CommandBuffer &cmd) {
-
-  };
-
-  /////////////////////
-  // Render the GUI
-  /////////////////////
-  device_wrapper.on_gui = [&] {
-    gizmo_layer.on_imgui_begin();
-    static bool show_demo = true;
+  render_graph::Graphics_Utils gu = render_graph::Graphics_Utils::create();
+  gu.set_on_gui([&] {
     ImGui::Begin("dummy window");
-    ImGui::PopStyleVar(3);
-    gizmo_layer.on_imgui_viewport();
-
-    ImGui::Image(ImGui_ImplVulkan_AddTexture(
-                     sampler.get(), storage_image_wrapper.image.view.get(),
-                     VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
-                 ImVec2(gizmo_layer.example_viewport.extent.width,
-                        gizmo_layer.example_viewport.extent.height),
-                 ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
-    static int selected_fish = -1;
     const char *names[] = {"Bream", "Haddock", "Mackerel", "Pollock",
                            "Tilefish"};
     static bool toggles[] = {true, false, false, false, false};
@@ -550,22 +280,44 @@ TEST(graphics, vulkan_graphics_test_3d_models) {
       }
       ImGui::EndPopup();
     }
-    ImGui::End();
-    ImGui::ShowDemoWindow(&show_demo);
-    ImGui::Begin("Simulation parameters");
 
-    ImGui::End();
-    ImGui::Begin("Rendering configuration");
-    gizmo_layer.push_line(vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, 1.0f),
-                          vec3(0.0f, 0.0f, 1.0f));
-    ImGui::End();
-    ImGui::Begin("Metrics");
-    ImGui::End();
     if (ImGui::GetIO().KeysDown[GLFW_KEY_ESCAPE]) {
       std::exit(0);
     }
-  };
-  device_wrapper.window_loop();
+    ImGui::End();
+  });
+  gu.run_loop([&] {
+    gu.create_render_pass(
+        "pass_0", {},
+        {render_graph::Resource{
+             .name = "pass_0.diffuse",
+             .type = render_graph::Type::RT,
+             .rt_info =
+                 render_graph::RT{.format = vk::Format::eR32G32B32A32Sfloat,
+                                  .target =
+                                      render_graph::Render_Target::Color}},
+         render_graph::Resource{
+             .name = "pass_0.depth",
+             .type = render_graph::Type::RT,
+             .rt_info =
+                 render_graph::RT{.format = vk::Format::eD32Sfloat,
+                                  .target =
+                                      render_graph::Render_Target::Depth}}},
+        512, 512, [&] {
+          gu.clear_color({1.0f, 0.2f, 0.4f, 0.0f});
+          gu.clear_depth(1.0f);
+          gu.VS_set_shader("bufferless_triangle.vert.glsl");
+          gu.PS_set_shader("red.frag.glsl");
+          gu.IA_set_topology(vk::PrimitiveTopology::eTriangleList);
+          gu.IA_set_cull_mode(vk::CullModeFlagBits::eNone,
+                              vk::FrontFace::eCounterClockwise,
+                              vk::PolygonMode::eFill, 1.0f);
+          gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual, true,
+                                        1.0f);
+
+          gu.draw(3, 1, 0, 0);
+        });
+  });
 }
 
 int main(int argc, char **argv) {

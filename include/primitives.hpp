@@ -78,6 +78,12 @@ struct Vertex_3p3n2t {
   vec3 normal;
   vec2 texcoord;
 };
+struct Vertex_3p3n4b2t {
+  vec3 position;
+  vec3 normal;
+  vec4 tangent;
+  vec2 texcoord;
+};
 struct Vertex_3p3n3c2t_mat {
   vec3 position;
   vec3 normal;
@@ -125,21 +131,34 @@ struct Raw_Mesh_Obj {
   }
   Raw_Mesh_Opaque get_opaque() {
     Raw_Mesh_Opaque out;
-    out.attributes.resize(vertices.size() * sizeof(Vertex_3p3n2t));
-    Vertex_3p3n2t *t_v = (Vertex_3p3n2t *)&out.attributes[0];
+    // Kind of standard here for gltf vertices
+    // @See gltf.vert.glsl
+    using GLRF_Vertex_t = Vertex_3p3n4b2t;
+    out.attributes.resize(vertices.size() * sizeof(GLRF_Vertex_t));
+    GLRF_Vertex_t *t_v = (GLRF_Vertex_t *)&out.attributes[0];
     ito(vertices.size()) {
       t_v[i].position = vertices[i].position;
       t_v[i].normal = vertices[i].normal;
       t_v[i].texcoord = vertices[i].texcoord;
+      t_v[i].tangent = vec4(0.0f, 0.0f, 0.0f, 1.0f);
     }
     out.indices.resize(indices.size() * sizeof(u32_face));
     memcpy(&out.indices[0], &indices[0], indices.size() * sizeof(u32_face));
+    // @Cleanup
+    // This is kind of default vertex format
+    // It must match the struct defined in sh_gltf_vert::_Binding_0
     out.binding = {
-        {"POSITION", {0, 0, vk::Format::eR32G32B32Sfloat}},
-        {"NORMAL", {0, 12, vk::Format::eR32G32B32Sfloat}},
-        {"TEXCOORD_0", {0, 24, vk::Format::eR32G32Sfloat}},
+        {"POSITION",
+         {0, offsetof(GLRF_Vertex_t, position), vk::Format::eR32G32B32Sfloat}},
+        {"NORMAL",
+         {0, offsetof(GLRF_Vertex_t, normal), vk::Format::eR32G32B32Sfloat}},
+        {"TANGENT",
+         {0, offsetof(GLRF_Vertex_t, tangent),
+          vk::Format::eR32G32B32A32Sfloat}},
+        {"TEXCOORD_0",
+         {0, offsetof(GLRF_Vertex_t, texcoord), vk::Format::eR32G32Sfloat}},
     };
-    out.vertex_stride = sizeof(Vertex_3p3n2t);
+    out.vertex_stride = sizeof(GLRF_Vertex_t);
     return out;
   }
 };

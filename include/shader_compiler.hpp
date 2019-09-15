@@ -302,7 +302,6 @@ struct Pipeline_Wrapper {
     auto &device = device_wrapper.device.get();
     Pipeline_Wrapper out;
 
-    // std::vector<vk::VertexInputBindingDescription> vertex_bind_desc;
     std::vector<vk::VertexInputAttributeDescription> vertex_attr_desc;
     std::vector<vk::PipelineShaderStageCreateInfo> stages;
     {
@@ -319,11 +318,8 @@ struct Pipeline_Wrapper {
         ASSERT_PANIC(vs_module_pair.input_slots.find(input.first) !=
                      vs_module_pair.input_slots.end());
         auto location = vs_module_pair.input_slots[input.first];
-        // vertex_bind_desc.push_back(vk::VertexInputBindingDescription(
-        //     binding, input.second.stride, input.second.rate));
         vertex_attr_desc.push_back(vk::VertexInputAttributeDescription(
             location, input.second.binding, input.second.format,
-            // vk::Format::eR32G32B32Sfloat,
             input.second.offset));
       }
       stages.push_back(vs_shader_stage);
@@ -360,6 +356,7 @@ struct Pipeline_Wrapper {
               // @TODO: Enable partially bound resources where it's needed
               // @See: device.cpp
               //.setPNext((void *)&binding_infos)
+              // #shaderSampledImageArrayNonUniformIndexing
               //
               // @TODO: Check for availability
               .setFlags(vk::DescriptorSetLayoutCreateFlagBits::

@@ -81,6 +81,7 @@ struct Device_Wrapper {
 
     return cmd;
   }
+  vk::CommandBuffer &cur_cmd() { return graphics_cmds[cur_image_id].get(); }
   void submit_cur_cmd() {
     auto &cmd = graphics_cmds[cur_image_id].get();
     cmd.end();

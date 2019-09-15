@@ -98,10 +98,9 @@ void main() {
   vec3 v = normalize(uniforms.camera_pos - in_position.xzy);
 
 
-
-  // lambert += clamp(dot(normalize(vec3(-1, -1, 1)), normal), 0.0, 1.0);
-  vec3 light = apply_light(new_normal, l, -v,
-  mr.z, mr.y, albedo.xyz);
+  vec3 light = vec3(1.0) * clamp(dot(normalize(vec3(-1, -1, 1)), normal), 0.0, 1.0);
+//  apply_light(new_normal, l, -v,
+//  mr.z, mr.y, albedo.xyz);
   g_color =
   // vec4(nc.xyz, 1.0);
 //   vec4(abs(mr.zzz), 1.0);

@@ -54,7 +54,7 @@ add_custom_command(OUTPUT kernel.o
 set(LIBS marl OpenMP::OpenMP_CXX meshoptimizer tinyobjloader glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util pthread boost_system boost_filesystem boost_thread)
 
 
-add_executable(shader_parser shader_parser.cpp  ${3RD_SOURCE})
+add_executable(shader_parser shader_parser.cpp)
 target_include_directories(shader_parser PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
 target_link_libraries(shader_parser ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(shader_parser PRIVATE shaderc_shared)
@@ -77,7 +77,7 @@ add_custom_command(
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         COMMAND rm -rf ${CMAKE_BINARY_DIR}/shaders && cp -r ${CMAKE_SOURCE_DIR}/shaders ${CMAKE_BINARY_DIR} && cd shaders && echo "" > shaders.h && ${CMAKE_BINARY_DIR}/shader_parser >> shaders.h
     )
-    add_custom_command(
+add_custom_command(
     OUTPUT always_rebuild
     COMMAND cmake -E echo
     )
@@ -148,5 +148,3 @@ if(NOT EXISTS ${CMAKE_BINARY_DIR}/cubemaps)
     file(DOWNLOAD https://hdrihaven.com/files/hdris/pink_sunrise_2k.hdr cubemaps/pink_sunrise.hdr SHOW_PROGRESS)
 
 endif()
-
-

@@ -333,8 +333,11 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
   // looks like enabling vk::DescriptorBindingFlagBitsEXT::ePartiallyBound
   // for everything crushes the driver so it has to be selectevely enabled
   // maybe a preprocessor command?
+  // @See http://roar11.com/2019/06/vulkan-textures-unbound/
+  // #shaderSampledImageArrayNonUniformIndexing
   ASSERT_PANIC(pd_index_features.shaderSampledImageArrayNonUniformIndexing);
   ASSERT_PANIC(pd_index_features.descriptorBindingPartiallyBound);
+  ASSERT_PANIC(pd_index_features.runtimeDescriptorArray);
 
   out.device = out.physical_device.createDeviceUnique(
       vk::DeviceCreateInfo(vk::DeviceCreateFlags(), 1, deviceQueueCreateInfo)
