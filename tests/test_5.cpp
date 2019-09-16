@@ -307,7 +307,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) {
           gu.clear_color({1.0f, 0.2f, 0.4f, 0.0f});
           gu.clear_depth(1.0f);
           gu.VS_set_shader("bufferless_triangle.vert.glsl");
-          gu.PS_set_shader("red.frag.glsl");
+          gu.PS_set_shader("simple_0.frag.glsl");
           gu.IA_set_topology(vk::PrimitiveTopology::eTriangleList);
           gu.IA_set_cull_mode(vk::CullModeFlagBits::eNone,
                               vk::FrontFace::eCounterClockwise,
@@ -316,6 +316,25 @@ TEST(graphics, vulkan_graphics_test_render_graph) {
                                         1.0f);
 
           gu.draw(3, 1, 0, 0);
+        });
+    gu.create_compute_pass(
+        "pass_1", {"pass_0.diffuse"},
+        {render_graph::Resource{
+            .name = "pass_1.HDR",
+            .type = render_graph::Type::Image,
+            .image_info =
+                render_graph::Image{.format = vk::Format::eR32G32B32A32Sfloat,
+                                    .use = render_graph::Use::UAV,
+                                    .width = 512,
+                                    .height = 512,
+                                    .depth = 1,
+                                    .levels = 1,
+                                    .layers = 1}}},
+        [&] {
+          gu.bind_resource("out_image", "pass_1.HDR");
+          gu.bind_resource("in_image", "pass_0.diffuse");
+          gu.CS_set_shader("image_fill.comp.glsl");
+          gu.dispatch(512 / 16, 512 / 16, 1);
         });
   });
 }

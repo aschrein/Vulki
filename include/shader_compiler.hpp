@@ -499,17 +499,20 @@ struct Pipeline_Wrapper {
       vk::DescriptorType type = vk::DescriptorType::eStorageBuffer) {
     ASSERT_PANIC(this->resource_slots.find(name) != this->resource_slots.end());
     auto slot = this->resource_slots[name];
-
-    device.updateDescriptorSets({vk::WriteDescriptorSet()
-                                     .setDstSet(desc_sets[slot.set].get())
-                                     .setDstBinding(slot.layout.binding)
-                                     .setDescriptorCount(1)
-                                     .setDescriptorType(type)
-                                     .setPBufferInfo(&vk::DescriptorBufferInfo()
-                                                          .setBuffer(buffer)
-                                                          .setRange(size)
-                                                          .setOffset(origin))},
-                                {});
+    ASSERT_PANIC(
+        slot.layout.descriptorType == vk::DescriptorType::eStorageBuffer ||
+        slot.layout.descriptorType == vk::DescriptorType::eUniformBuffer);
+    device.updateDescriptorSets(
+        {vk::WriteDescriptorSet()
+             .setDstSet(desc_sets[slot.set].get())
+             .setDstBinding(slot.layout.binding)
+             .setDescriptorCount(1)
+             .setDescriptorType(slot.layout.descriptorType)
+             .setPBufferInfo(&vk::DescriptorBufferInfo()
+                                  .setBuffer(buffer)
+                                  .setRange(size)
+                                  .setOffset(origin))},
+        {});
   }
   void push_constants(vk::CommandBuffer &cmd, void *data, size_t size) {
     cmd.pushConstants(pipeline_layout.get(),
@@ -523,7 +526,8 @@ struct Pipeline_Wrapper {
                                        vk::ImageView image_view) {
     ASSERT_PANIC(this->resource_slots.find(name) != this->resource_slots.end());
     auto slot = this->resource_slots[name];
-
+    ASSERT_PANIC(slot.layout.descriptorType ==
+                 vk::DescriptorType::eStorageImage);
     device.updateDescriptorSets(
         {vk::WriteDescriptorSet()
              .setDstSet(desc_sets[slot.set].get())
@@ -542,7 +546,8 @@ struct Pipeline_Wrapper {
                                        vk::Sampler sampler, u32 offset = 0u) {
     ASSERT_PANIC(this->resource_slots.find(name) != this->resource_slots.end());
     auto slot = this->resource_slots[name];
-
+    ASSERT_PANIC(slot.layout.descriptorType ==
+                 vk::DescriptorType::eCombinedImageSampler);
     device.updateDescriptorSets(
         {vk::WriteDescriptorSet()
              .setDstSet(desc_sets[slot.set].get())
@@ -556,6 +561,14 @@ struct Pipeline_Wrapper {
                       .setImageLayout(vk::ImageLayout::eShaderReadOnlyOptimal)
                       .setSampler(sampler))},
         {});
+  }
+  bool has_descriptor(std::string const &name) {
+    return this->resource_slots.find(name) != this->resource_slots.end();
+  }
+  vk::DescriptorType get_type(std::string const &name) {
+    ASSERT_PANIC(this->resource_slots.find(name) != this->resource_slots.end());
+    auto slot = this->resource_slots[name];
+    return slot.layout.descriptorType;
   }
   void bind_pipeline(vk::Device &device, vk::CommandBuffer &cmd) {
     cmd.bindPipeline(this->bind_point, this->pipeline.get());

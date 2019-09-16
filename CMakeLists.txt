@@ -67,7 +67,7 @@ if(NOT EXISTS ${CMAKE_BINARY_DIR}/shaders)
 endif()
 
 add_custom_target(
-    my_custom_target_that_always_runs ALL
+    shaders_target ALL
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/__header.h
     )
 

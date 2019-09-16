@@ -61,9 +61,10 @@ struct Graphics_Utils {
                          std::vector<std::string> const &input,
                          std::vector<Resource> const &output, u32 width,
                          u32 height, std::function<void()> on_exec);
-  //  u32 create_compute_pass(std::vector<std::string> const &input,
-  //                          std::vector<Resource> const &output,
-  //                          std::function<void()> on_exec);
+  u32 create_compute_pass(std::string const &name,
+                          std::vector<std::string> const &input,
+                          std::vector<Resource> const &output,
+                          std::function<void()> on_exec);
   void release_resource(u32 id);
   ////////////////////////////
   // Immediate like context //
