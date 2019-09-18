@@ -11,6 +11,8 @@
 
 #include <shaders.h>
 
+#include "examples/imgui_impl_vulkan.h"
+
 using namespace render_graph;
 
 struct Graphics_Pipeline_State {
@@ -309,9 +311,9 @@ struct Graphics_Utils_State {
                             vk::ImageUsageFlagBits::eSampled),
               VMA_MEMORY_USAGE_GPU_ONLY, vk::ImageAspectFlagBits::eDepth));
         }
-        rts.emplace_back(details);
         details.image_id = images.size();
-        resource_table.push_back({Resource_Type::RT, images.size()});
+        rts.emplace_back(details);
+        resource_table.push_back({Resource_Type::RT, rts.size()});
         resource_name_table.insert({output[i].name, resource_table.size()});
         // Insert factory reference
         resource_factory_table.insert(
@@ -376,7 +378,7 @@ struct Graphics_Utils_State {
                           vk::ImageUsageFlagBits::eTransferDst |
                           vk::ImageUsageFlagBits::eSampled),
             VMA_MEMORY_USAGE_GPU_ONLY, vk::ImageAspectFlagBits::eColor));
-        resource_table.push_back({Resource_Type::RT, images.size()});
+        resource_table.push_back({Resource_Type::TEXTURE, images.size()});
         resource_name_table.insert({output[i].name, resource_table.size()});
         // Insert factory reference
         resource_factory_table.insert(
@@ -720,6 +722,34 @@ struct Graphics_Utils_State {
     return create_render_pass(name, input, output, 1, 1, on_exec,
                               Pass_Type::Compute);
   }
+  void ImGui_Image(std::string const &name, u32 width, u32 height) {
+    auto &cmd = device_wrapper.cur_cmd();
+    ASSERT_PANIC(resource_name_table.find(name) != resource_name_table.end());
+    auto res_id = resource_name_table[name];
+    auto &res = resource_table[res_id - 1];
+    vk::ImageView view;
+    if (res.first == Resource_Type::RT) {
+      auto &rt = rts[res.second - 1];
+      auto &img = images[rt.image_id - 1];
+      img.barrier(cmd, device_wrapper.graphics_queue_family_id,
+                  vk::ImageLayout::eShaderReadOnlyOptimal,
+                  vk::AccessFlagBits::eShaderRead);
+      view = img.view.get();
+    } else if (res.first == Resource_Type::TEXTURE) {
+      auto &img = images[res.second - 1];
+      img.barrier(cmd, device_wrapper.graphics_queue_family_id,
+                  vk::ImageLayout::eShaderReadOnlyOptimal,
+                  vk::AccessFlagBits::eShaderRead);
+      view = img.view.get();
+    } else {
+      ASSERT_PANIC(false);
+    }
+
+    ImGui::Image(ImGui_ImplVulkan_AddTexture(
+                     sampler.get(), view,
+                     VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+                 ImVec2(width, height), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+  }
 };
 
 Graphics_Utils Graphics_Utils::create() {
@@ -846,4 +876,10 @@ void Graphics_Utils::set_on_gui(std::function<void()> fn) {
 }
 void Graphics_Utils::run_loop(std::function<void()> fn) {
   return ((Graphics_Utils_State *)this->pImpl)->run_loop(fn);
+}
+
+void Graphics_Utils::ImGui_Image(std::string const &name, u32 width,
+                                 u32 height) {
+  return ((Graphics_Utils_State *)this->pImpl)
+      ->ImGui_Image(name, width, height);
 }

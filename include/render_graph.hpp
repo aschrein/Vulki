@@ -100,6 +100,9 @@ struct Graphics_Utils {
   void set_on_gui(std::function<void()> fn);
   void run_loop(std::function<void()> fn);
 
+  void ImGui_Image(std::string const &name, u32 width, u32 height);
+
+private:
   void *pImpl;
 };
 

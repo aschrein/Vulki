@@ -14,8 +14,6 @@
 #include "../include/random.hpp"
 #include "imgui.h"
 
-#include "examples/imgui_impl_vulkan.h"
-
 #include "dir_monitor/include/dir_monitor/dir_monitor.hpp"
 #include "gtest/gtest.h"
 #include <boost/thread.hpp>
@@ -242,6 +240,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) {
   render_graph::Graphics_Utils gu = render_graph::Graphics_Utils::create();
   gu.set_on_gui([&] {
     ImGui::Begin("dummy window");
+    gu.ImGui_Image("pass_1.HDR", 512, 512);
     const char *names[] = {"Bream", "Haddock", "Mackerel", "Pollock",
                            "Tilefish"};
     static bool toggles[] = {true, false, false, false, false};
