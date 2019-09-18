@@ -28,6 +28,8 @@ static void error_callback(int error, const char *description) {
   std::cerr << "Error: " << description << "\n";
 }
 
+// static __inline void _mm_pause() { __asm__ __volatile__("rep; nop" : :); }
+
 // Poor man's rust
 using u32 = uint32_t;
 using u64 = uint64_t;
@@ -71,8 +73,8 @@ public:
   template <typename T> ExitScope<T> operator+(T t) { return t; }
 };
 
-#define CONCAT_INTERNAL(x,y) x##y
-#define CONCAT(x,y) CONCAT_INTERNAL(x,y)
+#define CONCAT_INTERNAL(x, y) x##y
+#define CONCAT(x, y) CONCAT_INTERNAL(x, y)
 #define defer const auto &CONCAT(defer__, __LINE__) = ExitScopeHelp() + [&]()
 
 template <typename T> struct Onetime {

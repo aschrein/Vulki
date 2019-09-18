@@ -28,6 +28,7 @@ namespace fs = std::filesystem;
 using namespace glm;
 
 #include "omp.h"
+#include <exception>
 
 struct ISPC_Packed_UG {
   uint *bins_indices;
@@ -225,22 +226,23 @@ GPU_Image2D wrap_image(Device_Wrapper &device_wrapper,
                     vk::Extent3D(mip_sizes[i].x, mip_sizes[i].y, 1u))});
     out_image.transition_layout_to_sampled(device_wrapper, cmd);
     cmd.end();
-    device_wrapper.sumbit_and_flush(cmd);
+    device_wrapper.submit_cur_cmd();
   }
   return out_image;
 }
 
-TEST(graphics, vulkan_graphics_test_render_graph) {
+TEST(graphics, vulkan_graphics_test_render_graph) try {
 
   // Gizmo_Layer gizmo_layer{};
   Random_Factory frand;
 
   auto recreate_resources = [&] { usleep(10000u); };
-
+  ImVec2 wsize(512, 512);
   render_graph::Graphics_Utils gu = render_graph::Graphics_Utils::create();
   gu.set_on_gui([&] {
     ImGui::Begin("dummy window");
-    gu.ImGui_Image("pass_1.HDR", 512, 512);
+    gu.ImGui_Image("pass_1.HDR", wsize.x, wsize.y);
+    wsize = ImGui::GetWindowSize();
     const char *names[] = {"Bream", "Haddock", "Mackerel", "Pollock",
                            "Tilefish"};
     static bool toggles[] = {true, false, false, false, false};
@@ -302,7 +304,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) {
                  render_graph::RT{.format = vk::Format::eD32Sfloat,
                                   .target =
                                       render_graph::Render_Target::Depth}}},
-        512, 512, [&] {
+        wsize.x, wsize.y, [&] {
           gu.clear_color({1.0f, 0.2f, 0.4f, 0.0f});
           gu.clear_depth(1.0f);
           gu.VS_set_shader("bufferless_triangle.vert.glsl");
@@ -324,8 +326,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) {
             .image_info =
                 render_graph::Image{.format = vk::Format::eR32G32B32A32Sfloat,
                                     .use = render_graph::Use::UAV,
-                                    .width = 512,
-                                    .height = 512,
+                                    .width = u32(wsize.x),
+                                    .height = u32(wsize.y),
                                     .depth = 1,
                                     .levels = 1,
                                     .layers = 1}}},
@@ -333,9 +335,13 @@ TEST(graphics, vulkan_graphics_test_render_graph) {
           gu.bind_resource("out_image", "pass_1.HDR");
           gu.bind_resource("in_image", "pass_0.diffuse");
           gu.CS_set_shader("image_fill.comp.glsl");
-          gu.dispatch(512 / 16, 512 / 16, 1);
+          gu.dispatch(u32(wsize.x) / 16, u32(wsize.y) / 16, 1);
         });
   });
+} catch (std::exception const &exc) {
+  std::cerr << exc.what() << "\n";
+  // @TODO: Disable exceptions
+  // ASSERT_PANIC(false);
 }
 
 int main(int argc, char **argv) {

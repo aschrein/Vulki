@@ -5,6 +5,8 @@
 #include "examples/imgui_impl_glfw.h"
 #include "examples/imgui_impl_vulkan.h"
 
+#include <unistd.h>
+
 PFN_vkCreateDebugReportCallbackEXT pfnVkCreateDebugReportCallbackEXT;
 PFN_vkDestroyDebugReportCallbackEXT pfnVkDestroyDebugReportCallbackEXT;
 
@@ -103,6 +105,22 @@ void print_supported_device_extensions(vk::Instance instance) {
 
 void Device_Wrapper::update_swap_chain() {
   ASSERT_PANIC(this->window);
+  device->waitIdle();
+  //  for (auto &fence : submit_fences) {
+  //    auto cur_fence = fence.get();
+  //    if (cur_fence) {
+  //      auto status = device->getFenceStatus(cur_fence);
+  //      if (vk::Result::eNotReady == status)
+  //        while (vk::Result::eTimeout ==
+  //               device->waitForFences(cur_fence, VK_TRUE, 0))
+  //          _mm_pause();
+  //      //        device->waitForFences({cur_fence}, true, UINT64_MAX);
+  //    } else {
+  //      //      ASSERT_PANIC(false);
+  //      submit_fences[cur_image_id] =
+  //          device->createFenceUnique(vk::FenceCreateInfo());
+  //    }
+  //  }
   vk::SurfaceCapabilitiesKHR caps;
   this->physical_device.getSurfaceCapabilitiesKHR(this->surface, &caps);
   auto surface_formats =
@@ -134,6 +152,7 @@ void Device_Wrapper::update_swap_chain() {
   ASSERT_PANIC(this->swap_chain);
   this->swap_chain_images =
       this->device->getSwapchainImagesKHR(swap_chain.get());
+  this->submit_fences.clear();
   if (!this->render_pass) {
 
     VkAttachmentDescription attachment = {};
@@ -194,7 +213,10 @@ void Device_Wrapper::update_swap_chain() {
                 .setLayers(1)
                 .setPAttachments(&this->swapchain_image_views.back().get())
                 .setRenderPass(this->render_pass.get())));
+
+    this->submit_fences.emplace_back(vk::UniqueFence());
   }
+  image_id = 0;
 }
 
 /*
@@ -428,15 +450,19 @@ void Device_Wrapper::window_loop() {
     auto &cmd = this->acquire_next();
     ImGui_ImplVulkan_CreateFontsTexture(cmd);
     this->submit_cur_cmd();
-    this->flush();
     ImGui_ImplVulkan_DestroyFontUploadObjects();
   }
   while (!glfwWindowShouldClose(this->window)) {
     glfwPollEvents();
     int new_window_width, new_window_height;
+
     glfwGetWindowSize(this->window, &new_window_width, &new_window_height);
+    //    glfwGetFramebufferSize(this->window, &new_window_width,
+    //    &new_window_height);
+
     if (new_window_height != this->cur_backbuffer_height ||
         new_window_width != this->cur_backbuffer_width) {
+
       this->update_swap_chain();
     }
     auto &cmd = this->acquire_next();
@@ -460,7 +486,7 @@ void Device_Wrapper::window_loop() {
         vk::RenderPassBeginInfo()
             .setClearValueCount(1)
             .setPClearValues(&clear_value)
-            .setFramebuffer(swap_chain_framebuffers[cur_image_id].get())
+            .setFramebuffer(swap_chain_framebuffers[image_id].get())
             .setRenderPass(render_pass.get())
             .setRenderArea(vk::Rect2D(
                 {
@@ -470,8 +496,8 @@ void Device_Wrapper::window_loop() {
                 {cur_backbuffer_width, cur_backbuffer_height})),
         vk::SubpassContents::eInline);
 
-    if (this->on_tick)
-      this->on_tick(cmd);
+    //    if (this->on_tick)
+    //      this->on_tick(cmd);
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
 
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
@@ -480,7 +506,12 @@ void Device_Wrapper::window_loop() {
     }
     cmd.endRenderPass();
     this->submit_cur_cmd();
-    this->present();
+    // @TODO: Remove exceptions
+    try {
+      this->present();
+    } catch (vk::OutOfDateKHRError const &err) {
+      this->update_swap_chain();
+    }
   }
   device->waitIdle();
   ImGui_ImplVulkan_Shutdown();

@@ -30,6 +30,9 @@ if(NOT OpenMP_CXX_FOUND)
 endif()
 
 add_definitions(-D_CRT_SECURE_NO_WARNINGS -fpermissive)
+# -DVULKAN_HPP_NO_EXCEPTIONS -DSPIRV_CROSS_EXCEPTIONS_TO_ASSERTIONS -fno-exceptions
+# @TODO: Disable exceptions
+# Funky sparsehash uses exceptions so it's not trivial to switch it off
 set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
 set (CMAKE_CXX_FLAGS_RELEASE "-O3")
 # add_definitions(-std=c++17)
@@ -66,54 +69,56 @@ if(NOT EXISTS ${CMAKE_BINARY_DIR}/shaders)
         )
 endif()
 
-add_custom_target(
-    shaders_target ALL
-    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/__header.h
-    )
+#add_custom_target(
+#    shaders_target ALL
+#    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/__header.h
+#    )
+
+file(GLOB SHADERS "shaders/*")
 
 add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/__header.h  ${CMAKE_SOURCE_DIR}/shaders/shaders.h
-    DEPENDS shader_parser always_rebuild
+    OUTPUT ${CMAKE_SOURCE_DIR}/shaders/shaders.h
+    DEPENDS ${SHADERS}
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         COMMAND rm -rf ${CMAKE_BINARY_DIR}/shaders && cp -r ${CMAKE_SOURCE_DIR}/shaders ${CMAKE_BINARY_DIR} && cd shaders && echo "" > shaders.h && ${CMAKE_BINARY_DIR}/shader_parser >> shaders.h
     )
-add_custom_command(
-    OUTPUT always_rebuild
-    COMMAND cmake -E echo
-    )
+#add_custom_command(
+#    OUTPUT always_rebuild
+#    COMMAND cmake -E echo
+#    )
 
-add_executable(GRAPHICS_EXPERIMENTS main.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
-target_include_directories(GRAPHICS_EXPERIMENTS PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
-target_link_libraries(GRAPHICS_EXPERIMENTS ${Vulkan_LIBRARY} ${LIBS})
-target_link_libraries(GRAPHICS_EXPERIMENTS PRIVATE shaderc_shared)
+#add_executable(GRAPHICS_EXPERIMENTS main.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
+#target_include_directories(GRAPHICS_EXPERIMENTS PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
+#target_link_libraries(GRAPHICS_EXPERIMENTS ${Vulkan_LIBRARY} ${LIBS})
+#target_link_libraries(GRAPHICS_EXPERIMENTS PRIVATE shaderc_shared)
 
 ####################
 # @Cleanup: Pretty much this is copy paste
 
-add_executable(test_0 tests/test_0.cpp ${SOURCE} ${3RD_SOURCE})
-target_include_directories(test_0 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
-target_link_libraries(test_0 ${Vulkan_LIBRARY} ${LIBS})
-target_link_libraries(test_0 PRIVATE shaderc_shared)
+#add_executable(test_0 tests/test_0.cpp ${SOURCE} ${3RD_SOURCE})
+#target_include_directories(test_0 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
+#target_link_libraries(test_0 ${Vulkan_LIBRARY} ${LIBS})
+#target_link_libraries(test_0 PRIVATE shaderc_shared)
 
-add_executable(test_1 tests/test_1.cpp ${SOURCE} ${3RD_SOURCE})
-target_include_directories(test_1 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
-target_link_libraries(test_1 ${Vulkan_LIBRARY} ${LIBS})
-target_link_libraries(test_1 PRIVATE shaderc_shared)
+#add_executable(test_1 tests/test_1.cpp ${SOURCE} ${3RD_SOURCE})
+#target_include_directories(test_1 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
+#target_link_libraries(test_1 ${Vulkan_LIBRARY} ${LIBS})
+#target_link_libraries(test_1 PRIVATE shaderc_shared)
 
-add_executable(test_2 tests/test_2.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
-target_include_directories(test_2 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
-target_link_libraries(test_2 ${Vulkan_LIBRARY} ${LIBS})
-target_link_libraries(test_2 PRIVATE shaderc_shared)
+#add_executable(test_2 tests/test_2.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
+#target_include_directories(test_2 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
+#target_link_libraries(test_2 ${Vulkan_LIBRARY} ${LIBS})
+#target_link_libraries(test_2 PRIVATE shaderc_shared)
 
-add_executable(test_3 tests/test_3.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
-target_include_directories(test_3 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
-target_link_libraries(test_3 ${Vulkan_LIBRARY} ${LIBS})
-target_link_libraries(test_3 PRIVATE shaderc_shared)
+#add_executable(test_3 tests/test_3.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
+#target_include_directories(test_3 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
+#target_link_libraries(test_3 ${Vulkan_LIBRARY} ${LIBS})
+#target_link_libraries(test_3 PRIVATE shaderc_shared)
 
-add_executable(test_4 tests/test_4.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
-target_include_directories(test_4 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
-target_link_libraries(test_4 ${Vulkan_LIBRARY} ${LIBS})
-target_link_libraries(test_4 PRIVATE shaderc_shared)
+#add_executable(test_4 tests/test_4.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
+#target_include_directories(test_4 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
+#target_link_libraries(test_4 ${Vulkan_LIBRARY} ${LIBS})
+#target_link_libraries(test_4 PRIVATE shaderc_shared)
 
 add_executable(test_5 tests/test_5.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
 target_include_directories(test_5 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)

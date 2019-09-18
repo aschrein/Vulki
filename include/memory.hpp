@@ -16,8 +16,10 @@ struct VmaBuffer {
   }
   void unmap() { vmaUnmapMemory(allocator, allocation); }
   ~VmaBuffer() {
-    if (buffer)
+    if (buffer) {
       vmaDestroyBuffer(allocator, buffer, allocation);
+      memset(this, 0, sizeof(*this));
+    }
   }
 };
 
@@ -56,6 +58,7 @@ struct VmaImage {
     if (image) {
       view.reset(vk::ImageView(VkImageView(0u)));
       vmaDestroyImage(allocator, image, allocation);
+      memset(this, 0, sizeof(*this));
     }
   }
   void *map() {
