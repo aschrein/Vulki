@@ -240,8 +240,10 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   render_graph::Graphics_Utils gu = render_graph::Graphics_Utils::create();
   gu.set_on_gui([&] {
     ImGui::Begin("dummy window");
+    gu.ImGui_Emit_Stats();
     gu.ImGui_Image("pass_1.HDR", wsize.x, wsize.y);
     wsize = ImGui::GetWindowSize();
+    wsize.y -= 100;
     const char *names[] = {"Bream", "Haddock", "Mackerel", "Pollock",
                            "Tilefish"};
     static bool toggles[] = {true, false, false, false, false};
@@ -334,7 +336,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.bind_resource("out_image", "pass_1.HDR");
           gu.bind_resource("in_image", "pass_0.diffuse");
           gu.CS_set_shader("image_fill.comp.glsl");
-          gu.dispatch(u32(wsize.x) / 16, u32(wsize.y) / 16, 1);
+          gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
         });
   });
 } catch (std::exception const &exc) {

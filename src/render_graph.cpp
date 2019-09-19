@@ -92,6 +92,12 @@ struct Pass_Details {
   vk::UniqueFramebuffer fb;
   std::function<void()> on_exec;
   bool alive;
+//  void destroy() {
+//    vkDestroyRenderPass((VkDevice)device_wrapper->device.get(),
+//                        (VkRenderPass)pass, nullptr);
+//    vkDestroyFramebuffer((VkDevice)device_wrapper->device.get(),
+//                         (VkFramebuffer)fb, nullptr);
+//  }
 };
 
 // Used per frame
@@ -271,6 +277,8 @@ struct Graphics_Utils_State {
   std::vector<VmaImage> images;
   std::vector<VmaBuffer> buffers;
   std::vector<RT_Details> rts;
+//  Slot_Machine<Pass_Details> passes;
+  std::vector<Pass_Details> passes;
   // Single namespace for all gpu resources
   // Not the best way but whatever
   // Not every resource has a name
@@ -294,7 +302,7 @@ struct Graphics_Utils_State {
   // Named dominate; We should clear these at the beginnig of a frame
   //  google::dense_hash_map<std::string, std::string> named_binding_table;
   google::dense_hash_map<std::string, u32> id_binding_table;
-  std::vector<Pass_Details> passes;
+
   Graphics_Pipeline_State cur_gfx_state;
   u32 cur_cs;
   google::dense_hash_map<u32, Image_Layout> cur_image_layouts;
@@ -1008,6 +1016,8 @@ struct Graphics_Utils_State {
             }
           }
         } else {
+          // There must be some pass to resolve the dependency
+          ASSERT_PANIC(passes_queue.size());
           passes_queue.push_back(begin);
         }
       }
@@ -1050,6 +1060,13 @@ struct Graphics_Utils_State {
         name, sampler.get(), view, vk::ImageLayout::eShaderReadOnlyOptimal);
     ImGui::Image((ImTextureID)desc, ImVec2(width, height), ImVec2(0.0f, 1.0f),
                  ImVec2(1.0f, 0.0f));
+  }
+  void ImGui_Emit_Stats() {
+    ImGui::Value("Pass      slots:", (u32)passes.size());
+    ImGui::Value("Resource  slots:", (u32)resource_table.size());
+    ImGui::Value("RT        slots:", (u32)rts.size());
+    ImGui::Value("Image     slots:", (u32)images.size());
+    ImGui::Value("Buffer    slots:", (u32)buffers.size());
   }
 };
 
@@ -1183,4 +1200,8 @@ void Graphics_Utils::ImGui_Image(std::string const &name, u32 width,
                                  u32 height) {
   return ((Graphics_Utils_State *)this->pImpl)
       ->ImGui_Image(name, width, height);
+}
+
+void Graphics_Utils::ImGui_Emit_Stats() {
+  return ((Graphics_Utils_State *)this->pImpl)->ImGui_Emit_Stats();
 }

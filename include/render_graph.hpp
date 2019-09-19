@@ -101,6 +101,7 @@ struct Graphics_Utils {
   void run_loop(std::function<void()> fn);
 
   void ImGui_Image(std::string const &name, u32 width, u32 height);
+  void ImGui_Emit_Stats();
 
 private:
   void *pImpl;
