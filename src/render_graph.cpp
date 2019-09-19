@@ -1,7 +1,6 @@
 #include "../include/assets.hpp"
 #include "../include/device.hpp"
 #include "../include/error_handling.hpp"
-#include "../include/gizmo.hpp"
 #include "../include/memory.hpp"
 #include "../include/model_loader.hpp"
 #include "../include/shader_compiler.hpp"
@@ -10,6 +9,8 @@
 #include <sparsehash/dense_hash_set>
 
 #include <shaders.h>
+
+#include <imgui.h>
 
 #include "examples/imgui_impl_vulkan.h"
 
@@ -93,6 +94,167 @@ struct Pass_Details {
   bool alive;
 };
 
+// Used per frame
+struct Descriptor_Frame {
+  Device_Wrapper *device_wrapper;
+  vk::UniqueDescriptorPool descset_pool;
+  // Shader id -> Set group id
+  google::dense_hash_map<u32, u32> descset_table;
+  // @TODO: Merge similar groups for different shaders
+  std::vector<std::vector<vk::UniqueDescriptorSet>> descset_groups;
+  google::dense_hash_map<std::string, vk::DescriptorSet> imgui_table;
+
+  bool invalidate = false;
+
+  void reset() { invalidate = true; }
+
+  vk::DescriptorSet allocate_imgui(std::string const &name, vk::Sampler sampler,
+                                   vk::ImageView image_view,
+                                   vk::ImageLayout image_layout) {
+    if (imgui_table.find(name) == imgui_table.end()) {
+      imgui_table.insert(
+          {name, (VkDescriptorSet)ImGui_ImplVulkan_AddTexture(
+                     (VkSampler)sampler, (VkImageView)image_view,
+                     (VkImageLayout)image_layout, descset_pool.get())});
+    }
+    return imgui_table.find(name)->second;
+  }
+
+  std::vector<vk::DescriptorSet>
+  get_or_create_descsets(Pipeline_Wrapper &pwrap) {
+    if (!descset_pool) {
+      vk::DescriptorPoolSize aPoolSizes[] = {
+          {vk::DescriptorType::eSampler, 1000},
+          {vk::DescriptorType::eCombinedImageSampler, 1000},
+          {vk::DescriptorType::eSampledImage, 4096},
+          {vk::DescriptorType::eStorageImage, 1000},
+          {vk::DescriptorType::eUniformTexelBuffer, 1000},
+          {vk::DescriptorType::eStorageTexelBuffer, 1000},
+          {vk::DescriptorType::eCombinedImageSampler, 1000},
+          {vk::DescriptorType::eStorageBuffer, 1000},
+          {vk::DescriptorType::eUniformBufferDynamic, 1000},
+          {vk::DescriptorType::eStorageBufferDynamic, 1000},
+          {vk::DescriptorType::eInputAttachment, 1000}};
+      descset_pool = device_wrapper->device->createDescriptorPoolUnique(
+          vk::DescriptorPoolCreateInfo(
+              vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
+                  vk::DescriptorPoolCreateFlagBits::eUpdateAfterBindEXT,
+              1000 * 11, 11, aPoolSizes));
+    } else if (invalidate) {
+      imgui_table.clear();
+      descset_groups.clear();
+      descset_table.clear();
+      device_wrapper->device->resetDescriptorPool(descset_pool.get());
+      invalidate = false;
+    }
+    u32 pipe_id = pwrap.id;
+    if (descset_table.find(pipe_id) == descset_table.end()) {
+      allocate_descset(pwrap);
+    }
+    std::vector<vk::DescriptorSet> raw_desc_sets;
+    std::vector<uint32_t> raw_desc_sets_offsets;
+    u32 group_id = descset_table.find(pipe_id)->second;
+    for (auto &uds : descset_groups[group_id - 1]) {
+      raw_desc_sets.push_back(uds.get());
+      raw_desc_sets_offsets.push_back(0);
+    }
+    return raw_desc_sets;
+  }
+  Descriptor_Frame() {
+    descset_table.set_empty_key(0u);
+    imgui_table.set_empty_key("null");
+    descset_table.set_deleted_key(u32(-1));
+    imgui_table.set_deleted_key("deleted");
+  }
+  void allocate_descset(Pipeline_Wrapper &pwrap) {
+    u32 pipe_id = pwrap.id;
+    std::vector<vk::UniqueDescriptorSet> desc_sets;
+    auto raw_set_layouts = pwrap.get_raw_descset_layouts();
+    ASSERT_PANIC(raw_set_layouts.size());
+    desc_sets = device_wrapper->device->allocateDescriptorSetsUnique(
+        vk::DescriptorSetAllocateInfo()
+            .setPSetLayouts(&raw_set_layouts[0])
+            .setDescriptorPool(descset_pool.get())
+            .setDescriptorSetCount(raw_set_layouts.size()));
+    descset_groups.emplace_back(std::move(desc_sets));
+    descset_table.insert({pipe_id, descset_groups.size()});
+  }
+  void bind_pipeline(vk::CommandBuffer &cmd, Pipeline_Wrapper &pwrap) {
+    cmd.bindPipeline(pwrap.bind_point, pwrap.pipeline.get());
+    if (pwrap.collect_sets().size() == 0)
+      return;
+    auto raw_descsets = get_or_create_descsets(pwrap);
+    if (raw_descsets.size())
+      cmd.bindDescriptorSets(pwrap.bind_point, pwrap.pipeline_layout.get(), 0,
+                             raw_descsets, {});
+  }
+  void update_descriptor(
+      Pipeline_Wrapper &pwrap, std::string const &name, vk::Buffer buffer,
+      size_t origin, size_t size,
+      vk::DescriptorType type = vk::DescriptorType::eStorageBuffer) {
+    ASSERT_PANIC(pwrap.resource_slots.find(name) != pwrap.resource_slots.end());
+    auto slot = pwrap.resource_slots[name];
+    ASSERT_PANIC(
+        slot.layout.descriptorType == vk::DescriptorType::eStorageBuffer ||
+        slot.layout.descriptorType == vk::DescriptorType::eUniformBuffer);
+    auto raw_descsets = get_or_create_descsets(pwrap);
+    device_wrapper->device->updateDescriptorSets(
+        {vk::WriteDescriptorSet()
+             .setDstSet(raw_descsets[slot.set])
+             .setDstBinding(slot.layout.binding)
+             .setDescriptorCount(1)
+             .setDescriptorType(slot.layout.descriptorType)
+             .setPBufferInfo(&vk::DescriptorBufferInfo()
+                                  .setBuffer(buffer)
+                                  .setRange(size)
+                                  .setOffset(origin))},
+        {});
+  }
+  void update_storage_image_descriptor(Pipeline_Wrapper &pwrap,
+                                       std::string const &name,
+                                       vk::ImageView image_view) {
+    ASSERT_PANIC(pwrap.resource_slots.find(name) != pwrap.resource_slots.end());
+    auto slot = pwrap.resource_slots[name];
+    ASSERT_PANIC(slot.layout.descriptorType ==
+                 vk::DescriptorType::eStorageImage);
+    auto raw_descsets = get_or_create_descsets(pwrap);
+    device_wrapper->device->updateDescriptorSets(
+        {vk::WriteDescriptorSet()
+             .setDstSet(raw_descsets[slot.set])
+             .setDstBinding(slot.layout.binding)
+             .setDescriptorCount(1)
+             .setDescriptorType(vk::DescriptorType::eStorageImage)
+             .setPImageInfo(&vk::DescriptorImageInfo()
+                                 .setImageView(image_view)
+                                 .setImageLayout(vk::ImageLayout::eGeneral)
+                                 .setSampler(vk::Sampler()))},
+        {});
+  }
+  void update_sampled_image_descriptor(Pipeline_Wrapper &pwrap,
+                                       std::string const &name,
+                                       vk::ImageView image_view,
+                                       vk::Sampler sampler, u32 offset = 0u) {
+    ASSERT_PANIC(pwrap.resource_slots.find(name) != pwrap.resource_slots.end());
+    auto slot = pwrap.resource_slots[name];
+    ASSERT_PANIC(slot.layout.descriptorType ==
+                 vk::DescriptorType::eCombinedImageSampler);
+    auto raw_descsets = get_or_create_descsets(pwrap);
+    device_wrapper->device->updateDescriptorSets(
+        {vk::WriteDescriptorSet()
+             .setDstSet(raw_descsets[slot.set])
+             .setDstBinding(slot.layout.binding)
+             .setDescriptorCount(1)
+             .setDstArrayElement(offset)
+             .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
+             .setPImageInfo(
+                 &vk::DescriptorImageInfo()
+                      .setImageView(image_view)
+                      .setImageLayout(vk::ImageLayout::eShaderReadOnlyOptimal)
+                      .setSampler(sampler))},
+        {});
+  }
+};
+
 struct Graphics_Utils_State {
   // #Definitions
   Simple_Monitor simple_monitor;
@@ -104,7 +266,7 @@ struct Graphics_Utils_State {
   vk::UniqueSampler sampler;
   /////////////////////////////
   // Resource tables: Images, buffers, rts
-  enum class Resource_Type { BUFFER, TEXTURE, RT };
+  enum class Resource_Type { BUFFER, TEXTURE, RT, NONE };
   std::vector<std::pair<Resource_Type, u32>> resource_table;
   std::vector<VmaImage> images;
   std::vector<VmaBuffer> buffers;
@@ -123,6 +285,8 @@ struct Graphics_Utils_State {
   google::dense_hash_map<std::string, u32> shader_ids;
   /////////////////////////////
 
+  // Descriptor allocation stuff
+  std::vector<Descriptor_Frame> desc_frames;
   /////////////////////////////
   // Immediate resource tracking
   google::dense_hash_map<std::string, u32> pass_name_table;
@@ -138,6 +302,9 @@ struct Graphics_Utils_State {
   u32 index_buffer;
   u32 index_offset;
   vk::Format index_format;
+
+  //
+  std::vector<std::pair<u32, std::function<void()>>> deferred_calls;
 
   // #GetPipeline
   Pipeline_Wrapper *get_current_gfx_pipeline() {
@@ -242,6 +409,11 @@ struct Graphics_Utils_State {
             .setAddressModeU(vk::SamplerAddressMode::eClampToBorder)
             .setAddressModeV(vk::SamplerAddressMode::eClampToBorder)
             .setMaxLod(1));
+    desc_frames.resize(3);
+    for (auto &frame : desc_frames)
+      // @Cleanup?
+      // It's safe cuz pImpl does not change memory location
+      frame.device_wrapper = &device_wrapper;
   }
   u32 create_texture2D(Image_Raw const &image_raw, bool build_mip = true) {}
   u32 create_uav_image(u32 width, u32 height, vk::Format format, u32 levels,
@@ -303,26 +475,43 @@ struct Graphics_Utils_State {
         ito(output.size()) { resource_name_table.erase(output[i].name); }
         // Total invalidation
         // @TODO: Track dependencies?
+        std::vector<Pipeline_Wrapper *> pipes_to_delete;
         for (auto &pipe : gfx_pipelines) {
-          delete pipe.second;
+          pipes_to_delete.push_back(pipe.second);
         }
         gfx_pipelines.clear();
+
+        for (auto &frame : desc_frames)
+          frame.reset();
+        pass_name_table.erase(name);
         ito(pass.output.size()) {
           auto &res = resource_table[pass.output[i] - 1];
           resource_factory_table.erase(res.second);
-          if (res.first == Resource_Type::RT) {
-            auto &rt = rts[res.second - 1];
-            images[rt.image_id - 1].~VmaImage();
-            rts[res.second - 1] = {};
-          } else if (res.first == Resource_Type::TEXTURE) {
-            images[res.second - 1].~VmaImage();
-          } else {
-            ASSERT_PANIC(false);
-          }
+          pass.alive = false;
         }
-        pass_name_table.erase(name);
-        passes[pass_id - 1].~Pass_Details();
-        memset(&passes[pass_id - 1], 0, sizeof(Pass_Details));
+        deferred_calls.push_back(
+            {3, [this, pass_id, pipes_to_delete] {
+               for (auto &pipe : pipes_to_delete) {
+                 delete pipe;
+               }
+               auto &pass = passes[pass_id - 1];
+               ito(pass.output.size()) {
+                 auto &res = resource_table[pass.output[i] - 1];
+                 if (res.first == Resource_Type::RT) {
+                   auto &rt = rts[res.second - 1];
+                   images[rt.image_id - 1].~VmaImage();
+                   rts[res.second - 1] = {};
+                 } else if (res.first == Resource_Type::TEXTURE) {
+                   images[res.second - 1].~VmaImage();
+                 } else {
+                   ASSERT_PANIC(false);
+                 }
+                 res.first = Resource_Type::NONE;
+                 res.second = 0;
+               }
+               passes[pass_id - 1].~Pass_Details();
+               memset(&passes[pass_id - 1], 0, sizeof(Pass_Details));
+             }});
       }
     }
     std::vector<VkAttachmentDescription> attachments;
@@ -636,27 +825,31 @@ struct Graphics_Utils_State {
     // @Cleanup
     _begin_pass(cmd, pass);
   }
+  Descriptor_Frame &get_cur_descframe() {
+    return desc_frames[device_wrapper.get_frame_id()];
+  }
   void draw(u32 indices, u32 instances, u32 first_index, u32 first_instance,
             i32 vertex_offset) {
     auto pipeline = get_current_gfx_pipeline();
-    pipeline->bind_pipeline(device_wrapper.device.get(),
-                            device_wrapper.cur_cmd());
+    auto &dframe = get_cur_descframe();
     auto &cmd = device_wrapper.cur_cmd();
+    dframe.bind_pipeline(cmd, *pipeline);
     cmd.drawIndexed(indices, instances, first_index, vertex_offset,
                     first_instance);
   }
   void draw(u32 vertices, u32 instances, u32 first_vertex, u32 first_instance) {
     auto pipeline = get_current_gfx_pipeline();
 
-    pipeline->bind_pipeline(device_wrapper.device.get(),
-                            device_wrapper.cur_cmd());
+    auto &dframe = get_cur_descframe();
     auto &cmd = device_wrapper.cur_cmd();
+    dframe.bind_pipeline(cmd, *pipeline);
 
     cmd.draw(vertices, instances, first_vertex, first_instance);
   }
   void dispatch(u32 dim_x, u32 dim_y, u32 dim_z) {
     auto &cmd = device_wrapper.cur_cmd();
     auto pipeline = get_current_compute_pipeline();
+    auto &dframe = get_cur_descframe();
     for (auto &item : id_binding_table) {
       if (!pipeline->has_descriptor(item.first))
         continue;
@@ -679,22 +872,21 @@ struct Graphics_Utils_State {
                     vk::ImageLayout::eGeneral,
                     vk::AccessFlagBits::eShaderRead |
                         vk::AccessFlagBits::eShaderWrite);
-        pipeline->update_storage_image_descriptor(device_wrapper.device.get(),
-                                                  item.first, img.view.get());
+        dframe.update_storage_image_descriptor(*pipeline, item.first,
+                                               img.view.get());
       } else if (type == vk::DescriptorType::eCombinedImageSampler) {
         auto &img = images[img_id - 1];
         img.barrier(cmd, device_wrapper.graphics_queue_family_id,
                     vk::ImageLayout::eShaderReadOnlyOptimal,
                     vk::AccessFlagBits::eShaderRead);
-        pipeline->update_sampled_image_descriptor(device_wrapper.device.get(),
-                                                  item.first, img.view.get(),
-                                                  sampler.get());
+        dframe.update_sampled_image_descriptor(*pipeline, item.first,
+                                               img.view.get(), sampler.get());
       } else {
         ASSERT_PANIC(false);
       }
     }
-    pipeline->bind_pipeline(device_wrapper.device.get(),
-                            device_wrapper.cur_cmd());
+
+    dframe.bind_pipeline(cmd, *pipeline);
 
     cmd.dispatch(dim_x, dim_y, dim_z);
   }
@@ -756,6 +948,17 @@ struct Graphics_Utils_State {
 
   void run_loop(std::function<void()> fn) {
     device_wrapper.pre_tick = [=](vk::CommandBuffer &cmd) {
+      std::vector<std::pair<u32, std::function<void()>>> new_deferred_list;
+      for (auto &def_call : deferred_calls) {
+        ASSERT_PANIC(def_call.first);
+        def_call.first -= 1;
+        if (def_call.first == 0u) {
+          def_call.second();
+        } else {
+          new_deferred_list.push_back(def_call);
+        }
+      }
+      deferred_calls = new_deferred_list;
       fn();
       // Poor man's dependency graph
       // pass_id -> list of pass_ids on which this pass depends
@@ -821,6 +1024,7 @@ struct Graphics_Utils_State {
                               Pass_Type::Compute);
   }
   void ImGui_Image(std::string const &name, u32 width, u32 height) {
+
     auto &cmd = device_wrapper.cur_cmd();
     ASSERT_PANIC(resource_name_table.find(name) != resource_name_table.end());
     auto res_id = resource_name_table[name];
@@ -842,11 +1046,10 @@ struct Graphics_Utils_State {
     } else {
       ASSERT_PANIC(false);
     }
-
-    ImGui::Image(ImGui_ImplVulkan_AddTexture(
-                     sampler.get(), view,
-                     VkImageLayout::VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
-                 ImVec2(width, height), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+    auto desc = get_cur_descframe().allocate_imgui(
+        name, sampler.get(), view, vk::ImageLayout::eShaderReadOnlyOptimal);
+    ImGui::Image((ImTextureID)desc, ImVec2(width, height), ImVec2(0.0f, 1.0f),
+                 ImVec2(1.0f, 0.0f));
   }
 };
 

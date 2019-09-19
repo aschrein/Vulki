@@ -17,7 +17,6 @@ struct Device_Wrapper {
   vk::UniqueDevice device;
   // AMD memory allocator
   std::unique_ptr<Alloc_State> alloc_state;
-  vk::UniqueDescriptorPool descset_pool;
   // Timestamp query stuff
   struct {
     vk::UniqueQueryPool pool;
@@ -67,6 +66,7 @@ struct Device_Wrapper {
   ///////////////////////////////////////////////////////
   // Methods
   ///////////////////////////////////////////////////////
+  u32 get_frame_id() { return frame_id; }
   vk::CommandBuffer &acquire_next() {
     // Wait till the last submission has finished
     // @Cleanup the synchronization

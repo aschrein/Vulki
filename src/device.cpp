@@ -370,24 +370,6 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
           .setEnabledExtensionCount(deviceExtensions.size()));
   ASSERT_PANIC(out.device);
 
-  vk::DescriptorPoolSize aPoolSizes[] = {
-      {vk::DescriptorType::eSampler, 1000},
-      {vk::DescriptorType::eCombinedImageSampler, 1000},
-      {vk::DescriptorType::eSampledImage, 4096},
-      {vk::DescriptorType::eStorageImage, 1000},
-      {vk::DescriptorType::eUniformTexelBuffer, 1000},
-      {vk::DescriptorType::eStorageTexelBuffer, 1000},
-      {vk::DescriptorType::eCombinedImageSampler, 1000},
-      {vk::DescriptorType::eStorageBuffer, 1000},
-      {vk::DescriptorType::eUniformBufferDynamic, 1000},
-      {vk::DescriptorType::eStorageBufferDynamic, 1000},
-      {vk::DescriptorType::eInputAttachment, 1000}};
-  out.descset_pool =
-      out.device->createDescriptorPoolUnique(vk::DescriptorPoolCreateInfo(
-          vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
-              vk::DescriptorPoolCreateFlagBits::eUpdateAfterBindEXT,
-          1000 * 11, 11, aPoolSizes));
-
   out.graphcis_cmd_pool =
       out.device->createCommandPoolUnique(vk::CommandPoolCreateInfo(
           vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
@@ -416,7 +398,23 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
 }
 
 void Device_Wrapper::window_loop() {
-
+  vk::DescriptorPoolSize aPoolSizes[] = {
+      {vk::DescriptorType::eSampler, 1000},
+      {vk::DescriptorType::eCombinedImageSampler, 1000},
+      {vk::DescriptorType::eSampledImage, 4096},
+      {vk::DescriptorType::eStorageImage, 1000},
+      {vk::DescriptorType::eUniformTexelBuffer, 1000},
+      {vk::DescriptorType::eStorageTexelBuffer, 1000},
+      {vk::DescriptorType::eCombinedImageSampler, 1000},
+      {vk::DescriptorType::eStorageBuffer, 1000},
+      {vk::DescriptorType::eUniformBufferDynamic, 1000},
+      {vk::DescriptorType::eStorageBufferDynamic, 1000},
+      {vk::DescriptorType::eInputAttachment, 1000}};
+  auto descset_pool =
+      device->createDescriptorPoolUnique(vk::DescriptorPoolCreateInfo(
+          vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
+              vk::DescriptorPoolCreateFlagBits::eUpdateAfterBindEXT,
+          1000 * 11, 11, aPoolSizes));
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
   ImGuiIO &io = ImGui::GetIO();
@@ -439,7 +437,7 @@ void Device_Wrapper::window_loop() {
   init_info.QueueFamily = this->graphics_queue_family_id;
   init_info.Queue = this->graphics_queue;
   init_info.PipelineCache = 0;
-  init_info.DescriptorPool = this->descset_pool.get();
+  init_info.DescriptorPool = descset_pool.get();
   init_info.Allocator = 0;
   init_info.MinImageCount = this->swap_chain_images.size();
   init_info.ImageCount = this->swap_chain_images.size();

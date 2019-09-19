@@ -219,11 +219,14 @@ struct Vertex_Input {
 struct Pipeline_Wrapper {
   std::vector<vk::UniqueShaderModule> shader_modules;
   std::vector<vk::UniqueDescriptorSetLayout> set_layouts;
-  std::vector<vk::UniqueDescriptorSet> desc_sets;
+
   vk::UniquePipelineLayout pipeline_layout;
   vk::UniquePipeline pipeline;
   vk::PipelineBindPoint bind_point;
   std::unordered_map<std::string, Shader_Descriptor> resource_slots;
+
+  // Helper
+  u32 id;
 
   void merge_resource_slots(
       std::unordered_map<std::string, Shader_Descriptor> const &slots) {
@@ -273,11 +276,6 @@ struct Pipeline_Wrapper {
               .setBindingCount(set_binding.size())));
     }
     auto raw_set_layouts = out.get_raw_descset_layouts();
-    out.desc_sets = device.allocateDescriptorSetsUnique(
-        vk::DescriptorSetAllocateInfo()
-            .setPSetLayouts(&raw_set_layouts[0])
-            .setDescriptorPool(device_wrapper.descset_pool.get())
-            .setDescriptorSetCount(raw_set_layouts.size()));
 
     out.pipeline_layout = device.createPipelineLayoutUnique(
         vk::PipelineLayoutCreateInfo()
@@ -365,14 +363,7 @@ struct Pipeline_Wrapper {
               .setBindingCount(set_binding.size())));
     }
     auto raw_set_layouts = out.get_raw_descset_layouts();
-    if (raw_set_layouts.size()) {
-
-      out.desc_sets = device.allocateDescriptorSetsUnique(
-          vk::DescriptorSetAllocateInfo()
-              .setPSetLayouts(&raw_set_layouts[0])
-              .setDescriptorPool(device_wrapper.descset_pool.get())
-              .setDescriptorSetCount(raw_set_layouts.size()));
-    }
+    // @TODO: Infer push constants size from reflection
     if (push_constants_size) {
       out.pipeline_layout = device.createPipelineLayoutUnique(
           vk::PipelineLayoutCreateInfo()
@@ -477,42 +468,12 @@ struct Pipeline_Wrapper {
     out.bind_point = vk::PipelineBindPoint::eGraphics;
     return out;
   }
-  std::vector<vk::DescriptorSet> get_raw_descsets() {
-    std::vector<vk::DescriptorSet> raw_desc_sets;
-    std::vector<uint32_t> raw_desc_sets_offsets;
-    for (auto &uds : this->desc_sets) {
-      raw_desc_sets.push_back(uds.get());
-      raw_desc_sets_offsets.push_back(0);
-    }
-    return raw_desc_sets;
-  }
   std::vector<vk::DescriptorSetLayout> get_raw_descset_layouts() {
     std::vector<vk::DescriptorSetLayout> raw_set_layouts;
     for (auto &set_layout : this->set_layouts) {
       raw_set_layouts.push_back(set_layout.get());
     }
     return raw_set_layouts;
-  }
-  void update_descriptor(
-      vk::Device device, std::string const &name, vk::Buffer buffer,
-      size_t origin, size_t size,
-      vk::DescriptorType type = vk::DescriptorType::eStorageBuffer) {
-    ASSERT_PANIC(this->resource_slots.find(name) != this->resource_slots.end());
-    auto slot = this->resource_slots[name];
-    ASSERT_PANIC(
-        slot.layout.descriptorType == vk::DescriptorType::eStorageBuffer ||
-        slot.layout.descriptorType == vk::DescriptorType::eUniformBuffer);
-    device.updateDescriptorSets(
-        {vk::WriteDescriptorSet()
-             .setDstSet(desc_sets[slot.set].get())
-             .setDstBinding(slot.layout.binding)
-             .setDescriptorCount(1)
-             .setDescriptorType(slot.layout.descriptorType)
-             .setPBufferInfo(&vk::DescriptorBufferInfo()
-                                  .setBuffer(buffer)
-                                  .setRange(size)
-                                  .setOffset(origin))},
-        {});
   }
   void push_constants(vk::CommandBuffer &cmd, void *data, size_t size) {
     cmd.pushConstants(pipeline_layout.get(),
@@ -521,47 +482,6 @@ struct Pipeline_Wrapper {
     // void pushConstants( PipelineLayout layout, ShaderStageFlags stageFlags,
     // uint32_t offset, uint32_t size, const void* pValues,
   }
-  void update_storage_image_descriptor(vk::Device device,
-                                       std::string const &name,
-                                       vk::ImageView image_view) {
-    ASSERT_PANIC(this->resource_slots.find(name) != this->resource_slots.end());
-    auto slot = this->resource_slots[name];
-    ASSERT_PANIC(slot.layout.descriptorType ==
-                 vk::DescriptorType::eStorageImage);
-    device.updateDescriptorSets(
-        {vk::WriteDescriptorSet()
-             .setDstSet(desc_sets[slot.set].get())
-             .setDstBinding(slot.layout.binding)
-             .setDescriptorCount(1)
-             .setDescriptorType(vk::DescriptorType::eStorageImage)
-             .setPImageInfo(&vk::DescriptorImageInfo()
-                                 .setImageView(image_view)
-                                 .setImageLayout(vk::ImageLayout::eGeneral)
-                                 .setSampler(vk::Sampler()))},
-        {});
-  }
-  void update_sampled_image_descriptor(vk::Device device,
-                                       std::string const &name,
-                                       vk::ImageView image_view,
-                                       vk::Sampler sampler, u32 offset = 0u) {
-    ASSERT_PANIC(this->resource_slots.find(name) != this->resource_slots.end());
-    auto slot = this->resource_slots[name];
-    ASSERT_PANIC(slot.layout.descriptorType ==
-                 vk::DescriptorType::eCombinedImageSampler);
-    device.updateDescriptorSets(
-        {vk::WriteDescriptorSet()
-             .setDstSet(desc_sets[slot.set].get())
-             .setDstBinding(slot.layout.binding)
-             .setDescriptorCount(1)
-             .setDstArrayElement(offset)
-             .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
-             .setPImageInfo(
-                 &vk::DescriptorImageInfo()
-                      .setImageView(image_view)
-                      .setImageLayout(vk::ImageLayout::eShaderReadOnlyOptimal)
-                      .setSampler(sampler))},
-        {});
-  }
   bool has_descriptor(std::string const &name) {
     return this->resource_slots.find(name) != this->resource_slots.end();
   }
@@ -569,13 +489,6 @@ struct Pipeline_Wrapper {
     ASSERT_PANIC(this->resource_slots.find(name) != this->resource_slots.end());
     auto slot = this->resource_slots[name];
     return slot.layout.descriptorType;
-  }
-  void bind_pipeline(vk::Device &device, vk::CommandBuffer &cmd) {
-    cmd.bindPipeline(this->bind_point, this->pipeline.get());
-    auto raw_descsets = get_raw_descsets();
-    if (raw_descsets.size())
-      cmd.bindDescriptorSets(this->bind_point, this->pipeline_layout.get(), 0,
-                             raw_descsets, {});
   }
 };
 

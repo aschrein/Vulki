@@ -2,11 +2,9 @@
 #include "../include/device.hpp"
 #include "../include/ecs.hpp"
 #include "../include/error_handling.hpp"
-#include "../include/gizmo.hpp"
 #include "../include/memory.hpp"
 #include "../include/model_loader.hpp"
 #include "../include/particle_sim.hpp"
-#include "../include/profiling.hpp"
 #include "../include/render_graph.hpp"
 #include "../include/shader_compiler.hpp"
 #include "f32_f16.hpp"
@@ -209,6 +207,7 @@ GPU_Image2D wrap_image(Device_Wrapper &device_wrapper,
     cpu_buffer.unmap();
   }
   {
+    // @Cleanup: Properly acquire the command buffer
     auto &cmd = device_wrapper.graphics_cmds[0].get();
     cmd.reset(vk::CommandBufferResetFlagBits::eReleaseResources);
     cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlags()));
