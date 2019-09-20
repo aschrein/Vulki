@@ -13,5 +13,6 @@ void main() {
     if (gl_GlobalInvocationID.x > dim.x || gl_GlobalInvocationID.y > dim.y)
       return;
     vec4 in_value = texelFetch(in_image, ivec2(gl_GlobalInvocationID.xy), 0);
+    in_value.a = 1.0;
     imageStore(out_image, ivec2(gl_GlobalInvocationID.xy), sqrt(in_value) + uniforms.offset);
 }

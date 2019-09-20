@@ -233,23 +233,52 @@ PBR_Model load_gltf_pbr(std::string const &filename) {
         default:
           ASSERT_PANIC(false && "unknown format");
         }
-        opaque_mesh.binding[attr.first] = Vertex_Input{
-            .binding = 0u, .offset = offset_counter, .format = format};
+        //        opaque_mesh.binding[attr.first] = Vertex_Input{
+        //            .binding = 0u, .offset = offset_counter, .format =
+        //            format};
         descs.push_back({attr.first, offset_counter, size,
                          u32(accessor.ByteStride(bview)), (u32)attr.second});
         offset_counter += size;
 
         // accessor.type == TINYGLTF_TYPE_SCALAR;
       }
+      using GLRF_Vertex_t = Vertex_3p3n4b2t;
+      opaque_mesh.binding = {
+          {"POSITION",
+           {0, offsetof(GLRF_Vertex_t, position),
+            vk::Format::eR32G32B32Sfloat}},
+          {"NORMAL",
+           {0, offsetof(GLRF_Vertex_t, normal), vk::Format::eR32G32B32Sfloat}},
+          {"TANGENT",
+           {0, offsetof(GLRF_Vertex_t, tangent),
+            vk::Format::eR32G32B32A32Sfloat}},
+          {"TEXCOORD_0",
+           {0, offsetof(GLRF_Vertex_t, texcoord), vk::Format::eR32G32Sfloat}},
+      };
       opaque_mesh.vertex_stride = offset_counter;
+
       for (u32 vid = 0u; vid < vertex_count; vid++) {
+
+        GLRF_Vertex_t vertex{};
         for (auto &desc : descs) {
           auto &accessor = model.accessors[desc.accessor_id];
           auto &bview = model.bufferViews[accessor.bufferView];
           u8 *src = &model.buffers[bview.buffer]
                          .data[bview.byteOffset + desc.stride * vid];
-          write_bytes(src, desc.size);
+
+          if (desc.name == "POSITION") {
+            vertex.position = *(vec3 *)src;
+          } else if (desc.name == "NORMAL") {
+            vertex.normal = *(vec3 *)src;
+          } else if (desc.name == "TANGENT") {
+            vertex.tangent = *(vec4 *)src;
+          } else if (desc.name == "TEXCOORD_0") {
+            vertex.texcoord = *(vec2 *)src;
+          } else {
+            ASSERT_PANIC(false && "Unknown attribute");
+          }
         }
+        write_bytes((u8 *)&vertex, sizeof(vertex));
       }
       {
         ASSERT_PANIC(primitive.indices >= 0)

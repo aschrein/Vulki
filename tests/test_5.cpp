@@ -35,8 +35,8 @@ struct Camera {
   float distance = 10.0f;
   float mx = 0.0f, my = 0.0f;
   vec3 look_at = vec3(0.0f, 0.0f, 0.0f);
-  float aspect;
-  float fov;
+  float aspect = 1.0;
+  float fov = M_PI/4.0;
   //
   vec3 pos;
   mat4 view;
@@ -118,7 +118,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
               &ubo);
           gu.bind_resource("UBO", ubo_id);
           gu.bind_resource("out_image", "pass_1.HDR");
-          gu.bind_resource("in_image", textures[1]); //"pass_0.diffuse");
+          gu.bind_resource("in_image", "pass_0.diffuse"); // textures[1]);
           gu.CS_set_shader("postprocess.comp.glsl");
           gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
           gu.release_resource(ubo_id);
@@ -167,13 +167,16 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
               textures.push_back(gu.create_texture2D(img, true));
             }
           }
-
+          camera.aspect = float(wsize.x)/wsize.y;
           camera.update();
-          gu.clear_color({1.0f, 0.2f, 0.4f, 0.0f});
+          gu.clear_color({0.0f, 0.0f, 0.0f, 0.0f});
           gu.clear_depth(1.0f);
           gu.VS_set_shader("gltf.vert.glsl");
-          gu.PS_set_shader("red.frag.glsl");
+          gu.PS_set_shader("gltf.frag.glsl");
           sh_gltf_vert::UBO ubo{};
+          ubo.proj = camera.proj;
+          ubo.view = camera.view;
+          ubo.camera_pos = camera.pos;
           u32 ubo_id = gu.create_buffer(
               render_graph::Buffer{.usage_bits =
                                        vk::BufferUsageFlagBits::eUniformBuffer,
@@ -186,15 +189,18 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                               vk::PolygonMode::eFill, 1.0f);
           gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual, true,
                                         1.0f);
-          //          for (auto &model: models) {
-          //            gu.IA_set_vertex_buffers({render_graph::Buffer_Info{
-          //              .buf_id = model.vb,
-          //              .offset = 0
-          //            }});
-          //            gu.IA_set_index_buffer(model.ib, 0,
-          //            vk::IndexType::eUint32); gu.draw(model.index_count, 1,
-          //            0, 0, 0);
-          //          }
+          for (auto &model : models) {
+            sh_gltf_frag::push_constant pc;
+            pc.albedo_id = model.material.albedo_id;
+            pc.normal_id = model.material.albedo_id;
+            pc.metalness_roughness_id = model.material.albedo_id;
+            pc.cubemap_id = cubemap_id;
+            gu.push_constants(&pc, sizeof(pc));
+            gu.IA_set_vertex_buffers(
+                {render_graph::Buffer_Info{.buf_id = model.vb, .offset = 0}});
+            gu.IA_set_index_buffer(model.ib, 0, vk::IndexType::eUint32);
+            gu.draw(model.index_count, 1, 0, 0, 0);
+          }
           gu.release_resource(ubo_id);
         });
   });

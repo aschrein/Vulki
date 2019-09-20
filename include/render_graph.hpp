@@ -71,6 +71,7 @@ struct Graphics_Utils {
   // API call is added on case by case
   void IA_set_topology(vk::PrimitiveTopology topology);
   void IA_set_index_buffer(u32 id, u32 offset, vk::IndexType format);
+  void IA_set_layout(std::unordered_map<std::string, Vertex_Input> const &layout);
   void IA_set_vertex_buffers(std::vector<Buffer_Info> const &infos);
   // @TODO: Split this function
   void IA_set_cull_mode(vk::CullModeFlags cull_mode, vk::FrontFace front_face,

@@ -211,6 +211,7 @@ struct Descriptor_Frame {
               vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
                   vk::DescriptorPoolCreateFlagBits::eUpdateAfterBindEXT,
               1000 * 11, 11, aPoolSizes));
+      invalidate = false;
     } else if (invalidate) {
       imgui_table.clear();
       descset_groups.clear();
@@ -608,9 +609,7 @@ struct Graphics_Utils_State {
       // @Cleanup?
       // It's safe cuz pImpl does not change memory location
       frame.device_wrapper = &device_wrapper;
-    passes.deleter = [this](Pass_Details &pass) {
-      pass.destroy();
-    };
+    passes.deleter = [this](Pass_Details &pass) { pass.destroy(); };
     pipes.deleter = [](Pipeline_Wrapper &pipe) { pipe.destroy(); };
     images.deleter = [](VmaImage &img) { img.destroy(); };
     buffers.deleter = [](VmaBuffer &buf) { buf.destroy(); };
@@ -1003,6 +1002,10 @@ struct Graphics_Utils_State {
   void IA_set_topology(vk::PrimitiveTopology topology) {
     cur_gfx_state.topology = topology;
   }
+  void
+  IA_set_layout(std::unordered_map<std::string, Vertex_Input> const &layout) {
+    ASSERT_PANIC(false);
+  }
   void IA_set_index_buffer(u32 id, u32 offset, vk::IndexType format) {
     auto &cmd = device_wrapper.cur_cmd();
     auto &res = resources[id];
@@ -1089,7 +1092,13 @@ struct Graphics_Utils_State {
       ASSERT_PANIC(false);
     }
   }
-  void push_constants(void *data, size_t size) { ASSERT_PANIC(false); }
+  void push_constants(void *data, size_t size, bool draw = true) {
+    auto &cmd = device_wrapper.cur_cmd();
+    auto &pipeline =
+        draw ? get_current_gfx_pipeline() : get_current_compute_pipeline();
+    cmd.pushConstants(pipeline.pipeline_layout.get(),
+                      vk::ShaderStageFlagBits::eAll, 0, size, data);
+  }
   void clear_color(vec4 value) {
     ASSERT_PANIC(cur_gfx_state.pass);
     auto &pass = passes[cur_gfx_state.pass];
@@ -1466,7 +1475,10 @@ u32 Graphics_Utils::create_compute_pass(std::string const &name,
 void Graphics_Utils::release_resource(u32 id) {
   return ((Graphics_Utils_State *)this->pImpl)->release_resource(id);
 }
-
+void Graphics_Utils::IA_set_layout(
+    std::unordered_map<std::string, Vertex_Input> const &layout) {
+  return ((Graphics_Utils_State *)this->pImpl)->IA_set_layout(layout);
+}
 void Graphics_Utils::IA_set_topology(vk::PrimitiveTopology topology) {
   return ((Graphics_Utils_State *)this->pImpl)->IA_set_topology(topology);
 }

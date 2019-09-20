@@ -79,8 +79,6 @@ vec3 apply_light(vec3 n, vec3 l, vec3 v,
 }
 
 void main() {
-  g_color = vec4(1.0, 0.0, 0.0, 1.0);
-  return;
   vec4 albedo = texture(textures[nonuniformEXT(push_constant.albedo_id)], in_texcoord);
   if (albedo.w < 0.5)
     discard;
@@ -106,5 +104,5 @@ void main() {
   g_color =
   // vec4(nc.xyz, 1.0);
 //   vec4(abs(mr.zzz), 1.0);
-   vec4(light, 1.0);
+   vec4(albedo.xyz * light, 1.0);
 }
