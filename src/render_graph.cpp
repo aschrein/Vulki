@@ -321,6 +321,124 @@ struct Descriptor_Frame {
   }
 };
 
+std::vector<u8> build_mips(std::vector<u8> const &data, u32 width, u32 height,
+                           vk::Format format, u32 &out_miplevels,
+                           std::vector<u32> &mip_offsets,
+                           std::vector<uvec2> &mip_sizes) {
+  u32 big_dim = std::max(width, height);
+  out_miplevels = 0u;
+  ito(32u) {
+    if ((big_dim & (1u << i)) != 0u) {
+      out_miplevels = i + 1u;
+    }
+  }
+  ito(out_miplevels) mip_sizes.push_back(
+      uvec2(std::max(1u, width >> i), std::max(1u, height >> i)));
+
+  // @TODO: Add more formats
+  // Bytes per pixel
+  u32 bpc = 4u;
+  switch (format) {
+  case vk::Format::eR8G8B8A8Unorm:
+    bpc = 4u;
+    break;
+  case vk::Format::eR32G32B32Sfloat:
+    bpc = 12u;
+    break;
+  default:
+    ASSERT_PANIC(false && "unsupported format");
+  }
+  u32 total_bytes = 0u;
+  ito(out_miplevels) {
+    mip_offsets.push_back(total_bytes);
+    total_bytes += mip_sizes[i].x * mip_sizes[i].y * bpc;
+  }
+  std::vector<u8> out(total_bytes);
+  memcpy(&out[0], &data[0], data.size());
+  auto load_f32 = [&](uvec2 coord, u32 level, u32 component) {
+    uvec2 size = mip_sizes[level];
+    return *(f32 *)&out[mip_offsets[level] + coord.x * bpc +
+                        coord.y * size.x * bpc + component * 4u];
+  };
+  auto load = [&](uvec2 coord, u32 level) {
+    uvec2 size = mip_sizes[level];
+    if (coord.x >= size.x)
+      coord.x = size.x - 1;
+    if (coord.y >= size.y)
+      coord.y = size.y - 1;
+    switch (format) {
+    case vk::Format::eR8G8B8A8Unorm: {
+      u8 r = out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc];
+      u8 g =
+          out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc + 1u];
+      u8 b =
+          out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc + 2u];
+      u8 a =
+          out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc + 3u];
+      return vec4(float(r) / 255.0f, float(g) / 255.0f, float(b) / 255.0f,
+                  float(a) / 255.0f);
+    }
+    case vk::Format::eR32G32B32Sfloat: {
+      f32 r = load_f32(coord, level, 0u);
+      f32 g = load_f32(coord, level, 1u);
+      f32 b = load_f32(coord, level, 2u);
+      return vec4(r, g, b, 0.0f);
+    }
+    default:
+      ASSERT_PANIC(false && "unsupported format");
+    }
+  };
+  auto write = [&](vec4 val, uvec2 coord, u32 level) {
+    uvec2 size = mip_sizes[level];
+    if (coord.x >= size.x)
+      coord.x = size.x - 1;
+    if (coord.y >= size.y)
+      coord.y = size.y - 1;
+    switch (format) {
+    case vk::Format::eR8G8B8A8Unorm: {
+      auto size = mip_sizes[level];
+      u8 r = u8(255.0f * val.x);
+      u8 g = u8(255.0f * val.y);
+      u8 b = u8(255.0f * val.z);
+      u8 a = u8(255.0f * val.w);
+      u8 *dst =
+          &out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc];
+      dst[0] = r;
+      dst[1] = g;
+      dst[2] = b;
+      dst[3] = a;
+      return;
+    }
+    case vk::Format::eR32G32B32Sfloat: {
+      f32 *dst = (f32 *)&out[mip_offsets[level] + coord.x * bpc +
+                             coord.y * size.x * bpc];
+      dst[0] = val.x;
+      dst[1] = val.y;
+      dst[2] = val.z;
+      return;
+    }
+    default:
+      ASSERT_PANIC(false && "unsupported format");
+    }
+  };
+  for (u32 mip_level = 1u; mip_level < out_miplevels; mip_level++) {
+    auto size = mip_sizes[mip_level];
+    ito(size.y) {
+      jto(size.x) {
+        vec2 uv = vec2(float(j + 0.5f) / (size.x - 1u),
+                       float(i + 0.5f) / (size.y - 1u));
+        vec4 val_0 = load(uvec2(j * 2u, i * 2u), mip_level - 1u);
+        vec4 val_1 = load(uvec2(j * 2u + 1, i * 2u), mip_level - 1u);
+        vec4 val_2 = load(uvec2(j * 2u, i * 2u + 1), mip_level - 1u);
+        vec4 val_3 = load(uvec2(j * 2u + 1, i * 2u + 1), mip_level - 1u);
+        auto val = (val_0 + val_1 + val_2 + val_3) / 4.0f;
+        write(val, uvec2(j, i), mip_level);
+      }
+    }
+  }
+  return out;
+}
+
 struct Graphics_Utils_State {
   // #Definitions
   Simple_Monitor simple_monitor;
@@ -504,7 +622,74 @@ struct Graphics_Utils_State {
     buffers.deleter = [](VmaBuffer &buf) { buf.destroy(); };
     rts.deleter = [this](RT_Details &rt) { images.remove(rt.image_id); };
   }
-  u32 create_texture2D(Image_Raw const &image_raw, bool build_mip = true) {}
+  u32 create_texture2D(Image_Raw const &image_raw, bool build_mip = true) {
+    u32 mip_levels;
+    std::vector<uvec2> mip_sizes;
+    std::vector<u32> mip_offsets;
+    Alloc_State *alloc_state = device_wrapper.alloc_state.get();
+    std::vector<u8> with_mips =
+        build_mips(image_raw.data, image_raw.width, image_raw.height,
+                   image_raw.format, mip_levels, mip_offsets, mip_sizes);
+    // @TODO: Fix the hack
+    if (!build_mip)
+      mip_levels = 1u;
+    auto image_id = images.push(device_wrapper.alloc_state->allocate_image(
+        vk::ImageCreateInfo()
+            .setArrayLayers(1)
+            .setExtent(vk::Extent3D(image_raw.width, image_raw.height, 1))
+            .setFormat(image_raw.format)
+            .setMipLevels(mip_levels)
+            .setImageType(vk::ImageType::e2D)
+            .setInitialLayout(vk::ImageLayout::eUndefined)
+            .setPQueueFamilyIndices(&device_wrapper.graphics_queue_family_id)
+            .setQueueFamilyIndexCount(1)
+            .setSamples(vk::SampleCountFlagBits::e1)
+            .setSharingMode(vk::SharingMode::eExclusive)
+            .setTiling(vk::ImageTiling::eLinear)
+            .setUsage(vk::ImageUsageFlagBits::eSampled |
+                      vk::ImageUsageFlagBits::eTransferDst),
+        VMA_MEMORY_USAGE_GPU_ONLY));
+    auto &img = images[image_id];
+    auto buf_id = buffers.push(alloc_state->allocate_buffer(
+        vk::BufferCreateInfo()
+            .setSize(with_mips.size())
+            .setUsage(vk::BufferUsageFlagBits::eTransferSrc),
+        VMA_MEMORY_USAGE_CPU_TO_GPU));
+    auto &buf = buffers[buf_id];
+    // Transient buffer so schedule the removal right away
+    buffers.remove(buf_id);
+    {
+      void *data = buf.map();
+      memcpy(data, &with_mips[0], with_mips.size());
+      buf.unmap();
+    }
+    {
+      auto &cmd = device_wrapper.cur_cmd();
+      auto &pass = passes[cur_gfx_state.pass];
+      // @Cleanup
+      _end_pass(cmd, pass);
+      img.barrier(cmd, device_wrapper.graphics_queue_family_id,
+                  vk::ImageLayout::eTransferDstOptimal,
+                  vk::AccessFlagBits::eColorAttachmentWrite);
+      ito(mip_levels) cmd.copyBufferToImage(
+          buf.buffer, img.image, vk::ImageLayout::eTransferDstOptimal,
+          vk::ArrayProxy<const vk::BufferImageCopy>{
+              vk::BufferImageCopy()
+                  .setBufferOffset(mip_offsets[i])
+                  .setImageSubresource(vk::ImageSubresourceLayers(
+                      vk::ImageAspectFlagBits::eColor, i, 0u, 1u))
+                  .setImageOffset(vk::Offset3D(0u, 0u, 0u))
+                  .setImageExtent(
+                      vk::Extent3D(mip_sizes[i].x, mip_sizes[i].y, 1u))});
+      img.barrier(cmd, device_wrapper.graphics_queue_family_id,
+                  vk::ImageLayout::eShaderReadOnlyOptimal,
+                  vk::AccessFlagBits::eShaderRead);
+      // @Cleanup
+      _begin_pass(cmd, pass);
+    }
+    resource_table.push_back({Resource_Type::TEXTURE, image_id});
+    return resource_table.size();
+  }
   u32 create_uav_image(u32 width, u32 height, vk::Format format, u32 levels,
                        u32 layers) {}
   u32 create_uav_buffer(u32 size) {}
@@ -974,9 +1159,6 @@ struct Graphics_Utils_State {
     ASSERT_PANIC(pass.alive);
     if (pass.type != Pass_Type::Graphics)
       return;
-    //    u32 real_width = u32(f32(device_wrapper.cur_backbuffer_width) *
-    //    pass.width); u32 real_height =
-    //        u32(f32(device_wrapper.cur_backbuffer_height) * pass.height);
     if (pass.use_depth) {
       ASSERT_PANIC(pass.depth_target);
       auto &depth = images[pass.depth_target];
@@ -1024,15 +1206,6 @@ struct Graphics_Utils_State {
 
   void run_loop(std::function<void()> fn) {
     device_wrapper.pre_tick = [=](vk::CommandBuffer &cmd) {
-      //      gfx_pipelines.clear();
-      //      std::cout << "#############################\n";
-      //      for (auto it = gfx_pipelines.begin();
-      //        it != gfx_pipelines.end(); ++it) {
-      //         std::cout << it->second << "\n";
-      //        }
-      //      for (auto &pipe : gfx_pipelines) {
-      //        std::cout << pipe.second << "\n";
-      //      }
       pipes.tick();
       images.tick();
       buffers.tick();
