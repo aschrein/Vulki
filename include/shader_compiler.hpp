@@ -261,7 +261,8 @@ struct Pipeline_Wrapper : public Slot {
 
   static Pipeline_Wrapper create_compute(
       Device_Wrapper &device_wrapper, std::string const &source_name,
-      std::vector<std::pair<std::string, std::string>> const &defines) {
+      std::vector<std::pair<std::string, std::string>> const &defines,
+      size_t push_constants_size = 128) {
     auto &device = device_wrapper.device.get();
     Pipeline_Wrapper out;
     vk::PipelineShaderStageCreateInfo shaderStage;
@@ -282,11 +283,24 @@ struct Pipeline_Wrapper : public Slot {
               .setBindingCount(set_binding.size())));
     }
     auto raw_set_layouts = out.get_raw_descset_layouts();
+    auto push_range = vk::PushConstantRange()
+                          .setOffset(0)
+                          .setSize(push_constants_size)
+                          .setStageFlags(vk::ShaderStageFlagBits::eAll);
+    if (push_constants_size) {
+      out.pipeline_layout = device.createPipelineLayoutUnique(
+          vk::PipelineLayoutCreateInfo()
+              .setPushConstantRangeCount(1)
+              .setPPushConstantRanges(&push_range)
+              .setPSetLayouts(&raw_set_layouts[0])
+              .setSetLayoutCount(raw_set_layouts.size()));
+    } else {
+      out.pipeline_layout = device.createPipelineLayoutUnique(
+          vk::PipelineLayoutCreateInfo()
+              .setPSetLayouts(&raw_set_layouts[0])
+              .setSetLayoutCount(raw_set_layouts.size()));
+    }
 
-    out.pipeline_layout = device.createPipelineLayoutUnique(
-        vk::PipelineLayoutCreateInfo()
-            .setPSetLayouts(&raw_set_layouts[0])
-            .setSetLayoutCount(raw_set_layouts.size()));
     out.pipeline = device.createComputePipelineUnique(
         vk::PipelineCache(), vk::ComputePipelineCreateInfo()
                                  .setStage(shaderStage)
@@ -302,7 +316,7 @@ struct Pipeline_Wrapper : public Slot {
       std::unordered_map<std::string, Vertex_Input> vertex_inputs,
       std::vector<vk::VertexInputBindingDescription> vertex_bind_desc,
       std::vector<std::pair<std::string, std::string>> const &defines,
-      size_t push_constants_size = 0) {
+      size_t push_constants_size = 128) {
     auto &device = device_wrapper.device.get();
     Pipeline_Wrapper out;
 
@@ -370,14 +384,14 @@ struct Pipeline_Wrapper : public Slot {
     }
     auto raw_set_layouts = out.get_raw_descset_layouts();
     // @TODO: Infer push constants size from reflection
+    auto push_range = vk::PushConstantRange()
+                          .setOffset(0)
+                          .setSize(push_constants_size)
+                          .setStageFlags(vk::ShaderStageFlagBits::eAll);
     if (push_constants_size) {
       out.pipeline_layout = device.createPipelineLayoutUnique(
           vk::PipelineLayoutCreateInfo()
-              .setPPushConstantRanges(
-                  &vk::PushConstantRange()
-                       .setOffset(0)
-                       .setSize(push_constants_size)
-                       .setStageFlags(vk::ShaderStageFlagBits::eAll))
+              .setPPushConstantRanges(&push_range)
               .setPushConstantRangeCount(1)
               .setPSetLayouts(&raw_set_layouts[0])
               .setSetLayoutCount(raw_set_layouts.size()));

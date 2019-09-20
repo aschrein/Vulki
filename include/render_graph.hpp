@@ -24,7 +24,7 @@ struct Image {
 };
 
 struct Buffer {
-  Use use;
+  vk::BufferUsageFlags usage_bits;
   u32 size;
 };
 
@@ -39,7 +39,6 @@ struct Resource {
 struct Buffer_Info {
   u32 buf_id;
   u32 offset;
-  u32 stride;
 };
 
 // Simplistic immediate(one command queue per frame) OpenGL/DirectX11 like
@@ -54,8 +53,7 @@ struct Graphics_Utils {
   u32 create_texture2D(Image_Raw const &image_raw, bool build_mip = true);
   u32 create_uav_image(u32 width, u32 height, vk::Format format, u32 levels,
                        u32 layers);
-  u32 create_uav_buffer(u32 size);
-  u32 create_uniform_buffer(u32 size);
+  u32 create_buffer(Buffer info, void *initial_data = nullptr);
   // Push constant size, input layout and some other info is derived
   u32 create_render_pass(std::string const &name,
                          std::vector<std::string> const &input,
@@ -72,7 +70,7 @@ struct Graphics_Utils {
   // Not everything is configured
   // API call is added on case by case
   void IA_set_topology(vk::PrimitiveTopology topology);
-  void IA_set_index_buffer(u32 id, u32 offset, vk::Format format);
+  void IA_set_index_buffer(u32 id, u32 offset, vk::IndexType format);
   void IA_set_vertex_buffers(std::vector<Buffer_Info> const &infos);
   // @TODO: Split this function
   void IA_set_cull_mode(vk::CullModeFlags cull_mode, vk::FrontFace front_face,

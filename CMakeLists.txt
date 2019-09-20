@@ -43,7 +43,7 @@ add_subdirectory(3rdparty/meshoptimizer)
 add_subdirectory(3rdparty/marl)
 
 
-file(GLOB SOURCE ${CMAKE_SOURCE_DIR}/shaders/shaders.h "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widgets.cpp 3rdparty/imgui/imgui_draw.cpp 3rdparty/imgui/imgui_demo.cpp 3rdparty/imgui/examples/imgui_impl_vulkan.cpp 3rdparty/imgui/examples/imgui_impl_glfw.cpp)
+file(GLOB SOURCE "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widgets.cpp 3rdparty/imgui/imgui_draw.cpp 3rdparty/imgui/imgui_demo.cpp 3rdparty/imgui/examples/imgui_impl_vulkan.cpp 3rdparty/imgui/examples/imgui_impl_glfw.cpp)
 # file(GLOB 3RD_SOURCE 3rdparty/SPIRV-Reflect/spirv_reflect.c)
 # message(${SOURCE})
 # message(${SOURCE})
@@ -74,11 +74,11 @@ endif()
 #    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/__header.h
 #    )
 
-file(GLOB SHADERS "shaders/*")
-
+file(GLOB SHADERS "${CMAKE_SOURCE_DIR}/shaders/*")
+message("[DEBUG] Shaders: " ${SHADERS})
 add_custom_command(
-    OUTPUT ${CMAKE_SOURCE_DIR}/shaders/shaders.h
-    DEPENDS ${SHADERS}
+    OUTPUT ${CMAKE_BINARY_DIR}/shaders/shaders.h
+    DEPENDS ${SHADERS} shader_parser
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         COMMAND rm -rf ${CMAKE_BINARY_DIR}/shaders && cp -r ${CMAKE_SOURCE_DIR}/shaders ${CMAKE_BINARY_DIR} && cd shaders && echo "" > shaders.h && ${CMAKE_BINARY_DIR}/shader_parser >> shaders.h
     )
@@ -120,7 +120,7 @@ add_custom_command(
 #target_link_libraries(test_4 ${Vulkan_LIBRARY} ${LIBS})
 #target_link_libraries(test_4 PRIVATE shaderc_shared)
 
-add_executable(test_5 tests/test_5.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
+add_executable(test_5 tests/test_5.cpp kernel.o ${SOURCE} ${3RD_SOURCE} ${CMAKE_BINARY_DIR}/shaders/shaders.h)
 target_include_directories(test_5 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
 target_link_libraries(test_5 ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(test_5 PRIVATE shaderc_shared)

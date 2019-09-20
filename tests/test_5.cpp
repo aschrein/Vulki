@@ -27,6 +27,39 @@ using namespace glm;
 
 #include <exception>
 
+#include "shaders.h"
+
+struct Camera {
+  float phi = 0.0;
+  float theta = M_PI / 2.0f;
+  float distance = 10.0f;
+  float mx = 0.0f, my = 0.0f;
+  vec3 look_at = vec3(0.0f, 0.0f, 0.0f);
+  float aspect;
+  float fov;
+  //
+  vec3 pos;
+  mat4 view;
+  mat4 proj;
+  vec3 look;
+  vec3 right;
+  vec3 up;
+  void update() {
+    /*-------------------*/
+    /* Update the camera */
+    /*-------------------*/
+    pos = vec3(sinf(theta) * cosf(phi), sinf(theta) * sinf(phi), cos(theta)) *
+              distance +
+          look_at;
+    look = normalize(look_at - pos);
+    right = normalize(cross(look, vec3(0.0f, 0.0f, 1.0f)));
+    up = normalize(cross(right, look));
+    proj = glm::perspective(fov, aspect, 1.0e-1f, 1.0e3f);
+    view = glm::lookAt(pos, look_at, vec3(0.0f, 0.0f, 1.0f));
+  }
+  mat4 viewproj() { return proj * view; }
+};
+
 TEST(graphics, vulkan_graphics_test_render_graph) try {
 
   // Gizmo_Layer gizmo_layer{};
@@ -35,9 +68,11 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   auto recreate_resources = [&] { usleep(10000u); };
   ImVec2 wsize(512, 512);
   render_graph::Graphics_Utils gu = render_graph::Graphics_Utils::create();
+  float drag_val = 0.0;
   gu.set_on_gui([&] {
     ImGui::Begin("dummy window");
     gu.ImGui_Emit_Stats();
+    ImGui::DragFloat("drag_val", &drag_val, 0.01f, 0.0f, 1.0f);
     gu.ImGui_Image("pass_1.HDR", wsize.x, wsize.y);
     wsize = ImGui::GetWindowSize();
     wsize.y -= 100;
@@ -48,8 +83,46 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     ImGui::End();
   });
   auto cubemap = load_image("cubemaps/pink_sunrise.hdr");
+  auto test_model = load_gltf_pbr("models/SciFiHelmet.gltf");
   u32 cubemap_id = 0;
+  struct Model {
+    u32 index_count;
+    u32 vb;
+    u32 ib;
+    PBR_Material material;
+  };
+  std::vector<Model> models;
+  std::vector<u32> textures;
+
   gu.run_loop([&] {
+    gu.create_compute_pass(
+        "pass_1", {"pass_0.diffuse"},
+        {render_graph::Resource{
+            .name = "pass_1.HDR",
+            .type = render_graph::Type::Image,
+            .image_info =
+                render_graph::Image{.format = vk::Format::eR32G32B32A32Sfloat,
+                                    .use = render_graph::Use::UAV,
+                                    .width = u32(wsize.x),
+                                    .height = u32(wsize.y),
+                                    .depth = 1,
+                                    .levels = 1,
+                                    .layers = 1}}},
+        [&] {
+          sh_postprocess_comp::UBO ubo{};
+          ubo.offset = vec4(drag_val, 0.0, 0.0, 0.0);
+          u32 ubo_id = gu.create_buffer(
+              render_graph::Buffer{.usage_bits =
+                                       vk::BufferUsageFlagBits::eUniformBuffer,
+                                   .size = sizeof(ubo)},
+              &ubo);
+          gu.bind_resource("UBO", ubo_id);
+          gu.bind_resource("out_image", "pass_1.HDR");
+          gu.bind_resource("in_image", textures[1]); //"pass_0.diffuse");
+          gu.CS_set_shader("postprocess.comp.glsl");
+          gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
+          gu.release_resource(ubo_id);
+        });
     gu.create_render_pass(
         "pass_0", {},
         {render_graph::Resource{
@@ -67,40 +140,62 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                                   .target =
                                       render_graph::Render_Target::Depth}}},
         wsize.x, wsize.y, [&] {
+          static Camera camera;
           if (!cubemap_id) {
             cubemap_id = gu.create_texture2D(cubemap, true);
+            ito(test_model.meshes.size()) {
+              auto &model = test_model.meshes[i];
+              Model m;
+              m.vb = gu.create_buffer(
+                  render_graph::Buffer{
+
+                      .usage_bits = vk::BufferUsageFlagBits::eVertexBuffer,
+                      .size = u32(model.attributes.size())},
+                  &model.attributes[0]);
+              m.ib = gu.create_buffer(
+                  render_graph::Buffer{
+                      .usage_bits = vk::BufferUsageFlagBits::eIndexBuffer,
+                      .size =
+                          u32(model.indices.size() * sizeof(model.indices[0]))},
+                  &model.indices[0]);
+              m.material = test_model.materials[i];
+              m.index_count = model.indices.size();
+              models.push_back(m);
+            }
+            ito(test_model.images.size()) {
+              auto &img = test_model.images[i];
+              textures.push_back(gu.create_texture2D(img, true));
+            }
           }
+
+          camera.update();
           gu.clear_color({1.0f, 0.2f, 0.4f, 0.0f});
           gu.clear_depth(1.0f);
-          gu.VS_set_shader("bufferless_triangle.vert.glsl");
-          gu.PS_set_shader("simple_0.frag.glsl");
+          gu.VS_set_shader("gltf.vert.glsl");
+          gu.PS_set_shader("red.frag.glsl");
+          sh_gltf_vert::UBO ubo{};
+          u32 ubo_id = gu.create_buffer(
+              render_graph::Buffer{.usage_bits =
+                                       vk::BufferUsageFlagBits::eUniformBuffer,
+                                   .size = sizeof(sh_gltf_vert::UBO)},
+              &ubo);
+          gu.bind_resource("UBO", ubo_id);
           gu.IA_set_topology(vk::PrimitiveTopology::eTriangleList);
           gu.IA_set_cull_mode(vk::CullModeFlagBits::eNone,
                               vk::FrontFace::eCounterClockwise,
                               vk::PolygonMode::eFill, 1.0f);
           gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual, true,
                                         1.0f);
-
-          gu.draw(3, 1, 0, 0);
-        });
-    gu.create_compute_pass(
-        "pass_1", {"pass_0.diffuse"},
-        {render_graph::Resource{
-            .name = "pass_1.HDR",
-            .type = render_graph::Type::Image,
-            .image_info =
-                render_graph::Image{.format = vk::Format::eR32G32B32A32Sfloat,
-                                    .use = render_graph::Use::UAV,
-                                    .width = u32(wsize.x),
-                                    .height = u32(wsize.y),
-                                    .depth = 1,
-                                    .levels = 1,
-                                    .layers = 1}}},
-        [&] {
-          gu.bind_resource("out_image", "pass_1.HDR");
-          gu.bind_resource("in_image", cubemap_id);//"pass_0.diffuse");
-          gu.CS_set_shader("image_fill.comp.glsl");
-          gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
+          //          for (auto &model: models) {
+          //            gu.IA_set_vertex_buffers({render_graph::Buffer_Info{
+          //              .buf_id = model.vb,
+          //              .offset = 0
+          //            }});
+          //            gu.IA_set_index_buffer(model.ib, 0,
+          //            vk::IndexType::eUint32); gu.draw(model.index_count, 1,
+          //            0, 0, 0);
+          //          }
+          gu.release_resource(ubo_id);
         });
   });
 } catch (std::exception const &exc) {

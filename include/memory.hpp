@@ -19,6 +19,7 @@ struct VmaBuffer : public Slot {
   VmaAllocator allocator;
   vk::Buffer buffer;
   VmaAllocation allocation;
+  vk::BufferCreateInfo create_info;
   void *map() {
     void *data = nullptr;
     vmaMapMemory(allocator, allocation, &data);
@@ -107,7 +108,7 @@ struct Alloc_State {
     out.allocator = allocator;
     out.buffer = buffer;
     out.allocation = allocation;
-
+    out.create_info = create_info;
     return out;
   }
   VmaImage allocate_image(

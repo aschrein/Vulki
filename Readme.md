@@ -21,10 +21,14 @@ cmake --build . --target all
   * Mipmap generation
   * GLTF import
 * Vulkan framework skeleton
+  * Simple mid level api
 * Shader reload with inotify/dir_update
 * Gizmos
   * Translation
 * ISPC/Naive path tracing
+* Shader preprocessing/reflection
+  * Auto infer input layout
+  * Generate data structures with paddings
 ## TODO
 * PBR rasterization framework
   * IBL
@@ -41,7 +45,6 @@ cmake --build . --target all
     * Increase granularity
     * Don't crash if compilation fails
 * Vulkan framework skeleton
-  * Try bindless resources
 * Gizmos
   * Rotation
 * Try different raymarching optimizations
