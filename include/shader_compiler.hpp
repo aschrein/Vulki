@@ -216,7 +216,7 @@ struct Vertex_Input {
   vk::Format format;
 };
 
-struct Pipeline_Wrapper {
+struct Pipeline_Wrapper : public Slot {
   std::vector<vk::UniqueShaderModule> shader_modules;
   std::vector<vk::UniqueDescriptorSetLayout> set_layouts;
 
@@ -225,8 +225,14 @@ struct Pipeline_Wrapper {
   vk::PipelineBindPoint bind_point;
   std::unordered_map<std::string, Shader_Descriptor> resource_slots;
 
-  // Helper
-  u32 id;
+  void destroy() {
+    shader_modules.clear();
+    set_layouts.clear();
+    pipeline_layout.reset();
+    pipeline.reset();
+    bind_point = {};
+    resource_slots.clear();
+  }
 
   void merge_resource_slots(
       std::unordered_map<std::string, Shader_Descriptor> const &slots) {

@@ -4,7 +4,17 @@
 #include <memory>
 #include <vulkan/vulkan.hpp>
 
-struct VmaBuffer {
+struct Slot {
+  bool alive;
+  u32 id;
+  void disable() { alive = false; }
+  void set_alive() { alive = true; }
+  bool is_alive() { return alive; }
+  u32 get_id() { return id; }
+  void set_id(u32 _id) { id = _id; }
+};
+
+struct VmaBuffer : public Slot {
   RAW_MOVABLE(VmaBuffer)
   VmaAllocator allocator;
   vk::Buffer buffer;
@@ -15,15 +25,16 @@ struct VmaBuffer {
     return data;
   }
   void unmap() { vmaUnmapMemory(allocator, allocation); }
-  ~VmaBuffer() {
+  void destroy() {
     if (buffer) {
       vmaDestroyBuffer(allocator, buffer, allocation);
       memset(this, 0, sizeof(*this));
     }
   }
+  ~VmaBuffer() { destroy(); }
 };
 
-struct VmaImage {
+struct VmaImage : public Slot {
   RAW_MOVABLE(VmaImage)
   VmaAllocator allocator;
   vk::Image image;
@@ -54,13 +65,14 @@ struct VmaImage {
     this->access_flags = new_access_flags;
     this->layout = new_layout;
   }
-  ~VmaImage() {
+  void destroy() {
     if (image) {
       view.reset(vk::ImageView(VkImageView(0u)));
       vmaDestroyImage(allocator, image, allocation);
       memset(this, 0, sizeof(*this));
     }
   }
+  ~VmaImage() { destroy(); }
   void *map() {
     void *data = nullptr;
     vmaMapMemory(allocator, allocation, &data);
