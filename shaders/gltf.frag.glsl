@@ -1,8 +1,9 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : require
 
-layout(location = 0) out vec4 g_color;
+layout(location = 0) out vec4 g_albedo;
 layout(location = 1) out vec4 g_normal;
+layout(location = 2) out vec4 g_metal_r;
 
 layout(location = 0) in vec3 in_position;
 layout(location = 1) in vec3 in_normal;
@@ -99,11 +100,10 @@ void main() {
   vec3 v = normalize(uniforms.camera_pos - in_position.xzy);
 
 
-  vec3 light = vec3(1.0) * clamp(dot(normalize(vec3(-1, -1, 1)), normal), 0.0, 1.0);
+//  vec3 light = vec3(1.0) * clamp(dot(normalize(vec3(-1, -1, 1)), normal), 0.0, 1.0);
 //  apply_light(new_normal, l, -v,
 //  mr.z, mr.y, albedo.xyz);
-  g_color =
-  // vec4(nc.xyz, 1.0);
-//   vec4(abs(mr.zzz), 1.0);
-   vec4(albedo.xyz * light, 1.0);
+  g_albedo = vec4(albedo.xyz, 1.0);
+  g_normal = vec4(new_normal, 0.0);
+  g_metal_r = vec4(1.0);
 }

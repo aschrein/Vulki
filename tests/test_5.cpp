@@ -50,7 +50,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     //       gu.ImGui_Emit_Stats();
     wsize = ImVec2(gizmo_layer.example_viewport.extent.width,
                    gizmo_layer.example_viewport.extent.height);
-    gu.ImGui_Image("pass_1.HDR", wsize.x, wsize.y);
+    gu.ImGui_Image("postprocess.HDR", wsize.x, wsize.y);
 
     static int selected_fish = -1;
     const char *names[] = {"Bream", "Haddock", "Mackerel", "Pollock",
@@ -120,9 +120,9 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
 
   gu.run_loop([&] {
     gu.create_compute_pass(
-        "pass_1", {"pass_0.diffuse"},
+        "postprocess", {"shading.HDR"},
         {render_graph::Resource{
-            .name = "pass_1.HDR",
+            .name = "postprocess.HDR",
             .type = render_graph::Type::Image,
             .image_info =
                 render_graph::Image{.format = vk::Format::eR32G32B32A32Sfloat,
@@ -144,36 +144,67 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
               &ubo);
           gu.push_constants(&pc, sizeof(pc));
           gu.bind_resource("UBO", ubo_id);
-          gu.bind_resource("out_image", "pass_1.HDR");
-          gu.bind_resource("in_image", "pass_0.diffuse"); // textures[1]);
+          gu.bind_resource("out_image", "postprocess.HDR");
+          gu.bind_resource("in_image", "shading.HDR"); // textures[1]);
           gu.CS_set_shader("postprocess.comp.glsl");
           gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
           gu.release_resource(ubo_id);
         });
+    gu.create_compute_pass(
+        "shading", {"g_pass.albedo", "g_pass.normal", "g_pass.metal"},
+        {render_graph::Resource{
+            .name = "shading.HDR",
+            .type = render_graph::Type::Image,
+            .image_info =
+                render_graph::Image{.format = vk::Format::eR32G32B32A32Sfloat,
+                                    .use = render_graph::Use::UAV,
+                                    .width = u32(wsize.x),
+                                    .height = u32(wsize.y),
+                                    .depth = 1,
+                                    .levels = 1,
+                                    .layers = 1}}},
+        [&] {
+          gu.bind_resource("out_image", "shading.HDR");
+          gu.bind_resource("g_albedo", "g_pass.albedo");
+          gu.bind_resource("g_normal", "g_pass.normal");
+          gu.bind_resource("g_metal", "g_pass.metal");
+          gu.CS_set_shader("pbr_shading.comp.glsl");
+          gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
+        });
+
     gu.create_render_pass(
-        "pass_0", {},
+        "g_pass", {},
         {
             render_graph::Resource{
-                .name = "pass_0.diffuse",
+                .name = "g_pass.albedo",
+                .type = render_graph::Type::RT,
+                .rt_info =
+                    render_graph::RT{.format = vk::Format::eR32G32B32A32Sfloat,
+                                     .target =
+                                         render_graph::Render_Target::Color}},
+
+            render_graph::Resource{
+                .name = "g_pass.normal",
                 .type = render_graph::Type::RT,
                 .rt_info =
                     render_graph::RT{.format = vk::Format::eR32G32B32A32Sfloat,
                                      .target =
                                          render_graph::Render_Target::Color}},
             render_graph::Resource{
-                .name = "pass_0.depth",
+                .name = "g_pass.metal",
+                .type = render_graph::Type::RT,
+                .rt_info =
+                    render_graph::RT{.format = vk::Format::eR32G32B32A32Sfloat,
+                                     .target =
+                                         render_graph::Render_Target::Color}},
+            render_graph::Resource{
+                .name = "g_pass.depth",
                 .type = render_graph::Type::RT,
                 .rt_info =
                     render_graph::RT{.format = vk::Format::eD32Sfloat,
                                      .target =
                                          render_graph::Render_Target::Depth}},
-            render_graph::Resource{
-                .name = "pass_0.normal",
-                .type = render_graph::Type::RT,
-                .rt_info =
-                    render_graph::RT{.format = vk::Format::eR32G32B32A32Sfloat,
-                                     .target =
-                                         render_graph::Render_Target::Color}},
+
         },
         wsize.x, wsize.y, [&] {
           if (!cubemap_id) {
@@ -202,8 +233,6 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
               textures.push_back(gu.create_texture2D(img, true));
             }
           }
-//          camera.aspect = float(wsize.x) / wsize.y;
-//          camera.update();
           gu.clear_color({0.0f, 0.0f, 0.0f, 0.0f});
           gu.clear_depth(1.0f);
           gu.VS_set_shader("gltf.vert.glsl");
@@ -224,7 +253,6 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                               vk::PolygonMode::eFill, 1.0f);
           gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual, true,
                                         1.0f);
-          // @TODO: Bind all the textures
           ito(textures.size()) {
             auto &tex = textures[i];
             gu.bind_resource("textures", tex, i);

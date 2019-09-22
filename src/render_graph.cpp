@@ -9,6 +9,7 @@
 #include <sparsehash/dense_hash_set>
 
 #include <boost/unordered_map.hpp>
+#include <boost/unordered_set.hpp>
 
 #include <shaders.h>
 
@@ -535,6 +536,7 @@ struct Graphics_Utils_State {
       ASSERT_PANIC(cur_gfx_state.ps);
       ASSERT_PANIC(cur_gfx_state.vs);
       ASSERT_PANIC(cur_gfx_state.pass);
+      auto &pass = passes[cur_gfx_state.pass];
       auto vs_filename = shader_filenames[cur_gfx_state.vs];
       auto ps_filename = shader_filenames[cur_gfx_state.ps];
       std::unordered_map<std::string, Vertex_Input> bindings;
@@ -556,10 +558,24 @@ struct Graphics_Utils_State {
                                               ? vk::VertexInputRate::eInstance
                                               : vk::VertexInputRate::eVertex));
       }
-      auto _blend_att_state =
-          vk::PipelineColorBlendAttachmentState(false).setColorWriteMask(
-              vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-              vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
+      // @TODO: Enable blending
+      std::vector<vk::PipelineColorBlendAttachmentState> blend_atts;
+      ito(pass.output.size()) {
+        auto res_id = get_resource_id(pass.output[i]);
+        auto &res = resources[res_id];
+        if (res.type == Resource_Type::RT) {
+          auto &rt = rts[res.ref];
+          auto &img = images[rt.image_id];
+          if (img.aspect == vk::ImageAspectFlagBits::eColor) {
+            blend_atts.push_back(
+                vk::PipelineColorBlendAttachmentState(false).setColorWriteMask(
+                    vk::ColorComponentFlagBits::eR |
+                    vk::ColorComponentFlagBits::eG |
+                    vk::ColorComponentFlagBits::eB |
+                    vk::ColorComponentFlagBits::eA));
+          }
+        }
+      }
       u32 pipe_id = pipes.push(Pipeline_Wrapper::create_graphics(
           device_wrapper, "shaders/" + vs_filename, "shaders/" + ps_filename,
           vk::GraphicsPipelineCreateInfo()
@@ -567,9 +583,9 @@ struct Graphics_Utils_State {
                   &vk::PipelineInputAssemblyStateCreateInfo().setTopology(
                       cur_gfx_state.topology))
               .setPColorBlendState(&vk::PipelineColorBlendStateCreateInfo()
-                                        .setAttachmentCount(1)
+                                        .setAttachmentCount(blend_atts.size())
                                         .setLogicOpEnable(false)
-                                        .setPAttachments(&_blend_att_state))
+                                        .setPAttachments(&blend_atts[0]))
               .setPDepthStencilState(
                   &vk::PipelineDepthStencilStateCreateInfo()
                        .setDepthTestEnable(cur_gfx_state.enable_depth_test)
@@ -582,7 +598,7 @@ struct Graphics_Utils_State {
                        .setFrontFace(cur_gfx_state.front_face)
                        .setPolygonMode(cur_gfx_state.polygon_mode)
                        .setLineWidth(cur_gfx_state.line_width))
-              .setRenderPass(passes[cur_gfx_state.pass].pass.get()),
+              .setRenderPass(pass.pass.get()),
           bindings, descs, {}));
       gfx_pipelines.insert({cur_gfx_state, pipe_id});
     }
@@ -795,30 +811,7 @@ struct Graphics_Utils_State {
       if (!invalidate) {
         return pass_id;
       } else {
-
-        // Total invalidation
-        // @TODO: Track dependencies?
-
-        // Remove pipelines as they may depend on the pass
-        for (auto &pipe : gfx_pipelines) {
-          pipes.remove(pipe.second);
-        }
-        // Invalidate descriptor sets because they depend on pipelines
-        for (auto &frame : desc_frames)
-          frame.reset();
-
-        // Invalidate tables
-        for (auto res_name : pass.output) {
-          auto res_id = get_resource_id(res_name);
-          auto &res = resources[res_id];
-          resource_factory_table.erase(res_id);
-          resource_name_table.erase(res_name);
-          resources.remove(res_id);
-        }
-        gfx_pipelines.clear();
-        pass_name_table.erase(name);
-        // Remove pass
-        passes.remove(pass_id);
+        _invalidate_pass(pass_id);
       }
     }
     std::vector<VkAttachmentDescription> attachments;
@@ -1032,6 +1025,47 @@ struct Graphics_Utils_State {
   void IA_set_topology(vk::PrimitiveTopology topology) {
     cur_gfx_state.topology = topology;
   }
+
+  void _invalidate() {
+    passes.for_each([this](Pass_Details &pass) { _invalidate_pass(pass.id); });
+  }
+
+  void _invalidate_pipes() {
+    // Invalidate descriptor sets because they depend on pipelines
+    for (auto &frame : desc_frames)
+      frame.reset();
+    gfx_pipelines.clear();
+    cs_pipelines.clear();
+
+    pipes.for_each([this](Pipeline_Wrapper &pipe) { pipes.remove(pipe.id); });
+  }
+
+  void _invalidate_pass(u32 pass_id) {
+    // Total invalidation
+    // @TODO: Track dependencies?
+    auto &pass = passes[pass_id];
+    // Remove pipelines as they may depend on the pass
+    for (auto &pipe : gfx_pipelines) {
+      pipes.remove(pipe.second);
+    }
+    // Invalidate descriptor sets because they depend on pipelines
+    for (auto &frame : desc_frames)
+      frame.reset();
+
+    // Invalidate tables
+    for (auto res_name : pass.output) {
+      auto res_id = get_resource_id(res_name);
+      auto &res = resources[res_id];
+      resource_factory_table.erase(res_id);
+      resource_name_table.erase(res_name);
+      resources.remove(res_id);
+    }
+    gfx_pipelines.clear();
+    pass_name_table.erase(pass.name);
+    // Remove pass
+    passes.remove(pass_id);
+  }
+
   void
   IA_set_layout(std::unordered_map<std::string, Vertex_Input> const &layout) {
     ASSERT_PANIC(false);
@@ -1338,36 +1372,31 @@ struct Graphics_Utils_State {
   void run_loop(std::function<void()> fn) {
     device_wrapper.pre_tick = [=](vk::CommandBuffer &cmd) {
       reset_frame();
+      if (simple_monitor.is_updated())
+        _invalidate_pipes();
 
       fn();
       // Poor man's dependency graph
       // pass_id -> list of pass_ids on which this pass depends
-      google::dense_hash_map<u32, google::dense_hash_set<u32>> dep_graph;
-      google::dense_hash_map<u32, google::dense_hash_set<u32>> inv_dep_graph;
+      boost::unordered_map<u32, boost::unordered_set<u32>> dep_graph;
+      boost::unordered_map<u32, boost::unordered_set<u32>> inv_dep_graph;
       std::deque<u32> passes_queue;
-      dep_graph.set_empty_key(0u);
-      dep_graph.set_deleted_key(u32(-1));
-      inv_dep_graph.set_empty_key(0u);
       passes.for_each([&](Pass_Details &pass) {
         auto pass_id = pass.get_id();
-        google::dense_hash_set<u32> deps;
-        deps.set_empty_key(0u);
-        deps.set_deleted_key(u32(-1));
+        boost::unordered_set<u32> deps;
         for (auto &res_name : pass.input) {
           auto res_id = get_resource_id(res_name);
           ASSERT_PANIC(resource_factory_table.find(res_id) !=
                        resource_factory_table.end());
           auto dep_id = resource_factory_table.find(res_id)->second;
           deps.insert(dep_id);
-          inv_dep_graph[dep_id].set_empty_key(0u);
-          inv_dep_graph[dep_id].set_deleted_key(u32(-1));
           inv_dep_graph[dep_id].insert(pass_id);
         }
         if (deps.size())
           dep_graph.insert({pass_id, deps});
         passes_queue.push_back(pass_id);
       });
-      {
+      if (false) {
         std::ofstream out("pass_dep.gv");
         out << "digraph dep_graph {\n";
         for (auto id0 : dep_graph) {
@@ -1501,7 +1530,7 @@ u32 Graphics_Utils::create_compute_pass(std::string const &name,
 void Graphics_Utils::release_resource(u32 id) {
   return ((Graphics_Utils_State *)this->pImpl)->release_resource(id);
 }
-//void Graphics_Utils::IA_set_layout(
+// void Graphics_Utils::IA_set_layout(
 //    std::unordered_map<std::string, Vertex_Input> const &layout) {
 //  return ((Graphics_Utils_State *)this->pImpl)->IA_set_layout(layout);
 //}

@@ -127,6 +127,7 @@ target_link_libraries(test_5 PRIVATE shaderc_shared)
 
 ##########################
 
+
 if(NOT EXISTS ${CMAKE_BINARY_DIR}/models)
     execute_process(
         COMMAND mkdir ${CMAKE_BINARY_DIR}/shaders
