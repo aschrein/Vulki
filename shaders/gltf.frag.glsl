@@ -2,6 +2,7 @@
 #extension GL_EXT_nonuniform_qualifier : require
 
 layout(location = 0) out vec4 g_color;
+layout(location = 1) out vec4 g_normal;
 
 layout(location = 0) in vec3 in_position;
 layout(location = 1) in vec3 in_normal;

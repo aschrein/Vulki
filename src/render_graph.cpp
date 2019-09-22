@@ -263,7 +263,8 @@ struct Descriptor_Frame {
   void update_descriptor(
       Pipeline_Wrapper &pwrap, std::string const &name, vk::Buffer buffer,
       size_t origin, size_t size,
-      vk::DescriptorType type = vk::DescriptorType::eStorageBuffer) {
+      vk::DescriptorType type = vk::DescriptorType::eStorageBuffer,
+      u32 offset = 0u) {
     ASSERT_PANIC(pwrap.resource_slots.find(name) != pwrap.resource_slots.end());
     auto slot = pwrap.resource_slots[name];
     ASSERT_PANIC(
@@ -275,6 +276,7 @@ struct Descriptor_Frame {
              .setDstSet(raw_descsets[slot.set])
              .setDstBinding(slot.layout.binding)
              .setDescriptorCount(1)
+             .setDstArrayElement(offset)
              .setDescriptorType(slot.layout.descriptorType)
              .setPBufferInfo(&vk::DescriptorBufferInfo()
                                   .setBuffer(buffer)
@@ -284,7 +286,8 @@ struct Descriptor_Frame {
   }
   void update_storage_image_descriptor(Pipeline_Wrapper &pwrap,
                                        std::string const &name,
-                                       vk::ImageView image_view) {
+                                       vk::ImageView image_view,
+                                       u32 offset = 0u) {
     ASSERT_PANIC(pwrap.resource_slots.find(name) != pwrap.resource_slots.end());
     auto slot = pwrap.resource_slots[name];
     ASSERT_PANIC(slot.layout.descriptorType ==
@@ -295,6 +298,7 @@ struct Descriptor_Frame {
              .setDstSet(raw_descsets[slot.set])
              .setDstBinding(slot.layout.binding)
              .setDescriptorCount(1)
+             .setDstArrayElement(offset)
              .setDescriptorType(vk::DescriptorType::eStorageImage)
              .setPImageInfo(&vk::DescriptorImageInfo()
                                  .setImageView(image_view)
@@ -469,6 +473,7 @@ struct Graphics_Utils_State {
   // Also dummy targets have a name but no id
   google::dense_hash_map<std::string, u32> resource_name_table;
   google::dense_hash_map<u32, u32> resource_factory_table;
+  google::dense_hash_map<std::string, u32> pass_name_table;
   /////////////////////////////
 
   /////////////////////////////
@@ -479,14 +484,11 @@ struct Graphics_Utils_State {
 
   // Descriptor allocation stuff
   std::vector<Descriptor_Frame> desc_frames;
+  std::vector<std::pair<u32, std::function<void()>>> deferred_calls;
+
   /////////////////////////////
   // Immediate resource tracking
-  google::dense_hash_map<std::string, u32> pass_name_table;
-  // We have separate tables for named and nameless bindings
-  // Named dominate; We should clear these at the beginnig of a frame
-  //  google::dense_hash_map<std::string, std::string> named_binding_table;
-  google::dense_hash_map<std::string, u32> id_binding_table;
-
+  boost::unordered_map<std::pair<std::string, u32>, u32> id_binding_table;
   Graphics_Pipeline_State cur_gfx_state;
   u32 cur_cs;
   google::dense_hash_map<u32, Image_Layout> cur_image_layouts;
@@ -494,9 +496,37 @@ struct Graphics_Utils_State {
   u32 index_buffer;
   u32 index_offset;
   vk::Format index_format;
+  u8 push_const[128];
+  u32 push_const_size;
+  void reset_frame() {
+    resources.tick();
+    pipes.tick();
+    rts.tick();
+    passes.tick();
+    images.tick();
+    buffers.tick();
 
-  //
-  std::vector<std::pair<u32, std::function<void()>>> deferred_calls;
+    std::vector<std::pair<u32, std::function<void()>>> new_deferred_list;
+    for (auto &def_call : deferred_calls) {
+      ASSERT_PANIC(def_call.first);
+      def_call.first -= 1;
+      if (def_call.first == 0u) {
+        def_call.second();
+      } else {
+        new_deferred_list.push_back(def_call);
+      }
+    }
+    deferred_calls = new_deferred_list;
+  }
+  void reset_pass() {
+    push_const_size = 0;
+    index_offset = 0;
+    index_buffer = 0;
+    vb_infos.clear();
+    cur_cs = 0;
+    cur_gfx_state = Graphics_Pipeline_State{};
+    id_binding_table.clear();
+  }
 
   // #GetPipeline
   Pipeline_Wrapper &get_current_gfx_pipeline() {
@@ -592,8 +622,8 @@ struct Graphics_Utils_State {
     pass_name_table.set_empty_key("null");
     pass_name_table.set_deleted_key("deleted");
     //    named_binding_table.set_empty_key("null");
-    id_binding_table.set_empty_key("null");
-    id_binding_table.set_deleted_key("deleted");
+    //    id_binding_table.set_empty_key({"null", 0u});
+    //    id_binding_table.set_deleted_key({"deleted", 0u});
     //
     cur_image_layouts.set_empty_key(0u);
     cur_image_layouts.set_deleted_key(u32(-1));
@@ -1066,11 +1096,12 @@ struct Graphics_Utils_State {
     cur_gfx_state.max_depth = max_depth;
   }
 
-  void bind_resource(std::string const &name, u32 id) {
-    id_binding_table[name] = id;
+  void bind_resource(std::string const &name, u32 id, u32 index) {
+    id_binding_table[{name, index}] = id;
   }
-  void bind_resource(std::string const &name, std::string const &id) {
-    id_binding_table[name] = resource_name_table.find(id)->second;
+  void bind_resource(std::string const &name, std::string const &id,
+                     u32 index) {
+    id_binding_table[{name, index}] = resource_name_table.find(id)->second;
   }
 
   void *map_buffer(u32 id) {
@@ -1092,12 +1123,10 @@ struct Graphics_Utils_State {
       ASSERT_PANIC(false);
     }
   }
-  void push_constants(void *data, size_t size, bool draw = true) {
-    auto &cmd = device_wrapper.cur_cmd();
-    auto &pipeline =
-        draw ? get_current_gfx_pipeline() : get_current_compute_pipeline();
-    cmd.pushConstants(pipeline.pipeline_layout.get(),
-                      vk::ShaderStageFlagBits::eAll, 0, size, data);
+  void push_constants(void *data, size_t size) {
+    ASSERT_PANIC(size < 128);
+    memcpy(push_const, data, size);
+    push_const_size = size;
   }
   void clear_color(vec4 value) {
     ASSERT_PANIC(cur_gfx_state.pass);
@@ -1184,11 +1213,14 @@ struct Graphics_Utils_State {
   }
   void _setup_bindings(bool draw = true) {
     auto &cmd = device_wrapper.cur_cmd();
+    auto &pass = passes[cur_gfx_state.pass];
     auto &pipeline =
         draw ? get_current_gfx_pipeline() : get_current_compute_pipeline();
     auto &dframe = get_cur_descframe();
+    // @Cleanup
+    _end_pass(cmd, pass);
     for (auto &item : id_binding_table) {
-      if (!pipeline.has_descriptor(item.first))
+      if (!pipeline.has_descriptor(item.first.first))
         continue;
       // @TODO: Check for valid ids
       auto &res = resources[item.second];
@@ -1205,33 +1237,43 @@ struct Graphics_Utils_State {
         // @TODO
         ASSERT_PANIC(false);
       }
-      auto type = pipeline.get_type(item.first);
+      auto type = pipeline.get_type(item.first.first);
       if (type == vk::DescriptorType::eStorageImage) {
         ASSERT_PANIC(img_id);
         auto &img = images[img_id];
+        // @Cleanup
         img.barrier(cmd, device_wrapper.graphics_queue_family_id,
                     vk::ImageLayout::eGeneral,
                     vk::AccessFlagBits::eShaderRead |
                         vk::AccessFlagBits::eShaderWrite);
-        dframe.update_storage_image_descriptor(pipeline, item.first,
-                                               img.view.get());
+        dframe.update_storage_image_descriptor(
+            pipeline, item.first.first, img.view.get(), item.first.second);
       } else if (type == vk::DescriptorType::eCombinedImageSampler) {
         auto &img = images[img_id];
+        // @Cleanup
         img.barrier(cmd, device_wrapper.graphics_queue_family_id,
                     vk::ImageLayout::eShaderReadOnlyOptimal,
                     vk::AccessFlagBits::eShaderRead);
-        dframe.update_sampled_image_descriptor(pipeline, item.first,
-                                               img.view.get(), sampler.get());
+        dframe.update_sampled_image_descriptor(pipeline, item.first.first,
+                                               img.view.get(), sampler.get(),
+                                               item.first.second);
       } else if (type == vk::DescriptorType::eUniformBuffer) {
         auto &buf = buffers[buf_id];
-        dframe.update_descriptor(pipeline, item.first, buf.buffer, 0,
-                                 buf.create_info.size, type);
+        dframe.update_descriptor(pipeline, item.first.first, buf.buffer, 0,
+                                 buf.create_info.size, type, item.first.second);
       } else {
         ASSERT_PANIC(false);
       }
     }
 
     dframe.bind_pipeline(cmd, pipeline);
+    if (push_const_size) {
+      cmd.pushConstants(pipeline.pipeline_layout.get(),
+                        vk::ShaderStageFlagBits::eAll, 0, push_const_size,
+                        push_const);
+    }
+    // @Cleanup
+    _begin_pass(cmd, pass);
   }
   void dispatch(u32 dim_x, u32 dim_y, u32 dim_z) {
     _setup_bindings(false);
@@ -1294,23 +1336,8 @@ struct Graphics_Utils_State {
 
   void run_loop(std::function<void()> fn) {
     device_wrapper.pre_tick = [=](vk::CommandBuffer &cmd) {
-      resources.tick();
-      pipes.tick();
-      images.tick();
-      buffers.tick();
-      rts.tick();
-      passes.tick();
-      std::vector<std::pair<u32, std::function<void()>>> new_deferred_list;
-      for (auto &def_call : deferred_calls) {
-        ASSERT_PANIC(def_call.first);
-        def_call.first -= 1;
-        if (def_call.first == 0u) {
-          def_call.second();
-        } else {
-          new_deferred_list.push_back(def_call);
-        }
-      }
-      deferred_calls = new_deferred_list;
+      reset_frame();
+
       fn();
       // Poor man's dependency graph
       // pass_id -> list of pass_ids on which this pass depends
@@ -1365,10 +1392,10 @@ struct Graphics_Utils_State {
         passes_queue.pop_front();
         if (dep_graph.count(begin) == 0) {
           auto &pass = passes[begin];
+          reset_pass();
           cur_gfx_state.pass = begin;
           _begin_pass(cmd, pass);
           pass.on_exec();
-          id_binding_table.clear();
           _end_pass(cmd, pass);
           // Notify all dependent passes that this pass has finished
           if (inv_dep_graph.find(begin) != inv_dep_graph.end()) {
@@ -1384,8 +1411,6 @@ struct Graphics_Utils_State {
           passes_queue.push_back(begin);
         }
       }
-      // Clean the state for the next frame
-      cur_gfx_state = Graphics_Pipeline_State{};
     };
     device_wrapper.window_loop();
   }
@@ -1516,12 +1541,12 @@ void Graphics_Utils::RS_set_depth_stencil_state(bool enable_depth_test,
                                    enable_depth_write, max_depth);
 }
 
-void Graphics_Utils::bind_resource(std::string const &name, u32 id) {
-  return ((Graphics_Utils_State *)this->pImpl)->bind_resource(name, id);
+void Graphics_Utils::bind_resource(std::string const &name, u32 id, u32 index) {
+  return ((Graphics_Utils_State *)this->pImpl)->bind_resource(name, id, index);
 }
 void Graphics_Utils::bind_resource(std::string const &name,
-                                   std::string const &id) {
-  return ((Graphics_Utils_State *)this->pImpl)->bind_resource(name, id);
+                                   std::string const &id, u32 index) {
+  return ((Graphics_Utils_State *)this->pImpl)->bind_resource(name, id, index);
 }
 
 void *Graphics_Utils::map_buffer(u32 id) {

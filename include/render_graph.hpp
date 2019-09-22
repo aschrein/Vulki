@@ -81,8 +81,8 @@ struct Graphics_Utils {
   void CS_set_shader(std::string const &filename);
   void RS_set_depth_stencil_state(bool enable_depth_test, vk::CompareOp cmp_op,
                                   bool enable_depth_write, float max_depth);
-  void bind_resource(std::string const &name, u32 id);
-  void bind_resource(std::string const &name, std::string const &id);
+  void bind_resource(std::string const &name, u32 id, u32 index = 0);
+  void bind_resource(std::string const &name, std::string const &id, u32 index = 0);
 
   void *map_buffer(u32 id);
   void unmap_buffer(u32 id);

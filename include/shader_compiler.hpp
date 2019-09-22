@@ -361,11 +361,15 @@ struct Pipeline_Wrapper : public Slot {
       vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT binding_infos;
       std::vector<vk::DescriptorBindingFlagsEXT> binding_flags;
       ito(set_binding.size()) {
-        binding_flags.push_back(
-            // vk::DescriptorBindingFlagBitsEXT::eUpdateAfterBind |
-            vk::DescriptorBindingFlagBitsEXT::ePartiallyBound
-            //| vk::DescriptorBindingFlagBitsEXT::eVariableDescriptorCount
-        );
+        // @Cleanup: Right now enable bindless extension for arays > 10
+        if (set_binding[i].descriptorCount > 10)
+          binding_flags.push_back(
+              // vk::DescriptorBindingFlagBitsEXT::eUpdateAfterBind |
+              vk::DescriptorBindingFlagBitsEXT::ePartiallyBound
+              //| vk::DescriptorBindingFlagBitsEXT::eVariableDescriptorCount
+          );
+        else
+          binding_flags.push_back(vk::DescriptorBindingFlagsEXT(0));
       }
       binding_infos.setBindingCount(set_binding.size())
           .setPBindingFlags(&binding_flags[0]);
@@ -373,7 +377,7 @@ struct Pipeline_Wrapper : public Slot {
           vk::DescriptorSetLayoutCreateInfo()
               // @TODO: Enable partially bound resources where it's needed
               // @See: device.cpp
-              //.setPNext((void *)&binding_infos)
+              .setPNext((void *)&binding_infos)
               // #shaderSampledImageArrayNonUniformIndexing
               //
               // @TODO: Check for availability

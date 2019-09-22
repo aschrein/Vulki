@@ -36,7 +36,7 @@ struct Camera {
   float mx = 0.0f, my = 0.0f;
   vec3 look_at = vec3(0.0f, 0.0f, 0.0f);
   float aspect = 1.0;
-  float fov = M_PI/4.0;
+  float fov = M_PI / 4.0;
   //
   vec3 pos;
   mat4 view;
@@ -69,6 +69,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   ImVec2 wsize(512, 512);
   render_graph::Graphics_Utils gu = render_graph::Graphics_Utils::create();
   float drag_val = 0.0;
+  Camera camera;
   gu.set_on_gui([&] {
     ImGui::Begin("dummy window");
     gu.ImGui_Emit_Stats();
@@ -110,12 +111,15 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                                     .layers = 1}}},
         [&] {
           sh_postprocess_comp::UBO ubo{};
-          ubo.offset = vec4(drag_val, 0.0, 0.0, 0.0);
+          sh_postprocess_comp::push_constants pc{};
+
+          pc.offset = vec4(drag_val, 0.0, 0.0, 0.0);
           u32 ubo_id = gu.create_buffer(
               render_graph::Buffer{.usage_bits =
                                        vk::BufferUsageFlagBits::eUniformBuffer,
                                    .size = sizeof(ubo)},
               &ubo);
+          gu.push_constants(&pc, sizeof(pc));
           gu.bind_resource("UBO", ubo_id);
           gu.bind_resource("out_image", "pass_1.HDR");
           gu.bind_resource("in_image", "pass_0.diffuse"); // textures[1]);
@@ -125,22 +129,30 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
         });
     gu.create_render_pass(
         "pass_0", {},
-        {render_graph::Resource{
-             .name = "pass_0.diffuse",
-             .type = render_graph::Type::RT,
-             .rt_info =
-                 render_graph::RT{.format = vk::Format::eR32G32B32A32Sfloat,
-                                  .target =
-                                      render_graph::Render_Target::Color}},
-         render_graph::Resource{
-             .name = "pass_0.depth",
-             .type = render_graph::Type::RT,
-             .rt_info =
-                 render_graph::RT{.format = vk::Format::eD32Sfloat,
-                                  .target =
-                                      render_graph::Render_Target::Depth}}},
+        {
+            render_graph::Resource{
+                .name = "pass_0.diffuse",
+                .type = render_graph::Type::RT,
+                .rt_info =
+                    render_graph::RT{.format = vk::Format::eR32G32B32A32Sfloat,
+                                     .target =
+                                         render_graph::Render_Target::Color}},
+            render_graph::Resource{
+                .name = "pass_0.depth",
+                .type = render_graph::Type::RT,
+                .rt_info =
+                    render_graph::RT{.format = vk::Format::eD32Sfloat,
+                                     .target =
+                                         render_graph::Render_Target::Depth}},
+            render_graph::Resource{
+                .name = "pass_0.normal",
+                .type = render_graph::Type::RT,
+                .rt_info =
+                    render_graph::RT{.format = vk::Format::eR32G32B32A32Sfloat,
+                                     .target =
+                                         render_graph::Render_Target::Color}},
+        },
         wsize.x, wsize.y, [&] {
-          static Camera camera;
           if (!cubemap_id) {
             cubemap_id = gu.create_texture2D(cubemap, true);
             ito(test_model.meshes.size()) {
@@ -167,7 +179,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
               textures.push_back(gu.create_texture2D(img, true));
             }
           }
-          camera.aspect = float(wsize.x)/wsize.y;
+          camera.aspect = float(wsize.x) / wsize.y;
           camera.update();
           gu.clear_color({0.0f, 0.0f, 0.0f, 0.0f});
           gu.clear_depth(1.0f);
@@ -189,6 +201,11 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                               vk::PolygonMode::eFill, 1.0f);
           gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual, true,
                                         1.0f);
+          // @TODO: Bind all the textures
+          ito(textures.size()) {
+            auto &tex = textures[i];
+            gu.bind_resource("textures", tex, i);
+          }
           for (auto &model : models) {
             sh_gltf_frag::push_constant pc;
             pc.albedo_id = model.material.albedo_id;

@@ -7,6 +7,10 @@ layout(set = 0, binding = 2, std140) uniform UBO {
   vec4 offset;
 } uniforms;
 
+layout(push_constant) uniform PC {
+  vec4 offset;
+} push_constants;
+
 void main() {
     ivec2 dim = imageSize(out_image);
     vec2 uv = vec2(gl_GlobalInvocationID.xy) / dim;
@@ -14,5 +18,6 @@ void main() {
       return;
     vec4 in_value = texelFetch(in_image, ivec2(gl_GlobalInvocationID.xy), 0);
     in_value.a = 1.0;
-    imageStore(out_image, ivec2(gl_GlobalInvocationID.xy), sqrt(in_value) + uniforms.offset);
+    imageStore(out_image, ivec2(gl_GlobalInvocationID.xy), sqrt(in_value)
+      + uniforms.offset + push_constants.offset);
 }
