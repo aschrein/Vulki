@@ -151,7 +151,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.release_resource(ubo_id);
         });
     gu.create_compute_pass(
-        "shading", {"g_pass.albedo", "g_pass.normal", "g_pass.metal"},
+        "shading", {"g_pass.albedo", "g_pass.normal", "g_pass.metal", "~shading.HDR"},
         {render_graph::Resource{
             .name = "shading.HDR",
             .type = render_graph::Type::Image,
@@ -168,6 +168,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.bind_resource("g_albedo", "g_pass.albedo");
           gu.bind_resource("g_normal", "g_pass.normal");
           gu.bind_resource("g_metal", "g_pass.metal");
+          gu.bind_resource("history", "~shading.HDR");
           gu.CS_set_shader("pbr_shading.comp.glsl");
           gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
         });

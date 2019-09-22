@@ -76,16 +76,20 @@ struct Image_Layout {
 
 struct RT_Details : public Slot {
   std::string name;
-  vk::Format format;
   u32 image_id;
 };
 
 enum class Pass_Type { Graphics, Compute };
 
+struct Pass_Input {
+  std::string name;
+  bool history;
+};
+
 struct Pass_Details : public Slot {
   std::string name;
   Pass_Type type;
-  std::vector<std::string> input;
+  std::vector<Pass_Input> input;
   std::vector<std::string> output;
   u32 width;
   u32 height;
@@ -475,6 +479,7 @@ struct Graphics_Utils_State {
   google::dense_hash_map<std::string, u32> resource_name_table;
   google::dense_hash_map<u32, u32> resource_factory_table;
   google::dense_hash_map<std::string, u32> pass_name_table;
+  google::dense_hash_map<std::string, u32> history_use;
   /////////////////////////////
 
   /////////////////////////////
@@ -632,7 +637,9 @@ struct Graphics_Utils_State {
     resource_factory_table.set_deleted_key(u32(-1));
     // @WTF
     shader_ids.set_empty_key("null");
+    history_use.set_empty_key("null");
     shader_ids.set_deleted_key("deleted");
+    history_use.set_deleted_key("deleted");
     resource_name_table.set_empty_key("null");
     resource_name_table.set_deleted_key("deleted");
     pass_name_table.set_empty_key("null");
@@ -785,18 +792,20 @@ struct Graphics_Utils_State {
             break;
           }
           auto &rt = rts[res.ref];
-          if (rt_info.format != rt.format)
+          auto &img = images[rt.image_id];
+          if (rt_info.format != img.create_info.format)
             invalidate |= true;
         } else if (output[i].type == Type::Image) {
           auto &image_info = output[i].image_info;
           auto res_id = get_resource_id(pass.output[i]);
           auto &res = resources[res_id];
           // Type mismatch
-          if (res.type != Resource_Type::TEXTURE) {
+          if (res.type != Resource_Type::RT) {
             invalidate |= true;
             break;
           }
-          auto &img = images[res.ref];
+          auto &rt = rts[res.ref];
+          auto &img = images[rt.image_id];
           if (img.create_info.format != image_info.format ||
               img.create_info.extent.width != image_info.width ||
               img.create_info.extent.height != image_info.height ||
@@ -825,9 +834,13 @@ struct Graphics_Utils_State {
     pass_details.on_exec = on_exec;
     pass_details.type = type;
     ito(input.size()) {
-      //      ASSERT_PANIC(resource_name_table.find(input[i]) !=
-      //                   resource_name_table.end());
-      pass_details.input.push_back(input[i]);
+      auto res_name = input[i];
+      bool history = false;
+      if (res_name[0] == '~') {
+        res_name = res_name.substr(1);
+        history = true;
+      }
+      pass_details.input.push_back({.name = res_name, .history = history});
     }
     i32 depth_attachment_id = -1;
     ito(output.size()) {
@@ -842,14 +855,13 @@ struct Graphics_Utils_State {
         RT rt_info = output[i].rt_info;
         RT_Details details;
         details.name = output[i].name;
-        details.format = rt_info.format;
         u32 image_id = 0;
         if (rt_info.target == Render_Target::Color) {
           image_id = images.push(device_wrapper.alloc_state->allocate_image(
               vk::ImageCreateInfo()
                   .setArrayLayers(1)
                   .setExtent(vk::Extent3D(width, height, 1))
-                  .setFormat(details.format)
+                  .setFormat(rt_info.format)
                   .setMipLevels(1)
                   .setImageType(vk::ImageType::e2D)
                   .setInitialLayout(vk::ImageLayout::eUndefined)
@@ -861,6 +873,7 @@ struct Graphics_Utils_State {
                   .setTiling(vk::ImageTiling::eOptimal)
                   .setUsage(vk::ImageUsageFlagBits::eColorAttachment |
                             vk::ImageUsageFlagBits::eTransferDst |
+                            vk::ImageUsageFlagBits::eTransferSrc |
                             vk::ImageUsageFlagBits::eSampled),
               VMA_MEMORY_USAGE_GPU_ONLY));
         } else {
@@ -868,7 +881,7 @@ struct Graphics_Utils_State {
               vk::ImageCreateInfo()
                   .setArrayLayers(1)
                   .setExtent(vk::Extent3D(width, height, 1))
-                  .setFormat(details.format)
+                  .setFormat(rt_info.format)
                   .setMipLevels(1)
                   .setImageType(vk::ImageType::e2D)
                   .setInitialLayout(vk::ImageLayout::eUndefined)
@@ -880,6 +893,7 @@ struct Graphics_Utils_State {
                   .setTiling(vk::ImageTiling::eOptimal)
                   .setUsage(vk::ImageUsageFlagBits::eDepthStencilAttachment |
                             vk::ImageUsageFlagBits::eTransferDst |
+                            vk::ImageUsageFlagBits::eTransferSrc |
                             vk::ImageUsageFlagBits::eSampled),
               VMA_MEMORY_USAGE_GPU_ONLY, vk::ImageAspectFlagBits::eDepth));
         }
@@ -948,10 +962,12 @@ struct Graphics_Utils_State {
                 .setTiling(vk::ImageTiling::eOptimal)
                 .setUsage(vk::ImageUsageFlagBits::eStorage |
                           vk::ImageUsageFlagBits::eTransferDst |
+                          vk::ImageUsageFlagBits::eTransferSrc |
                           vk::ImageUsageFlagBits::eSampled),
             VMA_MEMORY_USAGE_GPU_ONLY, vk::ImageAspectFlagBits::eColor));
-        auto res_id =
-            resources.push({.type = Resource_Type::TEXTURE, .ref = image_id});
+        auto rt_id =
+            rts.push(RT_Details{.name = output[i].name, .image_id = image_id});
+        auto res_id = resources.push({.type = Resource_Type::RT, .ref = rt_id});
         resource_name_table.insert({output[i].name, res_id});
         // Insert factory reference
         resource_factory_table.insert({res_id, pass_id});
@@ -1059,6 +1075,10 @@ struct Graphics_Utils_State {
       resource_factory_table.erase(res_id);
       resource_name_table.erase(res_name);
       resources.remove(res_id);
+      if (history_use.find(res_name) != history_use.end()) {
+        resources.remove(history_use.find(res_name)->second);
+        history_use.erase(res_name);
+      }
     }
     gfx_pipelines.clear();
     pass_name_table.erase(pass.name);
@@ -1136,7 +1156,36 @@ struct Graphics_Utils_State {
   }
   void bind_resource(std::string const &name, std::string const &id,
                      u32 index) {
-    id_binding_table[{name, index}] = resource_name_table.find(id)->second;
+    std::string res_name = id;
+    if (res_name[0] == '~') {
+      res_name = res_name.substr(1);
+      if (history_use.find(res_name) == history_use.end()) {
+        auto res_id = resource_name_table.find(res_name)->second;
+        auto &res = resources[res_id];
+        if (res.type == Resource_Type::RT) {
+          auto &rt = rts[res.ref];
+          auto &img = images[rt.image_id];
+          u32 new_image_id =
+              images.push(device_wrapper.alloc_state->allocate_image(
+                  img.create_info, VMA_MEMORY_USAGE_GPU_ONLY));
+          RT_Details new_rt{};
+          new_rt.name = id;
+          new_rt.image_id = new_image_id;
+          u32 new_rt_id = rts.push(std::move(new_rt));
+          auto new_res_id =
+              resources.push({.type = Resource_Type::RT, .ref = new_rt_id});
+          history_use.insert({res_name, new_res_id});
+
+        } else {
+          ASSERT_PANIC(false);
+        }
+      }
+      id_binding_table[{name, index}] = history_use.find(res_name)->second;
+
+    } else {
+      id_binding_table[{name, index}] =
+          resource_name_table.find(res_name)->second;
+    }
   }
 
   void *map_buffer(u32 id) {
@@ -1376,6 +1425,19 @@ struct Graphics_Utils_State {
         _invalidate_pipes();
 
       fn();
+
+      boost::unordered_set<u32> history_needed;
+      passes.for_each([&](Pass_Details &pass) {
+        auto pass_id = pass.get_id();
+        for (auto &input : pass.input) {
+          if (input.history) {
+            ASSERT_PANIC(resource_name_table.find(input.name) !=
+                         resource_name_table.end());
+            history_needed.insert(resource_name_table.find(input.name)->second);
+          }
+        }
+      });
+
       // Poor man's dependency graph
       // pass_id -> list of pass_ids on which this pass depends
       boost::unordered_map<u32, boost::unordered_set<u32>> dep_graph;
@@ -1384,8 +1446,11 @@ struct Graphics_Utils_State {
       passes.for_each([&](Pass_Details &pass) {
         auto pass_id = pass.get_id();
         boost::unordered_set<u32> deps;
-        for (auto &res_name : pass.input) {
-          auto res_id = get_resource_id(res_name);
+        for (auto &input : pass.input) {
+          // Dependency on the  previous frame is automatic
+          if (input.history)
+            continue;
+          auto res_id = get_resource_id(input.name);
           ASSERT_PANIC(resource_factory_table.find(res_id) !=
                        resource_factory_table.end());
           auto dep_id = resource_factory_table.find(res_id)->second;
@@ -1441,8 +1506,47 @@ struct Graphics_Utils_State {
           passes_queue.push_back(begin);
         }
       }
+      reset_pass();
+      // Copy to history
+      for (u32 res_id : history_needed) {
+        _copy_to_history(res_id);
+      }
     };
     device_wrapper.window_loop();
+  }
+  void _copy_to_history(u32 res_id) {
+    // Outside of renderpass
+    ASSERT_PANIC(cur_gfx_state.pass == 0);
+    auto &res = resources[res_id];
+    if (res.type == Resource_Type::RT) {
+      u32 image_id = res.ref;
+      auto &rt = rts[res.ref];
+      image_id = rt.image_id;
+      auto &img = images[image_id];
+      ASSERT_PANIC(history_use.find(rt.name) != history_use.end());
+      auto &res_1 = resources[history_use.find(rt.name)->second];
+      auto &rt_1 = rts[res_1.ref];
+      auto &img_1 = images[rt_1.image_id];
+      auto &cmd = device_wrapper.cur_cmd();
+      img.barrier(cmd, device_wrapper.graphics_queue_family_id,
+                  vk::ImageLayout::eTransferSrcOptimal,
+                  vk::AccessFlagBits::eMemoryRead);
+      img_1.barrier(cmd, device_wrapper.graphics_queue_family_id,
+                    vk::ImageLayout::eTransferDstOptimal,
+                    vk::AccessFlagBits::eMemoryWrite);
+      cmd.copyImage(
+          img.image, img.layout, img_1.image, img_1.layout, 1,
+          &vk::ImageCopy()
+               .setExtent(img.create_info.extent)
+               .setSrcSubresource(
+                   vk::ImageSubresourceLayers().setLayerCount(1).setAspectMask(
+                       img.aspect))
+               .setDstSubresource(
+                   vk::ImageSubresourceLayers().setLayerCount(1).setAspectMask(
+                       img.aspect)));
+    } else {
+      ASSERT_PANIC(false);
+    }
   }
   u32 create_compute_pass(std::string const &name,
                           std::vector<std::string> const &input,
