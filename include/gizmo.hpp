@@ -3,6 +3,7 @@
 #include "error_handling.hpp"
 #include "memory.hpp"
 #include "primitives.hpp"
+#include "render_graph.hpp"
 #include "shader_compiler.hpp"
 
 #define GLM_ENABLE_EXPERIMENTAL
@@ -222,58 +223,12 @@ struct Gizmo_Layer {
   std::vector<Gizmo_Draw_Cmd> cmds;
   std::vector<sh_gizmo_line_vert::_Binding_0> line_segments;
   // Vulkan state
-  Pipeline_Wrapper gizmo_pipeline;
-  Pipeline_Wrapper gizmo_line_pipeline;
   Raw_Mesh_3p16i_Wrapper icosahedron_wrapper;
   Raw_Mesh_3p16i_Wrapper cylinder_wrapper;
   Raw_Mesh_3p16i_Wrapper cone_wrapper;
-  VmaBuffer gizmo_instance_buffer;
-  VmaBuffer gizmo_lines_buffer;
 
   using Gizmo_Instance_Data = sh_gizmo_vert::_Binding_1;
 
-  void init_vulkan_state(Device_Wrapper &device_wrapper,
-                         vk::RenderPass &render_pass) {
-    gizmo_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "shaders/gizmo.vert.glsl", "shaders/gizmo.frag.glsl",
-        vk::GraphicsPipelineCreateInfo()
-            // .setPDepthStencilState(&vk::PipelineDepthStencilStateCreateInfo()
-            //                             .setDepthTestEnable(false)
-            //                             .setDepthWriteEnable(false))
-            .setRenderPass(render_pass),
-        sh_gizmo_vert::Binding,
-        {vk::VertexInputBindingDescription()
-             .setBinding(0)
-             .setStride(sizeof(sh_gizmo_vert::_Binding_0))
-             .setInputRate(vk::VertexInputRate::eVertex),
-         vk::VertexInputBindingDescription()
-             .setBinding(1)
-             .setStride(sizeof(sh_gizmo_vert::_Binding_1))
-             .setInputRate(vk::VertexInputRate::eInstance)},
-        {}, sizeof(Gizmo_Push_Constants));
-    gizmo_line_pipeline = Pipeline_Wrapper::create_graphics(
-        device_wrapper, "shaders/gizmo_line.vert.glsl",
-        "shaders/gizmo.frag.glsl",
-        vk::GraphicsPipelineCreateInfo()
-            .setPInputAssemblyState(
-                &vk::PipelineInputAssemblyStateCreateInfo().setTopology(
-                    // We want lines here
-                    vk::PrimitiveTopology::eLineList))
-            .setRenderPass(render_pass),
-        sh_gizmo_line_vert::Binding,
-        {vk::VertexInputBindingDescription()
-             .setBinding(0)
-             .setStride(sizeof(sh_gizmo_line_vert::_Binding_0))
-             .setInputRate(vk::VertexInputRate::eVertex)},
-        {}, sizeof(Gizmo_Push_Constants));
-
-    cone_wrapper = Raw_Mesh_3p16i_Wrapper::create(
-        device_wrapper, subdivide_cone(8, 1.0f, 1.0f));
-    icosahedron_wrapper = Raw_Mesh_3p16i_Wrapper::create(
-        device_wrapper, subdivide_icosahedron(2));
-    cylinder_wrapper = Raw_Mesh_3p16i_Wrapper::create(
-        device_wrapper, subdivide_cylinder(8, 1.0f, 1.0f));
-  }
   void push_gizmo(Gizmo_Draw_Cmd cmd) { cmds.push_back(cmd); }
   void push_cylinder(vec3 start, vec3 end, vec3 up, float radius, vec3 color) {
     vec3 dr = end - start;
@@ -303,8 +258,22 @@ struct Gizmo_Layer {
                          glm::scale(vec3(radius, radius, radius)),
             .color = color}});
   }
-  void draw(Device_Wrapper &device_wrapper, vk::CommandBuffer &cmd) {
+  void draw(render_graph::Graphics_Utils &gu) {
+    if (!cylinder_wrapper.index_buffer) {
+      cone_wrapper =
+          Raw_Mesh_3p16i_Wrapper::create(gu, subdivide_cone(8, 1.0f, 1.0f));
+      icosahedron_wrapper =
+          Raw_Mesh_3p16i_Wrapper::create(gu, subdivide_icosahedron(2));
+      cylinder_wrapper =
+          Raw_Mesh_3p16i_Wrapper::create(gu, subdivide_cylinder(8, 1.0f, 1.0f));
+    }
     gizmo_drag_state.push_draw(cmds);
+    gu.VS_set_shader("gizmo.vert.glsl");
+    gu.PS_set_shader("gizmo.frag.glsl");
+    Gizmo_Push_Constants tmp_pc{};
+    tmp_pc.proj = camera_proj;
+    tmp_pc.view = camera_view;
+    gu.push_constants(&tmp_pc, sizeof(Gizmo_Push_Constants));
     if (cmds.size()) {
       std::vector<Gizmo_Draw_Cmd> cylinders;
       std::vector<Gizmo_Draw_Cmd> spheres;
@@ -318,17 +287,15 @@ struct Gizmo_Layer {
           cones.push_back(cmd);
         }
       }
-      gizmo_instance_buffer = device_wrapper.alloc_state->allocate_buffer(
-          vk::BufferCreateInfo()
-              .setSize((cmds.size()) * sizeof(Gizmo_Instance_Data))
-              .setUsage(vk::BufferUsageFlagBits::eVertexBuffer),
-          VMA_MEMORY_USAGE_CPU_TO_GPU);
+      u32 gizmo_instance_buffer = gu.create_buffer(render_graph::Buffer{
+          .usage_bits = vk::BufferUsageFlagBits::eVertexBuffer,
+          .size = u32((cmds.size()) * sizeof(Gizmo_Instance_Data))});
 
       u32 cylinder_instance_offset = 0;
       u32 spheres_instance_offset = 0;
       u32 cones_instance_offset = 0;
       {
-        void *data = gizmo_instance_buffer.map();
+        void *data = gu.map_buffer(gizmo_instance_buffer);
         Gizmo_Instance_Data *typed_data = (Gizmo_Instance_Data *)data;
         u32 total_index = 0;
         auto push_type = [&](std::vector<Gizmo_Draw_Cmd> &arr) {
@@ -347,65 +314,42 @@ struct Gizmo_Layer {
         push_type(spheres);
         cones_instance_offset = total_index;
         push_type(cones);
-        gizmo_instance_buffer.unmap();
+        gu.unmap_buffer(gizmo_instance_buffer);
       }
 
       {
-        gizmo_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
-        Gizmo_Push_Constants tmp_pc{};
-        tmp_pc.proj = camera_proj;
-        tmp_pc.view = camera_view;
-        gizmo_pipeline.push_constants(cmd, &tmp_pc,
-                                      sizeof(Gizmo_Push_Constants));
+        gu.IA_set_vertex_buffers(
+            {render_graph::Buffer_Info{.buf_id = gizmo_instance_buffer,
+                                       .offset = 0}},
+            1);
+        gu.IA_set_topology(vk::PrimitiveTopology::eTriangleList);
+        gu.IA_set_cull_mode(vk::CullModeFlagBits::eNone,
+                            vk::FrontFace::eCounterClockwise,
+                            vk::PolygonMode::eFill, 1.0f);
         // Draw cylinders
-        cmd.bindVertexBuffers(0,
-                              {cylinder_wrapper.vertex_buffer.buffer,
-                               gizmo_instance_buffer.buffer},
-                              {0, 0});
-        cmd.bindIndexBuffer(cylinder_wrapper.index_buffer.buffer, 0,
-                            vk::IndexType::eUint16);
-        cmd.drawIndexed(cylinder_wrapper.vertex_count, cylinders.size(), 0, 0,
-                        cylinder_instance_offset);
+        cylinder_wrapper.draw(gu, cylinders.size());
         // Draw spheres
-        cmd.bindVertexBuffers(0,
-                              {icosahedron_wrapper.vertex_buffer.buffer,
-                               gizmo_instance_buffer.buffer},
-                              {0, 0});
-        cmd.bindIndexBuffer(icosahedron_wrapper.index_buffer.buffer, 0,
-                            vk::IndexType::eUint16);
-        cmd.drawIndexed(icosahedron_wrapper.vertex_count, spheres.size(), 0, 0,
-                        spheres_instance_offset);
+        icosahedron_wrapper.draw(gu, cylinders.size(), spheres_instance_offset);
         // Draw Cones
-        cmd.bindVertexBuffers(
-            0,
-            {cone_wrapper.vertex_buffer.buffer, gizmo_instance_buffer.buffer},
-            {0, 0});
-        cmd.bindIndexBuffer(cone_wrapper.index_buffer.buffer, 0,
-                            vk::IndexType::eUint16);
-        cmd.drawIndexed(cone_wrapper.vertex_count, cones.size(), 0, 0,
-                        cones_instance_offset);
+        cone_wrapper.draw(gu, cylinders.size(), spheres_instance_offset);
       }
+      gu.release_resource(gizmo_instance_buffer);
     }
+
     if (line_segments.size()) {
-      gizmo_lines_buffer = device_wrapper.alloc_state->allocate_buffer(
-          vk::BufferCreateInfo()
-              .setSize(line_segments.size() * sizeof(line_segments[0]))
-              .setUsage(vk::BufferUsageFlagBits::eVertexBuffer),
-          VMA_MEMORY_USAGE_CPU_TO_GPU);
-      {
-        void *data = gizmo_lines_buffer.map();
-        memcpy(data, &line_segments[0],
-               line_segments.size() * sizeof(line_segments[0]));
-        gizmo_lines_buffer.unmap();
-      }
-      gizmo_line_pipeline.bind_pipeline(device_wrapper.device.get(), cmd);
-      Gizmo_Push_Constants tmp_pc{};
-      tmp_pc.proj = camera_proj;
-      tmp_pc.view = camera_view;
-      gizmo_line_pipeline.push_constants(cmd, &tmp_pc,
-                                         sizeof(Gizmo_Push_Constants));
-      cmd.bindVertexBuffers(0, {gizmo_lines_buffer.buffer}, {0});
-      cmd.draw(line_segments.size(), 1, 0, 0);
+      u32 gizmo_lines_buffer = gu.create_buffer(
+          render_graph::Buffer{
+              .usage_bits = vk::BufferUsageFlagBits::eVertexBuffer,
+              .size = u32((line_segments.size() * sizeof(line_segments[0])))},
+          &line_segments[0]);
+      gu.IA_set_topology(vk::PrimitiveTopology::eLineList);
+      gu.IA_set_cull_mode(vk::CullModeFlagBits::eNone,
+                          vk::FrontFace::eCounterClockwise,
+                          vk::PolygonMode::eFill, 1.0f);
+      gu.IA_set_vertex_buffers({render_graph::Buffer_Info{
+          .buf_id = gizmo_lines_buffer, .offset = 0}});
+      gu.draw(line_segments.size(), 1, 0, 0);
+      gu.release_resource(gizmo_lines_buffer);
     }
 
     // Reset cpu command stream

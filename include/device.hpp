@@ -9,6 +9,12 @@
 
 #include <xmmintrin.h>
 
+struct Vertex_Input {
+  uint32_t binding;
+  uint32_t offset;
+  vk::Format format;
+};
+
 struct Device_Wrapper {
   // @Cleanup: find a better way to reset the whole structure
   RAW_MOVABLE(Device_Wrapper)

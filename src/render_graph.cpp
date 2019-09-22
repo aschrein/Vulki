@@ -727,7 +727,7 @@ struct Graphics_Utils_State {
   }
   u32 create_uav_image(u32 width, u32 height, vk::Format format, u32 levels,
                        u32 layers) {}
-  u32 create_buffer(Buffer info, void *initial_data) {
+  u32 create_buffer(Buffer info, void const *initial_data) {
     auto buf_id = buffers.push(device_wrapper.alloc_state->allocate_buffer(
         vk::BufferCreateInfo().setSize(info.size).setUsage(info.usage_bits),
         VMA_MEMORY_USAGE_CPU_TO_GPU));
@@ -1046,7 +1046,8 @@ struct Graphics_Utils_State {
       ASSERT_PANIC(false);
     }
   }
-  void IA_set_vertex_buffers(std::vector<Buffer_Info> const &infos) {
+  void IA_set_vertex_buffers(std::vector<Buffer_Info> const &infos,
+                             u32 offset) {
     auto &cmd = device_wrapper.cur_cmd();
     std::vector<vk::Buffer> arg_buffers;
     std::vector<vk::DeviceSize> offsets;
@@ -1060,7 +1061,7 @@ struct Graphics_Utils_State {
         ASSERT_PANIC(false);
       }
     }
-    cmd.bindVertexBuffers(0, arg_buffers, offsets);
+    cmd.bindVertexBuffers(offset, arg_buffers, offsets);
   }
   void IA_set_cull_mode(vk::CullModeFlags cull_mode, vk::FrontFace front_face,
                         vk::PolygonMode polygon_mode, float line_width) {
@@ -1124,7 +1125,7 @@ struct Graphics_Utils_State {
     }
   }
   void push_constants(void *data, size_t size) {
-    ASSERT_PANIC(size < 128);
+    ASSERT_PANIC(size <= 128);
     memcpy(push_const, data, size);
     push_const_size = size;
   }
@@ -1477,7 +1478,7 @@ u32 Graphics_Utils::create_uav_image(u32 width, u32 height, vk::Format format,
   return ((Graphics_Utils_State *)this->pImpl)
       ->create_uav_image(width, height, format, levels, layers);
 }
-u32 Graphics_Utils::create_buffer(Buffer info, void *initial_data) {
+u32 Graphics_Utils::create_buffer(Buffer info, void const *initial_data) {
   return ((Graphics_Utils_State *)this->pImpl)
       ->create_buffer(info, initial_data);
 }
@@ -1500,10 +1501,10 @@ u32 Graphics_Utils::create_compute_pass(std::string const &name,
 void Graphics_Utils::release_resource(u32 id) {
   return ((Graphics_Utils_State *)this->pImpl)->release_resource(id);
 }
-void Graphics_Utils::IA_set_layout(
-    std::unordered_map<std::string, Vertex_Input> const &layout) {
-  return ((Graphics_Utils_State *)this->pImpl)->IA_set_layout(layout);
-}
+//void Graphics_Utils::IA_set_layout(
+//    std::unordered_map<std::string, Vertex_Input> const &layout) {
+//  return ((Graphics_Utils_State *)this->pImpl)->IA_set_layout(layout);
+//}
 void Graphics_Utils::IA_set_topology(vk::PrimitiveTopology topology) {
   return ((Graphics_Utils_State *)this->pImpl)->IA_set_topology(topology);
 }
@@ -1513,8 +1514,9 @@ void Graphics_Utils::IA_set_index_buffer(u32 id, u32 offset,
       ->IA_set_index_buffer(id, offset, format);
 }
 void Graphics_Utils::IA_set_vertex_buffers(
-    std::vector<Buffer_Info> const &infos) {
-  return ((Graphics_Utils_State *)this->pImpl)->IA_set_vertex_buffers(infos);
+    std::vector<Buffer_Info> const &infos, u32 offset) {
+  return ((Graphics_Utils_State *)this->pImpl)
+      ->IA_set_vertex_buffers(infos, offset);
 }
 void Graphics_Utils::IA_set_cull_mode(vk::CullModeFlags cull_mode,
                                       vk::FrontFace front_face,

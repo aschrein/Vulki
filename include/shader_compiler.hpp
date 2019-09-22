@@ -210,12 +210,6 @@ static Shader_Parsed create_shader_module(
   return out;
 }
 
-struct Vertex_Input {
-  uint32_t binding;
-  uint32_t offset;
-  vk::Format format;
-};
-
 struct Pipeline_Wrapper : public Slot {
   std::vector<vk::UniqueShaderModule> shader_modules;
   std::vector<vk::UniqueDescriptorSetLayout> set_layouts;

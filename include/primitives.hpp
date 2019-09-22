@@ -1,13 +1,11 @@
 #pragma once
 #include "device.hpp"
 #include "error_handling.hpp"
-#include "memory.hpp"
-#include "primitives.hpp"
-#include "shader_compiler.hpp"
 #include "tinyobjloader/tiny_obj_loader.h"
 #include <glm/glm.hpp>
 #include <map>
 #include <vector>
+
 using namespace glm;
 
 struct u16_face {
@@ -294,105 +292,6 @@ struct PBR_Model {
   std::vector<PBR_Material> materials;
 };
 
-struct Raw_Mesh_Opaque_Wrapper {
-  RAW_MOVABLE(Raw_Mesh_Opaque_Wrapper)
-  VmaBuffer vertex_buffer;
-  VmaBuffer index_buffer;
-  u32 index_count;
-  static Raw_Mesh_Opaque_Wrapper create(Device_Wrapper &device,
-                                        Raw_Mesh_Opaque const &in) {
-    Raw_Mesh_Opaque_Wrapper out{};
-    out.index_count = in.indices.size();
-    out.vertex_buffer = device.alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(in.attributes.size())
-            .setUsage(vk::BufferUsageFlagBits::eVertexBuffer),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-    out.index_buffer = device.alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(sizeof(u32) * in.indices.size())
-            .setUsage(vk::BufferUsageFlagBits::eIndexBuffer),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-    {
-      void *data = out.vertex_buffer.map();
-      memcpy(data, &in.attributes[0], in.attributes.size());
-      out.vertex_buffer.unmap();
-    }
-    {
-      void *data = out.index_buffer.map();
-      memcpy(data, &in.indices[0], sizeof(u32) * in.indices.size());
-      out.index_buffer.unmap();
-    }
-    return out;
-  }
-};
-
-struct Raw_Mesh_Obj_Wrapper {
-  RAW_MOVABLE(Raw_Mesh_Obj_Wrapper)
-  VmaBuffer vertex_buffer;
-  VmaBuffer index_buffer;
-  u32 vertex_count;
-  static Raw_Mesh_Obj_Wrapper create(Device_Wrapper &device,
-                                     Raw_Mesh_Obj const &in) {
-    Raw_Mesh_Obj_Wrapper out{};
-    out.vertex_count = in.indices.size() * 3;
-    out.vertex_buffer = device.alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(sizeof(in.vertices[0]) * in.vertices.size())
-            .setUsage(vk::BufferUsageFlagBits::eVertexBuffer),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-    out.index_buffer = device.alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(sizeof(u32_face) * in.indices.size())
-            .setUsage(vk::BufferUsageFlagBits::eIndexBuffer),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-    {
-      void *data = out.vertex_buffer.map();
-      memcpy(data, &in.vertices[0],
-             sizeof(in.vertices[0]) * in.vertices.size());
-      out.vertex_buffer.unmap();
-    }
-    {
-      void *data = out.index_buffer.map();
-      memcpy(data, &in.indices[0], sizeof(u32_face) * in.indices.size());
-      out.index_buffer.unmap();
-    }
-    return out;
-  }
-};
-
-struct Raw_Mesh_3p16i_Wrapper {
-  RAW_MOVABLE(Raw_Mesh_3p16i_Wrapper)
-  VmaBuffer vertex_buffer;
-  VmaBuffer index_buffer;
-  u32 vertex_count;
-  static Raw_Mesh_3p16i_Wrapper create(Device_Wrapper &device,
-                                       Raw_Mesh_3p16i const &in) {
-    Raw_Mesh_3p16i_Wrapper out{};
-    out.vertex_count = in.indices.size() * 3;
-    out.vertex_buffer = device.alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(sizeof(vec3) * in.positions.size())
-            .setUsage(vk::BufferUsageFlagBits::eVertexBuffer),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-    out.index_buffer = device.alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(sizeof(u16_face) * in.indices.size())
-            .setUsage(vk::BufferUsageFlagBits::eIndexBuffer),
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
-    {
-      void *data = out.vertex_buffer.map();
-      memcpy(data, &in.positions[0], sizeof(vec3) * in.positions.size());
-      out.vertex_buffer.unmap();
-    }
-    {
-      void *data = out.index_buffer.map();
-      memcpy(data, &in.indices[0], sizeof(u16_face) * in.indices.size());
-      out.index_buffer.unmap();
-    }
-    return out;
-  }
-};
 struct Collision {
   vec3 position, normal;
   u32 mesh_id, face_id;
