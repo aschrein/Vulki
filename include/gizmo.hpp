@@ -189,28 +189,50 @@ struct Gizmo_Drag_State {
   }
 };
 
+struct Camera {
+  float phi = 0.0;
+  float theta = M_PI / 2.0f;
+  float distance = 10.0f;
+  float mx = 0.0f, my = 0.0f;
+  vec3 look_at = vec3(0.0f, 0.0f, 0.0f);
+  float aspect = 1.0;
+  float fov = M_PI / 2.0;
+  //
+  vec3 pos;
+  mat4 view;
+  mat4 proj;
+  vec3 look;
+  vec3 right;
+  vec3 up;
+  void update() {
+    /*-------------------*/
+    /* Update the camera */
+    /*-------------------*/
+    pos = vec3(sinf(theta) * cosf(phi), cos(theta), sinf(theta) * sinf(phi)) *
+              distance +
+          look_at;
+    look = normalize(look_at - pos);
+    right = normalize(cross(look, vec3(0.0f, 1.0f, 0.0f)));
+    up = normalize(cross(right, look));
+    proj = glm::perspective(fov, aspect, 1.0e-1f, 1.0e3f);
+    view = glm::lookAt(pos, look_at, vec3(0.0f, 1.0f, 0.0f));
+  }
+  mat4 viewproj() { return proj * view; }
+};
+
 struct Gizmo_Layer {
   RAW_MOVABLE(Gizmo_Layer)
   //////////////////
   // Camera state //
   //////////////////
-  float camera_phi = 0.0;
-  float camera_theta = M_PI / 2.0f;
-  float camera_distance = 10.0f;
-  float mx = 0.0f, my = 0.0f;
-  vec3 camera_look_at = vec3(0.0f, 0.0f, 0.0f);
+  Camera camera;
+  vec3 mouse_ray;
+  float mx, my;
 
   ImVec2 old_mpos{};
   float old_cpa{};
   bool mouse_last_down = false;
 
-  vec3 camera_pos;
-  mat4 camera_view;
-  mat4 camera_proj;
-  vec3 camera_look;
-  vec3 camera_right;
-  vec3 camera_up;
-  vec3 mouse_ray;
   std::function<void(int)> on_click;
   // Viewport for this sample's rendering
   vk::Rect2D example_viewport = vk::Rect2D({0, 0}, {32, 32});
@@ -271,8 +293,8 @@ struct Gizmo_Layer {
     gu.VS_set_shader("gizmo.vert.glsl");
     gu.PS_set_shader("gizmo.frag.glsl");
     Gizmo_Push_Constants tmp_pc{};
-    tmp_pc.proj = camera_proj;
-    tmp_pc.view = camera_view;
+    tmp_pc.proj = camera.proj;
+    tmp_pc.view = camera.view;
     gu.push_constants(&tmp_pc, sizeof(Gizmo_Push_Constants));
     if (cmds.size()) {
       std::vector<Gizmo_Draw_Cmd> cylinders;
@@ -375,28 +397,12 @@ struct Gizmo_Layer {
     } else {
       example_viewport.extent.height = wsize.y - height_diff;
     }
+
     /*-------------------*/
     /* Update the camera */
     /*-------------------*/
-    camera_pos =
-        vec3(sinf(camera_theta) * cosf(camera_phi),
-             sinf(camera_theta) * sinf(camera_phi), cos(camera_theta)) *
-            camera_distance +
-        camera_look_at;
-    camera_look = normalize(camera_look_at - camera_pos);
-    camera_right = normalize(cross(camera_look, vec3(0.0f, 0.0f, 1.0f)));
-    camera_up = normalize(cross(camera_right, camera_look));
-    mouse_ray =
-        normalize(camera_look +
-                  camera_right * mx * float(example_viewport.extent.width) /
-                      example_viewport.extent.height +
-                  camera_up * my);
-    camera_proj = glm::perspective(float(M_PI) / 2.0f,
-                                   float(example_viewport.extent.width) /
-                                       example_viewport.extent.height,
-                                   1.0e-1f, 1.0e3f);
-    camera_view =
-        glm::lookAt(camera_pos, camera_look_at, vec3(0.0f, 0.0f, 1.0f));
+    camera.aspect = float(example_viewport.extent.width)/example_viewport.extent.height;
+    camera.update();
     if (ImGui::GetIO().MouseReleased[0]) {
       gizmo_drag_state.on_mouse_release();
     }
@@ -413,29 +419,33 @@ struct Gizmo_Layer {
       my = -2.0f * (float(mpos.y - example_viewport.offset.y) - 0.5f) /
                (example_viewport.extent.height) +
            1.0f;
-      gizmo_drag_state.on_mouse_move(camera_pos, camera_look, mouse_ray);
+      mouse_ray =
+        normalize(camera.look +
+                  camera.right * mx * camera.aspect +
+                  camera.up * my);
+      gizmo_drag_state.on_mouse_move(camera.pos, camera.look, mouse_ray);
       // Normalize camera motion so that diagonal moves are not bigger
       float camera_speed = 20.0f;
       vec3 camera_diff = vec3(0.0f, 0.0f, 0.0f);
       if (ImGui::GetIO().KeysDown[GLFW_KEY_W]) {
-        camera_diff += camera_look;
+        camera_diff += camera.look;
       }
       if (ImGui::GetIO().KeysDown[GLFW_KEY_S]) {
-        camera_diff -= camera_look;
+        camera_diff -= camera.look;
       }
       if (ImGui::GetIO().KeysDown[GLFW_KEY_A]) {
-        camera_diff -= camera_right;
+        camera_diff -= camera.right;
       }
       if (ImGui::GetIO().KeysDown[GLFW_KEY_D]) {
-        camera_diff += camera_right;
+        camera_diff += camera.right;
       }
       // It's always of length of 0.0 or 1.0 so just check
       if (glm::dot(camera_diff, camera_diff) > 1.0e-3f)
-        camera_look_at += glm::normalize(camera_diff) * camera_speed * dt;
+        camera.look_at += glm::normalize(camera_diff) * camera_speed * dt;
 
       if (ImGui::GetIO().MouseDown[0]) {
         if (!mouse_last_down) {
-          if (!gizmo_drag_state.on_mouse_click(camera_pos, mouse_ray) &&
+          if (!gizmo_drag_state.on_mouse_click(camera.pos, mouse_ray) &&
               on_click) {
             on_click(0);
           }
@@ -445,28 +455,28 @@ struct Gizmo_Layer {
           auto dx = mpos.x - old_mpos.x;
           auto dy = mpos.y - old_mpos.y;
           if (gizmo_drag_state.selected) {
-            gizmo_drag_state.on_mouse_drag(camera_pos, mouse_ray);
+            gizmo_drag_state.on_mouse_drag(camera.pos, mouse_ray);
 
           } else {
-            camera_phi -= dx * 1.0e-2f;
-            camera_theta -= dy * 1.0e-2f;
-            if (camera_phi > M_PI * 2.0f) {
-              camera_phi -= M_PI * 2.0f;
-            } else if (camera_phi < 0.0f) {
-              camera_phi += M_PI * 2.0;
+            camera.phi += dx * 1.0e-2f;
+            camera.theta -= dy * 1.0e-2f;
+            if (camera.phi > M_PI * 2.0f) {
+              camera.phi -= M_PI * 2.0f;
+            } else if (camera.phi < 0.0f) {
+              camera.phi += M_PI * 2.0;
             }
-            if (camera_theta > M_PI - eps) {
-              camera_theta = M_PI - eps;
-            } else if (camera_theta < eps) {
-              camera_theta = eps;
+            if (camera.theta > M_PI - eps) {
+              camera.theta = M_PI - eps;
+            } else if (camera.theta < eps) {
+              camera.theta = eps;
             }
           }
         }
       }
       old_mpos = mpos;
       auto scroll_y = ImGui::GetIO().MouseWheel;
-      camera_distance += camera_distance * 1.e-1 * scroll_y;
-      camera_distance = clamp(camera_distance, eps, 100.0f);
+      camera.distance += camera.distance * 1.e-1 * scroll_y;
+      camera.distance = clamp(camera.distance, eps, 100.0f);
 
       mouse_last_down = ImGui::GetIO().MouseDown[0];
     }

@@ -30,37 +30,6 @@ using namespace glm;
 
 #include "shaders.h"
 
-struct Camera {
-  float phi = 0.0;
-  float theta = M_PI / 2.0f;
-  float distance = 10.0f;
-  float mx = 0.0f, my = 0.0f;
-  vec3 look_at = vec3(0.0f, 0.0f, 0.0f);
-  float aspect = 1.0;
-  float fov = M_PI / 4.0;
-  //
-  vec3 pos;
-  mat4 view;
-  mat4 proj;
-  vec3 look;
-  vec3 right;
-  vec3 up;
-  void update() {
-    /*-------------------*/
-    /* Update the camera */
-    /*-------------------*/
-    pos = vec3(sinf(theta) * cosf(phi), sinf(theta) * sinf(phi), cos(theta)) *
-              distance +
-          look_at;
-    look = normalize(look_at - pos);
-    right = normalize(cross(look, vec3(0.0f, 0.0f, 1.0f)));
-    up = normalize(cross(right, look));
-    proj = glm::perspective(fov, aspect, 1.0e-1f, 1.0e3f);
-    view = glm::lookAt(pos, look_at, vec3(0.0f, 0.0f, 1.0f));
-  }
-  mat4 viewproj() { return proj * view; }
-};
-
 TEST(graphics, vulkan_graphics_test_render_graph) try {
 
   // Gizmo_Layer gizmo_layer{};
@@ -240,9 +209,9 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.VS_set_shader("gltf.vert.glsl");
           gu.PS_set_shader("gltf.frag.glsl");
           sh_gltf_vert::UBO ubo{};
-//          ubo.proj = camera.proj;
-//          ubo.view = camera.view;
-//          ubo.camera_pos = camera.pos;
+          ubo.proj = gizmo_layer.camera.proj;
+          ubo.view = gizmo_layer.camera.view;
+          ubo.camera_pos = gizmo_layer.camera.pos;
           u32 ubo_id = gu.create_buffer(
               render_graph::Buffer{.usage_bits =
                                        vk::BufferUsageFlagBits::eUniformBuffer,
@@ -273,6 +242,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
             gu.draw(model.index_count, 1, 0, 0, 0);
           }
           gu.release_resource(ubo_id);
+          gu.clear_depth(1.0f);
           gizmo_layer.draw(gu);
         });
   });
