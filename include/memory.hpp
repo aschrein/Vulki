@@ -47,6 +47,8 @@ struct VmaImage : public Slot {
   vk::ImageAspectFlags aspect;
   void barrier(vk::CommandBuffer &cmd, u32 queue_family_id,
                vk::ImageLayout new_layout, vk::AccessFlags new_access_flags) {
+    if (layout == new_layout && new_access_flags == access_flags)
+      return;
     cmd.pipelineBarrier(
         vk::PipelineStageFlagBits::eAllCommands,
         vk::PipelineStageFlagBits::eAllCommands,

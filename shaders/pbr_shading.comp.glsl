@@ -15,9 +15,9 @@ void main() {
     vec2 uv = vec2(gl_GlobalInvocationID.xy) / dim;
     if (gl_GlobalInvocationID.x > dim.x || gl_GlobalInvocationID.y > dim.y)
       return;
-    vec4 in_value = texelFetch(g_normal, ivec2(gl_GlobalInvocationID.xy), 0);
+    vec4 in_value = texelFetch(g_albedo, ivec2(gl_GlobalInvocationID.xy), 0);
     in_value.a = 1.0;
-    in_value.xyz = in_value.xyz * 0.5 + vec3(0.5);
+//    in_value.xyz = in_value.xyz * 0.5 + vec3(0.5);
     in_value =  (in_value + texelFetch(history, ivec2(gl_GlobalInvocationID.xy), 0))/2.0;
     imageStore(out_image, ivec2(gl_GlobalInvocationID.xy), in_value);
 }

@@ -107,7 +107,9 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     }
   });
   auto cubemap = load_image("cubemaps/pink_sunrise.hdr");
-  auto test_model = load_gltf_pbr("models/SciFiHelmet.gltf");
+  auto test_model = load_gltf_pbr(
+  //"models/sponza-gltf-pbr/sponza.glb");
+  "models/SciFiHelmet.gltf");
   u32 cubemap_id = 0;
   struct Model {
     u32 index_count;
@@ -151,7 +153,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.release_resource(ubo_id);
         });
     gu.create_compute_pass(
-        "shading", {"g_pass.albedo", "g_pass.normal", "g_pass.metal", "~shading.HDR"},
+        "shading",
+        {"g_pass.albedo", "g_pass.normal", "g_pass.metal", "~shading.HDR"},
         {render_graph::Resource{
             .name = "shading.HDR",
             .type = render_graph::Type::Image,
@@ -193,6 +196,13 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                                          render_graph::Render_Target::Color}},
             render_graph::Resource{
                 .name = "g_pass.metal",
+                .type = render_graph::Type::RT,
+                .rt_info =
+                    render_graph::RT{.format = vk::Format::eR32G32B32A32Sfloat,
+                                     .target =
+                                         render_graph::Render_Target::Color}},
+            render_graph::Resource{
+                .name = "g_pass.vel",
                 .type = render_graph::Type::RT,
                 .rt_info =
                     render_graph::RT{.format = vk::Format::eR32G32B32A32Sfloat,
@@ -249,8 +259,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
               &ubo);
           gu.bind_resource("UBO", ubo_id);
           gu.IA_set_topology(vk::PrimitiveTopology::eTriangleList);
-          gu.IA_set_cull_mode(vk::CullModeFlagBits::eNone,
-                              vk::FrontFace::eCounterClockwise,
+          gu.IA_set_cull_mode(vk::CullModeFlagBits::eBack,
+                              vk::FrontFace::eClockwise,
                               vk::PolygonMode::eFill, 1.0f);
           gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual, true,
                                         1.0f);
@@ -261,10 +271,22 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           for (auto &model : models) {
             sh_gltf_frag::push_constant pc;
             pc.albedo_id = model.material.albedo_id;
-            pc.normal_id = model.material.albedo_id;
-            pc.metalness_roughness_id = model.material.albedo_id;
+            pc.normal_id = model.material.normal_id;
+            pc.metalness_roughness_id = model.material.metalness_roughness_id;
             pc.cubemap_id = cubemap_id;
             gu.push_constants(&pc, sizeof(pc));
+            gu.IA_set_vertex_buffers(
+                {render_graph::Buffer_Info{.buf_id = model.vb, .offset = 0}});
+            gu.IA_set_index_buffer(model.ib, 0, vk::IndexType::eUint32);
+            gu.draw(model.index_count, 1, 0, 0, 0);
+          }
+          gu.PS_set_shader("red.frag.glsl");
+          gu.IA_set_cull_mode(vk::CullModeFlagBits::eBack,
+                              vk::FrontFace::eClockwise,
+                              vk::PolygonMode::eLine, 3.0f);
+          gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual, false,
+                                        1.0f, -0.1f);
+          for (auto &model : models) {
             gu.IA_set_vertex_buffers(
                 {render_graph::Buffer_Info{.buf_id = model.vb, .offset = 0}});
             gu.IA_set_index_buffer(model.ib, 0, vk::IndexType::eUint32);

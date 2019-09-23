@@ -304,7 +304,7 @@ PBR_Model load_gltf_pbr(std::string const &filename) {
         }
       }
       ASSERT_PANIC(opaque_mesh.attributes.size() ==
-                   offset_counter * vertex_count);
+                   sizeof(GLRF_Vertex_t) * vertex_count);
       PBR_Material material{.normal_id = -1,
                             .albedo_id = -1,
                             .ao_id = -1,

@@ -360,6 +360,10 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
   ASSERT_PANIC(pd_index_features.shaderSampledImageArrayNonUniformIndexing);
   ASSERT_PANIC(pd_index_features.descriptorBindingPartiallyBound);
   ASSERT_PANIC(pd_index_features.runtimeDescriptorArray);
+  vk::PhysicalDeviceFeatures pd_features;
+  out.physical_device.getFeatures(&pd_features);
+  // Line drawing
+  ASSERT_PANIC(pd_features.fillModeNonSolid);
 
   out.device = out.physical_device.createDeviceUnique(
       vk::DeviceCreateInfo(vk::DeviceCreateFlags(), 1, deviceQueueCreateInfo)
@@ -367,7 +371,9 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
           .setPpEnabledLayerNames(&instanceLayerNames[0])
           .setEnabledLayerCount(instanceLayerNames.size())
           .setPpEnabledExtensionNames(&deviceExtensions[0])
-          .setEnabledExtensionCount(deviceExtensions.size()));
+          .setEnabledExtensionCount(deviceExtensions.size())
+          .setPEnabledFeatures(&pd_features)
+          );
   ASSERT_PANIC(out.device);
 
   out.graphcis_cmd_pool =

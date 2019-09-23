@@ -46,6 +46,7 @@ struct Graphics_Pipeline_State {
   bool enable_depth_write;
   float max_depth;
   vk::PrimitiveTopology topology;
+  float depth_bias_const;
   u32 ps, vs;
   u32 pass;
   u64 dummy;
@@ -176,6 +177,8 @@ struct Descriptor_Frame {
   vk::UniqueDescriptorPool descset_pool;
   // Shader id -> Set group id
   google::dense_hash_map<u32, u32> descset_table;
+  // Used to track update-after-bound error
+  google::dense_hash_set<u64> dirty_set;
   // @TODO: Merge similar groups for different shaders
   std::vector<std::vector<vk::UniqueDescriptorSet>> descset_groups;
   google::dense_hash_map<std::string, vk::DescriptorSet> imgui_table;
@@ -222,6 +225,7 @@ struct Descriptor_Frame {
       descset_groups.clear();
       descset_table.clear();
       device_wrapper->device->resetDescriptorPool(descset_pool.get());
+      dirty_set.clear();
       invalidate = false;
     }
     u32 pipe_id = pwrap.id;
@@ -239,10 +243,13 @@ struct Descriptor_Frame {
   }
   Descriptor_Frame() {
     descset_table.set_empty_key(0u);
+    dirty_set.set_empty_key(0u);
     imgui_table.set_empty_key("null");
     descset_table.set_deleted_key(u32(-1));
+    dirty_set.set_deleted_key(u32(-1));
     imgui_table.set_deleted_key("deleted");
   }
+  void end_frame() { dirty_set.clear(); }
   void allocate_descset(Pipeline_Wrapper &pwrap) {
     u32 pipe_id = pwrap.id;
     std::vector<vk::UniqueDescriptorSet> desc_sets;
@@ -261,6 +268,9 @@ struct Descriptor_Frame {
     if (pwrap.collect_sets().size() == 0)
       return;
     auto raw_descsets = get_or_create_descsets(pwrap);
+    for (auto set : raw_descsets) {
+      dirty_set.insert((u64)(VkDescriptorSet)set);
+    }
     if (raw_descsets.size())
       cmd.bindDescriptorSets(pwrap.bind_point, pwrap.pipeline_layout.get(), 0,
                              raw_descsets, {});
@@ -276,6 +286,10 @@ struct Descriptor_Frame {
         slot.layout.descriptorType == vk::DescriptorType::eStorageBuffer ||
         slot.layout.descriptorType == vk::DescriptorType::eUniformBuffer);
     auto raw_descsets = get_or_create_descsets(pwrap);
+    for (auto set : raw_descsets) {
+      ASSERT_PANIC(dirty_set.find((u64)(VkDescriptorSet)set) ==
+                   dirty_set.end());
+    }
     device_wrapper->device->updateDescriptorSets(
         {vk::WriteDescriptorSet()
              .setDstSet(raw_descsets[slot.set])
@@ -298,6 +312,10 @@ struct Descriptor_Frame {
     ASSERT_PANIC(slot.layout.descriptorType ==
                  vk::DescriptorType::eStorageImage);
     auto raw_descsets = get_or_create_descsets(pwrap);
+    for (auto set : raw_descsets) {
+      ASSERT_PANIC(dirty_set.find((u64)(VkDescriptorSet)set) ==
+                   dirty_set.end());
+    }
     device_wrapper->device->updateDescriptorSets(
         {vk::WriteDescriptorSet()
              .setDstSet(raw_descsets[slot.set])
@@ -320,6 +338,10 @@ struct Descriptor_Frame {
     ASSERT_PANIC(slot.layout.descriptorType ==
                  vk::DescriptorType::eCombinedImageSampler);
     auto raw_descsets = get_or_create_descsets(pwrap);
+    for (auto set : raw_descsets) {
+      ASSERT_PANIC(dirty_set.find((u64)(VkDescriptorSet)set) ==
+                   dirty_set.end());
+    }
     device_wrapper->device->updateDescriptorSets(
         {vk::WriteDescriptorSet()
              .setDstSet(raw_descsets[slot.set])
@@ -504,7 +526,12 @@ struct Graphics_Utils_State {
   vk::Format index_format;
   u8 push_const[128];
   u32 push_const_size;
+
+  u32 bound_pass;
+  u32 bound_pipe;
+  //////////////////////////////
   void reset_frame() {
+    get_cur_descframe().end_frame();
     resources.tick();
     pipes.tick();
     rts.tick();
@@ -525,6 +552,8 @@ struct Graphics_Utils_State {
     deferred_calls = new_deferred_list;
   }
   void reset_pass() {
+    bound_pass = 0;
+    bound_pipe = 0;
     push_const_size = 0;
     index_offset = 0;
     index_buffer = 0;
@@ -596,13 +625,19 @@ struct Graphics_Utils_State {
                        .setDepthTestEnable(cur_gfx_state.enable_depth_test)
                        .setDepthCompareOp(cur_gfx_state.cmp_op)
                        .setDepthWriteEnable(cur_gfx_state.enable_depth_write)
-                       .setMaxDepthBounds(cur_gfx_state.max_depth))
+                       .setMaxDepthBounds(cur_gfx_state.max_depth)
+
+                      )
               .setPRasterizationState(
                   &vk::PipelineRasterizationStateCreateInfo()
                        .setCullMode(cur_gfx_state.cull_mode)
                        .setFrontFace(cur_gfx_state.front_face)
                        .setPolygonMode(cur_gfx_state.polygon_mode)
-                       .setLineWidth(cur_gfx_state.line_width))
+                       .setLineWidth(cur_gfx_state.line_width)
+                       .setDepthBiasEnable(cur_gfx_state.depth_bias_const !=
+                                           0.0f)
+                       .setDepthBiasConstantFactor(
+                           cur_gfx_state.depth_bias_const))
               .setRenderPass(pass.pass.get()),
           bindings, descs, {}));
       gfx_pipelines.insert({cur_gfx_state, pipe_id});
@@ -1144,11 +1179,12 @@ struct Graphics_Utils_State {
     cur_cs = _set_or_create_shader(filename);
   }
   void RS_set_depth_stencil_state(bool enable_depth_test, vk::CompareOp cmp_op,
-                                  bool enable_depth_write, float max_depth) {
+                                  bool enable_depth_write, float max_depth, float depth_bias) {
     cur_gfx_state.enable_depth_test = enable_depth_test;
     cur_gfx_state.cmp_op = cmp_op;
     cur_gfx_state.enable_depth_write = enable_depth_write;
     cur_gfx_state.max_depth = max_depth;
+    cur_gfx_state.depth_bias_const = depth_bias;
   }
 
   void bind_resource(std::string const &name, u32 id, u32 index) {
@@ -1300,6 +1336,14 @@ struct Graphics_Utils_State {
     auto &pass = passes[cur_gfx_state.pass];
     auto &pipeline =
         draw ? get_current_gfx_pipeline() : get_current_compute_pipeline();
+    if (push_const_size) {
+      cmd.pushConstants(pipeline.pipeline_layout.get(),
+                        vk::ShaderStageFlagBits::eAll, 0, push_const_size,
+                        push_const);
+      push_const_size = 0;
+    }
+    if (bound_pipe == pipeline.id)
+      return;
     auto &dframe = get_cur_descframe();
     // @Cleanup
     _end_pass(cmd, pass);
@@ -1351,13 +1395,9 @@ struct Graphics_Utils_State {
     }
 
     dframe.bind_pipeline(cmd, pipeline);
-    if (push_const_size) {
-      cmd.pushConstants(pipeline.pipeline_layout.get(),
-                        vk::ShaderStageFlagBits::eAll, 0, push_const_size,
-                        push_const);
-    }
+    bound_pipe = pipeline.id;
     // @Cleanup
-    _begin_pass(cmd, pass);
+    _begin_pass(cmd, pass, true);
   }
   void dispatch(u32 dim_x, u32 dim_y, u32 dim_z) {
     _setup_bindings(false);
@@ -1368,7 +1408,12 @@ struct Graphics_Utils_State {
   void set_on_gui(std::function<void()> fn) {
     device_wrapper.on_gui = [=]() { fn(); };
   }
-  void _begin_pass(vk::CommandBuffer &cmd, Pass_Details &pass) {
+  void _begin_pass(vk::CommandBuffer &cmd, Pass_Details &pass,
+                   bool force = false) {
+    if (!bound_pass && !force)
+      return;
+    if (bound_pass == pass.id)
+      return;
     ASSERT_PANIC(pass.alive);
     if (pass.type != Pass_Type::Graphics)
       return;
@@ -1411,11 +1456,16 @@ struct Graphics_Utils_State {
                     {vk::Viewport(0, 0, pass.width, pass.height, 0.0f, 1.0f)});
 
     cmd.setScissor(0, {{{0, 0}, {pass.width, pass.height}}});
+    bound_pass = pass.id;
   }
-  void _end_pass(vk::CommandBuffer &cmd, Pass_Details &pass) {
+  void _end_pass(vk::CommandBuffer &cmd, Pass_Details &pass,
+                 bool force = false) {
+    if (!bound_pass && !force)
+      return;
     if (pass.type != Pass_Type::Graphics)
       return;
     cmd.endRenderPass();
+    bound_pass = 0;
   }
 
   void run_loop(std::function<void()> fn) {
@@ -1516,7 +1566,7 @@ struct Graphics_Utils_State {
   }
   void _copy_to_history(u32 res_id) {
     // Outside of renderpass
-    ASSERT_PANIC(cur_gfx_state.pass == 0);
+    ASSERT_PANIC(bound_pass == 0);
     auto &res = resources[res_id];
     if (res.type == Resource_Type::RT) {
       u32 image_id = res.ref;
@@ -1670,10 +1720,10 @@ void Graphics_Utils::CS_set_shader(std::string const &filename) {
 void Graphics_Utils::RS_set_depth_stencil_state(bool enable_depth_test,
                                                 vk::CompareOp cmp_op,
                                                 bool enable_depth_write,
-                                                float max_depth) {
+                                                float max_depth, float depth_bias) {
   return ((Graphics_Utils_State *)this->pImpl)
       ->RS_set_depth_stencil_state(enable_depth_test, cmp_op,
-                                   enable_depth_write, max_depth);
+                                   enable_depth_write, max_depth, depth_bias);
 }
 
 void Graphics_Utils::bind_resource(std::string const &name, u32 id, u32 index) {
