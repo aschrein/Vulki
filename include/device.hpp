@@ -108,6 +108,12 @@ struct Device_Wrapper {
 
     return cmd;
   }
+  void name_pass(vk::RenderPass &pass, const char *name);
+  void name_pipe(vk::Pipeline &pipe, const char *name);
+  void name_image(vk::Image &img, const char *name);
+  // Inserts at the current command buffer by default
+  void marker_begin(const char *name);
+  void marker_end();
 
   vk::CommandBuffer &cur_cmd() { return graphics_cmds[frame_id].get(); }
   void submit_cur_cmd() {

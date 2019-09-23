@@ -640,6 +640,10 @@ struct Graphics_Utils_State {
                            cur_gfx_state.depth_bias_const))
               .setRenderPass(pass.pass.get()),
           bindings, descs, {}));
+      // #Debug
+      auto &pipe = pipes[pipe_id];
+      auto pipe_name = vs_filename + "#" + ps_filename;
+      device_wrapper.name_pipe(pipe.pipeline.get(), pipe_name.c_str());
       gfx_pipelines.insert({cur_gfx_state, pipe_id});
     }
     return pipes[gfx_pipelines[cur_gfx_state]];
@@ -651,6 +655,9 @@ struct Graphics_Utils_State {
 
       u32 pipe_id = pipes.push(Pipeline_Wrapper::create_compute(
           device_wrapper, "shaders/" + cs_filename, {}));
+      // #Debug
+      auto &pipe = pipes[pipe_id];
+      device_wrapper.name_pipe(pipe.pipeline.get(), cs_filename.c_str());
       cs_pipelines.insert({cur_cs, pipe_id});
     }
     return pipes[cs_pipelines[cur_cs]];
@@ -940,7 +947,11 @@ struct Graphics_Utils_State {
         // Insert factory reference
         resource_factory_table.insert({res_id, pass_id});
         pass_details.output.push_back(output[i].name);
-
+        {
+          // #Debug
+          auto &img = images[image_id];
+          device_wrapper.name_image(img.image, output[i].name.c_str());
+        }
         VkAttachmentDescription attachment = {};
         if (rt_info.target == Render_Target::Color) {
           attachment.format = VkFormat(rt_info.format);
@@ -1458,6 +1469,7 @@ struct Graphics_Utils_State {
         }
       }
     }
+
     cmd.beginRenderPass(vk::RenderPassBeginInfo()
                             .setFramebuffer(pass.fb.get())
                             .setRenderPass(pass.pass.get())
@@ -1555,9 +1567,13 @@ struct Graphics_Utils_State {
           auto &pass = passes[begin];
           reset_pass();
           cur_gfx_state.pass = begin;
+          // #Debug
+          device_wrapper.marker_begin(pass.name.c_str());
           _begin_pass(cmd, pass);
           pass.on_exec();
           _end_pass(cmd, pass);
+          // #Debug
+          device_wrapper.marker_end();
           // Notify all dependent passes that this pass has finished
           if (inv_dep_graph.find(begin) != inv_dep_graph.end()) {
             for (auto &id : inv_dep_graph[begin]) {
@@ -1573,10 +1589,14 @@ struct Graphics_Utils_State {
         }
       }
       reset_pass();
+      // #Debug
+      device_wrapper.marker_begin("copy_to_history");
       // Copy to history
       for (u32 res_id : history_needed) {
         _copy_to_history(res_id);
       }
+      // #Debug
+      device_wrapper.marker_end();
     };
     device_wrapper.window_loop();
   }

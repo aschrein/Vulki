@@ -197,6 +197,8 @@ struct Camera {
   vec3 look_at = vec3(0.0f, 0.0f, 0.0f);
   float aspect = 1.0;
   float fov = M_PI / 2.0;
+  float znear = 1.0e-1f;
+  float zfar = 1.0e5f;
   //
   vec3 pos;
   mat4 view;
@@ -214,7 +216,7 @@ struct Camera {
     look = normalize(look_at - pos);
     right = normalize(cross(look, vec3(0.0f, 1.0f, 0.0f)));
     up = normalize(cross(right, look));
-    proj = glm::perspective(fov, aspect, 1.0e-1f, 1.0e5f);
+    proj = glm::perspective(fov, aspect, znear, zfar);
     view = glm::lookAt(pos, look_at, vec3(0.0f, 1.0f, 0.0f));
   }
   mat4 viewproj() { return proj * view; }

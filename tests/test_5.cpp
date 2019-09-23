@@ -171,7 +171,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
         });
     gu.create_compute_pass(
         "shading",
-        {"g_pass.albedo", "g_pass.normal", "g_pass.metal", "~shading.HDR"},
+        {"g_pass.albedo", "g_pass.normal", "g_pass.metal", "depth_linear",
+         "~shading.HDR"},
         {render_graph::Resource{
             .name = "shading.HDR",
             .type = render_graph::Type::Image,
@@ -190,6 +191,28 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.bind_resource("g_metal", "g_pass.metal");
           gu.bind_resource("history", "~shading.HDR");
           gu.CS_set_shader("pbr_shading.comp.glsl");
+          gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
+        });
+    gu.create_compute_pass(
+        "depth_linearize", {"g_pass.depth"},
+        {render_graph::Resource{
+            .name = "depth_linear",
+            .type = render_graph::Type::Image,
+            .image_info = render_graph::Image{.format = vk::Format::eR32Sfloat,
+                                              .use = render_graph::Use::UAV,
+                                              .width = u32(wsize.x),
+                                              .height = u32(wsize.y),
+                                              .depth = 1,
+                                              .levels = 1,
+                                              .layers = 1}}},
+        [&] {
+          sh_linearize_depth_comp::push_constants pc{};
+          pc.zfar = gizmo_layer.camera.zfar;
+          pc.znear = gizmo_layer.camera.znear;
+          gu.push_constants(&pc, sizeof(pc));
+          gu.bind_resource("out_image", "depth_linear");
+          gu.bind_resource("in_depth", "g_pass.depth");
+          gu.CS_set_shader("linearize_depth.comp.glsl");
           gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
         });
     gu.create_render_pass(

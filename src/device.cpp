@@ -234,6 +234,56 @@ void Device_Wrapper::update_swap_chain() {
         VK_LAYER_LUNARG_object_tracker
 */
 
+PFN_vkCmdDebugMarkerBeginEXT pfnCmdDebugMarkerBeginEXT;
+PFN_vkCmdDebugMarkerEndEXT pfnCmdDebugMarkerEndEXT;
+PFN_vkCmdDebugMarkerInsertEXT pfnCmdDebugMarkerInsertEXT;
+PFN_vkDebugMarkerSetObjectNameEXT pfnDebugMarkerSetObjectNameEXT;
+
+void Device_Wrapper::name_image(vk::Image &img, const char *name) {
+  const VkDebugMarkerObjectNameInfoEXT name_info = {
+      VK_STRUCTURE_TYPE_DEBUG_MARKER_OBJECT_NAME_INFO_EXT, // sType
+      NULL,                                                // pNext
+      VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT,               // objectType
+      (uint64_t)(VkImage)img,                              // object
+      name,                                                // pObjectName
+  };
+  pfnDebugMarkerSetObjectNameEXT(device.get(), &name_info);
+}
+void Device_Wrapper::name_pass(vk::RenderPass &pass, const char *name) {
+  const VkDebugMarkerObjectNameInfoEXT name_info = {
+      VK_STRUCTURE_TYPE_DEBUG_MARKER_OBJECT_NAME_INFO_EXT, // sType
+      NULL,                                                // pNext
+      VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT,         // objectType
+      (uint64_t)(VkRenderPass)pass,                        // object
+      name,                                                // pObjectName
+  };
+  pfnDebugMarkerSetObjectNameEXT(device.get(), &name_info);
+}
+void Device_Wrapper::name_pipe(vk::Pipeline &pipe, const char *name) {
+  const VkDebugMarkerObjectNameInfoEXT name_info = {
+      VK_STRUCTURE_TYPE_DEBUG_MARKER_OBJECT_NAME_INFO_EXT, // sType
+      NULL,                                                // pNext
+      VK_DEBUG_REPORT_OBJECT_TYPE_PIPELINE_EXT,            // objectType
+      (uint64_t)(VkPipeline)pipe,                          // object
+      name,                                                // pObjectName
+  };
+  pfnDebugMarkerSetObjectNameEXT(device.get(), &name_info);
+}
+void Device_Wrapper::marker_begin(const char *name) {
+  const VkDebugMarkerMarkerInfoEXT houseMarker = {
+      VK_STRUCTURE_TYPE_DEBUG_MARKER_MARKER_INFO_EXT, // sType
+      NULL,                                           // pNext
+      name,                                           // pMarkerName
+      {1.0f, 0.0f, 0.0f, 1.0f},                       // color
+  };
+  auto &cmd = cur_cmd();
+  pfnCmdDebugMarkerBeginEXT(cmd, &houseMarker);
+}
+void Device_Wrapper::marker_end() {
+  auto &cmd = cur_cmd();
+  pfnCmdDebugMarkerEndEXT(cmd);
+}
+
 extern "C" Device_Wrapper init_device(bool init_glfw) {
   print_supported_extensions();
   Device_Wrapper out{};
@@ -276,7 +326,7 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
     }
   }
 
-  // instanceExtensionNames.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
+  instanceExtensionNames.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
 
   vk::InstanceCreateInfo instanceCreateInfo(
       vk::InstanceCreateFlags(), &applicationInfo,
@@ -341,6 +391,7 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
   std::vector<const char *> deviceExtensions;
   // @TODO: Check for availability
   deviceExtensions.emplace_back("VK_EXT_descriptor_indexing");
+  deviceExtensions.emplace_back("VK_EXT_debug_marker");
   if (init_glfw) {
     deviceExtensions.emplace_back(
         (const char *)VK_KHR_SWAPCHAIN_EXTENSION_NAME);
@@ -372,10 +423,21 @@ extern "C" Device_Wrapper init_device(bool init_glfw) {
           .setEnabledLayerCount(instanceLayerNames.size())
           .setPpEnabledExtensionNames(&deviceExtensions[0])
           .setEnabledExtensionCount(deviceExtensions.size())
-          .setPEnabledFeatures(&pd_features)
-          );
+          .setPEnabledFeatures(&pd_features));
   ASSERT_PANIC(out.device);
 
+  pfnCmdDebugMarkerBeginEXT =
+      (PFN_vkCmdDebugMarkerBeginEXT)out.device->getProcAddr(
+          "vkCmdDebugMarkerBeginEXT");
+
+  pfnCmdDebugMarkerEndEXT = (PFN_vkCmdDebugMarkerEndEXT)out.device->getProcAddr(
+      "vkCmdDebugMarkerEndEXT");
+  pfnCmdDebugMarkerInsertEXT =
+      (PFN_vkCmdDebugMarkerInsertEXT)out.device->getProcAddr(
+          "vkCmdDebugMarkerInsertEXT");
+  pfnDebugMarkerSetObjectNameEXT =
+      (PFN_vkDebugMarkerSetObjectNameEXT)out.device->getProcAddr(
+          "vkDebugMarkerSetObjectNameEXT");
   out.graphcis_cmd_pool =
       out.device->createCommandPoolUnique(vk::CommandPoolCreateInfo(
           vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
@@ -483,7 +545,7 @@ void Device_Wrapper::window_loop() {
       this->on_gui();
 
     ImGui::Render();
-
+    marker_begin("imgui");
     auto clear_value =
         vk::ClearValue(vk::ClearColorValue().setFloat32({0.0, 0.0, 0.0, 1.0}));
     cmd.beginRenderPass(
@@ -502,6 +564,7 @@ void Device_Wrapper::window_loop() {
 
     //    if (this->on_tick)
     //      this->on_tick(cmd);
+
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
 
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
@@ -509,6 +572,7 @@ void Device_Wrapper::window_loop() {
       ImGui::RenderPlatformWindowsDefault();
     }
     cmd.endRenderPass();
+    marker_end();
     this->submit_cur_cmd();
     // @TODO: Remove exceptions
     try {

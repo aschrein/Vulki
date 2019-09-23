@@ -56,7 +56,6 @@ add_custom_command(OUTPUT kernel.o
 
 set(LIBS assimp marl OpenMP::OpenMP_CXX meshoptimizer tinyobjloader glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util pthread boost_system boost_filesystem boost_thread)
 
-
 add_executable(shader_parser shader_parser.cpp)
 target_include_directories(shader_parser PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui)
 target_link_libraries(shader_parser ${Vulkan_LIBRARY} ${LIBS})
