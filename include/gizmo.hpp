@@ -292,6 +292,11 @@ struct Gizmo_Layer {
     gizmo_drag_state.push_draw(cmds);
     gu.VS_set_shader("gizmo.vert.glsl");
     gu.PS_set_shader("gizmo.frag.glsl");
+    gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual, true,
+                                  1.0f);
+    gu.IA_set_topology(vk::PrimitiveTopology::eTriangleList);
+    gu.IA_set_cull_mode(vk::CullModeFlagBits::eNone, vk::FrontFace::eClockwise,
+                        vk::PolygonMode::eLine, 1.0f);
     Gizmo_Push_Constants tmp_pc{};
     tmp_pc.proj = camera.proj;
     tmp_pc.view = camera.view;

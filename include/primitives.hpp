@@ -3,6 +3,7 @@
 #include "error_handling.hpp"
 #include "tinyobjloader/tiny_obj_loader.h"
 #include <glm/glm.hpp>
+#include <glm/ext.hpp>
 #include <map>
 #include <vector>
 
@@ -289,9 +290,14 @@ struct PBR_Material {
 };
 
 struct Transform_Node {
-  mat4 transform;
+  vec3 offset;
+  quat rotation;
   std::vector<u32> meshes;
   std::vector<u32> children;
+  mat4 get_transform() {
+    return glm::translate(mat4(1.0f), offset)
+    * (mat4)rotation;
+  }
 };
 
 // To make things simple we use one format of meshes

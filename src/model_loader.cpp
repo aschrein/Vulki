@@ -165,10 +165,32 @@ PBR_Model load_obj_pbr(char const *filename) {
 
 void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
                    std::string const &dir, u32 parent_id = 0) {
-  Transform_Node tnode;
+  Transform_Node tnode{};
+  mat4 transform;
   ito(4) {
-    jto(4) { tnode.transform[i][j] = node->mTransformation[j][i]; }
+    jto(4) { transform[i][j] = node->mTransformation[j][i]; }
   }
+
+  vec3 offset;
+  vec3 scale;
+
+  ito(3) {
+    scale[i] =
+        glm::length(vec3(transform[0][i], transform[1][i], transform[2][i]));
+  }
+
+  offset = vec3(transform[3][0], transform[3][1], transform[3][2]);
+
+  mat3 rot_mat;
+
+  ito(3) {
+    jto(3) { rot_mat[i][j] = transform[i][j] / scale[i]; }
+  }
+  quat rotation(rot_mat);
+
+    tnode.offset = offset;
+    tnode.rotation = rotation;
+
   for (unsigned int i = 0; i < node->mNumMeshes; i++) {
     aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
     Raw_Mesh_Opaque opaque_mesh{};
@@ -273,18 +295,24 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
 PBR_Model load_gltf_pbr(std::string const &filename) {
   Assimp::Importer importer;
   PBR_Model out;
-  out.nodes.push_back(Transform_Node{.transform = mat4(1.0f)});
+  out.nodes.push_back(Transform_Node{});
   std::filesystem::path p(filename);
   std::filesystem::path dir = p.parent_path();
   const aiScene *scene = importer.ReadFile(
       filename.c_str(), aiProcess_Triangulate | aiProcess_OptimizeMeshes |
                             aiProcess_CalcTangentSpace | aiProcess_FlipUVs);
+  if (!scene) {
+    std::cerr << "[FILE] Errors: " << importer.GetErrorString() << "\n";
+    ASSERT_PANIC(false);
+  }
   traverse_node(out, scene->mRootNode, scene, dir.string());
   return out;
 }
 
 using namespace tinygltf;
 PBR_Model tinygltf_load_gltf_pbr(std::string const &filename) {
+  // @TODO: Handle new vertex attributes and transform nodes
+  ASSERT_PANIC(false);
   Model model;
   TinyGLTF loader;
   std::string err;

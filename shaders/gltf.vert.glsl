@@ -29,9 +29,9 @@ layout(push_constant) uniform PC {
 void main() {
   vec4 wpos = uniforms.view * push_constants.transform * vec4(POSITION, 1.0);
   out_position = POSITION;
-  out_normal = (push_constants.transform * vec4(NORMAL, 1.0)).xyz;
-  out_tangent = (push_constants.transform * vec4(TANGENT, 1.0)).xyz;
-  out_binormal = (push_constants.transform * vec4(BINORMAL, 1.0)).xyz;
+  out_normal = (push_constants.transform * vec4(NORMAL, 0.0)).xyz;
+  out_tangent = (push_constants.transform * vec4(TANGENT, 0.0)).xyz;
+  out_binormal = (push_constants.transform * vec4(BINORMAL, 0.0)).xyz;
   out_texcoord = TEXCOORD_0;
   gl_Position = uniforms.proj * wpos;
 }

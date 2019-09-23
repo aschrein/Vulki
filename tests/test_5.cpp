@@ -108,14 +108,34 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   });
   auto cubemap = load_image("cubemaps/pink_sunrise.hdr");
   auto test_model = load_gltf_pbr(
-      //"models/sponza-gltf-pbr/sponza.glb");
-      //      "models/SciFiHelmet.gltf");
+      //      "models/sponza-gltf-pbr/sponza.glb");
+      //       "models/Sponza/Sponza.gltf");
+      //            "models/SciFiHelmet.gltf");
       "models/scene.gltf");
   u32 cubemap_id = 0;
   std::vector<Raw_Mesh_Opaque_Wrapper> models;
   std::vector<PBR_Material> materials;
   std::vector<u32> textures;
-
+  std::function<void(u32, mat4)> traverse_node = [&](u32 node_id,
+                                                     mat4 transform) {
+    auto &node = test_model.nodes[node_id];
+    transform = node.get_transform() * transform;
+    for (auto i : node.meshes) {
+      auto &model = models[i];
+      auto &material = materials[i];
+      sh_gltf_vert::push_constants pc;
+      pc.transform = transform;
+      pc.albedo_id = material.albedo_id;
+      pc.normal_id = material.normal_id;
+      pc.ao_id = material.ao_id;
+      pc.metalness_roughness_id = material.metalness_roughness_id;
+      gu.push_constants(&pc, sizeof(pc));
+      model.draw(gu);
+    }
+    for (auto child_id : node.children) {
+      traverse_node(child_id, transform);
+    }
+  };
   gu.run_loop([&] {
     gu.create_compute_pass(
         "postprocess", {"shading.HDR", "gizmo_layer.color"},
@@ -206,30 +226,26 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           }
           gu.clear_color({0.0f, 0.0f, 0.0f, 0.0f});
           gu.clear_depth(1.0f);
-          //          gu.VS_set_shader("gltf.vert.glsl");
-          //          gu.PS_set_shader("red.frag.glsl");
-          //          sh_gltf_vert::UBO ubo{};
-          //          ubo.proj = gizmo_layer.camera.proj;
-          //          ubo.view = gizmo_layer.camera.view;
-          //          ubo.camera_pos = gizmo_layer.camera.pos;
-          //          u32 ubo_id = gu.create_buffer(
-          //              render_graph::Buffer{.usage_bits =
-          //                                       vk::BufferUsageFlagBits::eUniformBuffer,
-          //                                   .size =
-          //                                   sizeof(sh_gltf_vert::UBO)},
-          //              &ubo);
-          //          gu.bind_resource("UBO", ubo_id);
-          //          gu.IA_set_topology(vk::PrimitiveTopology::eTriangleList);
-          //          gu.IA_set_cull_mode(vk::CullModeFlagBits::eBack,
-          //                              vk::FrontFace::eClockwise,
-          //                              vk::PolygonMode::eLine, 1.0f);
-          //          gu.RS_set_depth_stencil_state(true,
-          //          vk::CompareOp::eLessOrEqual,
-          //                                        false, 1.0f, -0.1f);
-          //          for (auto &model : models) {
-          //            model.draw(gu);
-          //          }
-          //          gu.release_resource(ubo_id);
+          gu.VS_set_shader("gltf.vert.glsl");
+          gu.PS_set_shader("red.frag.glsl");
+          sh_gltf_vert::UBO ubo{};
+          ubo.proj = gizmo_layer.camera.proj;
+          ubo.view = gizmo_layer.camera.view;
+          ubo.camera_pos = gizmo_layer.camera.pos;
+          u32 ubo_id = gu.create_buffer(
+              render_graph::Buffer{.usage_bits =
+                                       vk::BufferUsageFlagBits::eUniformBuffer,
+                                   .size = sizeof(sh_gltf_vert::UBO)},
+              &ubo);
+          gu.bind_resource("UBO", ubo_id);
+          gu.IA_set_topology(vk::PrimitiveTopology::eTriangleList);
+          gu.IA_set_cull_mode(vk::CullModeFlagBits::eBack,
+                              vk::FrontFace::eClockwise, vk::PolygonMode::eLine,
+                              1.0f);
+          gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual,
+                                        false, 1.0f, -0.1f);
+          traverse_node(0, test_model.nodes[0].get_transform());
+          gu.release_resource(ubo_id);
           gizmo_layer.draw(gu);
         });
     gu.create_render_pass(
@@ -310,27 +326,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
             auto &tex = textures[i];
             gu.bind_resource("textures", tex, i);
           }
-          std::function<void(u32, mat4)> traverse_node = [&](u32 node_id,
-                                                             mat4 transform) {
-            auto &node = test_model.nodes[node_id];
-            transform = node.transform * transform;
-            for (auto i : node.meshes) {
-              auto &model = models[i];
-              auto &material = materials[i];
-              sh_gltf_vert::push_constants pc;
-              pc.transform = transform;
-              pc.albedo_id = material.albedo_id;
-              pc.normal_id = material.normal_id;
-              pc.ao_id = material.ao_id;
-              pc.metalness_roughness_id = material.metalness_roughness_id;
-              gu.push_constants(&pc, sizeof(pc));
-              model.draw(gu);
-            }
-            for (auto child_id : node.children) {
-              traverse_node(child_id, transform);
-            }
-          };
-          traverse_node(0, test_model.nodes[0].transform);
+
+          traverse_node(0, test_model.nodes[0].get_transform());
           //          u32 i = 0;
           //          for (auto &model : models) {
           //            auto &material = materials[i];
