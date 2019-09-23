@@ -214,7 +214,7 @@ struct Camera {
     look = normalize(look_at - pos);
     right = normalize(cross(look, vec3(0.0f, 1.0f, 0.0f)));
     up = normalize(cross(right, look));
-    proj = glm::perspective(fov, aspect, 1.0e-1f, 1.0e3f);
+    proj = glm::perspective(fov, aspect, 1.0e-1f, 1.0e5f);
     view = glm::lookAt(pos, look_at, vec3(0.0f, 1.0f, 0.0f));
   }
   mat4 viewproj() { return proj * view; }
@@ -401,7 +401,8 @@ struct Gizmo_Layer {
     /*-------------------*/
     /* Update the camera */
     /*-------------------*/
-    camera.aspect = float(example_viewport.extent.width)/example_viewport.extent.height;
+    camera.aspect =
+        float(example_viewport.extent.width) / example_viewport.extent.height;
     camera.update();
     if (ImGui::GetIO().MouseReleased[0]) {
       gizmo_drag_state.on_mouse_release();
@@ -419,13 +420,14 @@ struct Gizmo_Layer {
       my = -2.0f * (float(mpos.y - example_viewport.offset.y) - 0.5f) /
                (example_viewport.extent.height) +
            1.0f;
-      mouse_ray =
-        normalize(camera.look +
-                  camera.right * mx * camera.aspect +
-                  camera.up * my);
+      mouse_ray = normalize(camera.look + camera.right * mx * camera.aspect +
+                            camera.up * my);
       gizmo_drag_state.on_mouse_move(camera.pos, camera.look, mouse_ray);
       // Normalize camera motion so that diagonal moves are not bigger
       float camera_speed = 20.0f;
+      if (ImGui::GetIO().KeysDown[GLFW_KEY_LEFT_SHIFT]) {
+        camera_speed = 40.0f;
+      }
       vec3 camera_diff = vec3(0.0f, 0.0f, 0.0f);
       if (ImGui::GetIO().KeysDown[GLFW_KEY_W]) {
         camera_diff += camera.look;

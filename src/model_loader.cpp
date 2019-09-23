@@ -9,6 +9,12 @@
 
 #include "tinyobjloader/tiny_obj_loader.h"
 
+#include "assimp/Importer.hpp"
+#include "assimp/postprocess.h"
+#include "assimp/scene.h"
+
+#include <filesystem>
+
 std::vector<Raw_Mesh_Obj> load_obj_raw(char const *filename) {
   tinyobj::attrib_t attrib;
   std::vector<tinyobj::shape_t> shapes;
@@ -157,8 +163,128 @@ PBR_Model load_obj_pbr(char const *filename) {
   return pbr_out;
 }
 
-using namespace tinygltf;
+void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
+                   std::string const &dir, u32 parent_id = 0) {
+  Transform_Node tnode;
+  ito(4) {
+    jto(4) { tnode.transform[i][j] = node->mTransformation[j][i]; }
+  }
+  for (unsigned int i = 0; i < node->mNumMeshes; i++) {
+    aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
+    Raw_Mesh_Opaque opaque_mesh{};
+    using GLRF_Vertex_t = Vertex_3p3n4b2t;
+    auto write_bytes = [&](u8 *src, size_t size) {
+      // f32 *debug = (f32*)src;
+      ito(size) opaque_mesh.attributes.push_back(src[i]);
+    };
+    for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
+      GLRF_Vertex_t vertex{};
+
+      vertex.position.x = mesh->mVertices[i].x;
+      vertex.position.y = mesh->mVertices[i].y;
+      vertex.position.z = mesh->mVertices[i].z;
+
+      vertex.tangent.x = mesh->mTangents[i].x;
+      vertex.tangent.y = mesh->mTangents[i].y;
+      vertex.tangent.z = mesh->mTangents[i].z;
+
+      vertex.binormal.x = mesh->mBitangents[i].x;
+      vertex.binormal.y = mesh->mBitangents[i].y;
+      vertex.binormal.z = mesh->mBitangents[i].z;
+
+      vertex.normal.x = mesh->mNormals[i].x;
+      vertex.normal.y = mesh->mNormals[i].y;
+      vertex.normal.z = mesh->mNormals[i].z;
+
+      if (mesh->HasTextureCoords(0)) {
+        vertex.texcoord.x = mesh->mTextureCoords[0][i].x;
+        vertex.texcoord.y = mesh->mTextureCoords[0][i].y;
+      } else {
+        vertex.texcoord = glm::vec2(0.0f, 0.0f);
+      }
+      write_bytes((u8 *)&vertex, sizeof(vertex));
+    }
+    for (unsigned int i = 0; i < mesh->mNumFaces; ++i) {
+      aiFace face = mesh->mFaces[i];
+      for (unsigned int j = 0; j < face.mNumIndices; ++j) {
+        opaque_mesh.indices.push_back(face.mIndices[j]);
+      }
+    }
+
+    aiMaterial *material = scene->mMaterials[mesh->mMaterialIndex];
+    PBR_Material out_material;
+
+    for (int tex = aiTextureType_NONE; tex <= aiTextureType_UNKNOWN; tex++) {
+      aiTextureType type = static_cast<aiTextureType>(tex);
+
+      if (material->GetTextureCount(type) > 0) {
+        aiString relative_path;
+
+        material->GetTexture(type, 0, &relative_path);
+        std::string full_path;
+        full_path = dir + "/";
+        full_path = full_path.append(relative_path.C_Str());
+        out.images.emplace_back(load_image(full_path));
+        switch (type) {
+        case aiTextureType_AMBIENT:
+          out_material.ao_id = i32(out.images.size() - 1);
+          break;
+        case aiTextureType_NORMALS:
+          out_material.normal_id = i32(out.images.size() - 1);
+          break;
+        case aiTextureType_DIFFUSE:
+          out_material.albedo_id = i32(out.images.size() - 1);
+          break;
+        case aiTextureType_SPECULAR:
+          out_material.metalness_roughness_id = i32(out.images.size() - 1);
+          break;
+        default:
+          //          ASSERT_PANIC(false && "Unsupported texture type");
+          break;
+        }
+      } else {
+      }
+    }
+    opaque_mesh.vertex_stride = sizeof(GLRF_Vertex_t);
+    opaque_mesh.binding = {
+        {"POSITION",
+         {0, offsetof(GLRF_Vertex_t, position), vk::Format::eR32G32B32Sfloat}},
+        {"NORMAL",
+         {0, offsetof(GLRF_Vertex_t, normal), vk::Format::eR32G32B32Sfloat}},
+        {"TANGENT",
+         {0, offsetof(GLRF_Vertex_t, tangent), vk::Format::eR32G32B32Sfloat}},
+        {"BINORMAL",
+         {0, offsetof(GLRF_Vertex_t, binormal), vk::Format::eR32G32B32Sfloat}},
+        {"TEXCOORD_0",
+         {0, offsetof(GLRF_Vertex_t, texcoord), vk::Format::eR32G32Sfloat}},
+    };
+    out.materials.push_back(out_material);
+    out.meshes.push_back(opaque_mesh);
+    tnode.meshes.push_back(u32(out.meshes.size() - 1));
+  }
+  out.nodes.push_back(tnode);
+  out.nodes[parent_id].children.push_back(u32(out.nodes.size() - 1));
+  for (unsigned int i = 0; i < node->mNumChildren; i++) {
+    traverse_node(out, node->mChildren[i], scene, dir,
+                  u32(out.nodes.size() - 1));
+  }
+}
+
 PBR_Model load_gltf_pbr(std::string const &filename) {
+  Assimp::Importer importer;
+  PBR_Model out;
+  out.nodes.push_back(Transform_Node{.transform = mat4(1.0f)});
+  std::filesystem::path p(filename);
+  std::filesystem::path dir = p.parent_path();
+  const aiScene *scene = importer.ReadFile(
+      filename.c_str(), aiProcess_Triangulate | aiProcess_OptimizeMeshes |
+                            aiProcess_CalcTangentSpace | aiProcess_FlipUVs);
+  traverse_node(out, scene->mRootNode, scene, dir.string());
+  return out;
+}
+
+using namespace tinygltf;
+PBR_Model tinygltf_load_gltf_pbr(std::string const &filename) {
   Model model;
   TinyGLTF loader;
   std::string err;
@@ -255,7 +381,7 @@ PBR_Model load_gltf_pbr(std::string const &filename) {
           {"TEXCOORD_0",
            {0, offsetof(GLRF_Vertex_t, texcoord), vk::Format::eR32G32Sfloat}},
       };
-      opaque_mesh.vertex_stride = offset_counter;
+      opaque_mesh.vertex_stride = sizeof(GLRF_Vertex_t);
 
       for (u32 vid = 0u; vid < vertex_count; vid++) {
 
@@ -263,8 +389,8 @@ PBR_Model load_gltf_pbr(std::string const &filename) {
         for (auto &desc : descs) {
           auto &accessor = model.accessors[desc.accessor_id];
           auto &bview = model.bufferViews[accessor.bufferView];
-          u8 *src = &model.buffers[bview.buffer]
-                         .data[bview.byteOffset + desc.stride * vid];
+          u8 *src = (u8 *)&model.buffers[bview.buffer].data.at(0) +
+                    bview.byteOffset + desc.stride * vid;
 
           if (desc.name == "POSITION") {
             vertex.position = *(vec3 *)src;

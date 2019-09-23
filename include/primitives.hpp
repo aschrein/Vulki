@@ -79,7 +79,8 @@ struct Vertex_3p3n2t {
 struct Vertex_3p3n4b2t {
   vec3 position;
   vec3 normal;
-  vec4 tangent;
+  vec3 tangent;
+  vec3 binormal;
   vec2 texcoord;
 };
 struct Vertex_3p3n3c2t_mat {
@@ -138,7 +139,8 @@ struct Raw_Mesh_Obj {
       t_v[i].position = vertices[i].position;
       t_v[i].normal = vertices[i].normal;
       t_v[i].texcoord = vertices[i].texcoord;
-      t_v[i].tangent = vec4(0.0f, 0.0f, 0.0f, 1.0f);
+      t_v[i].tangent = vec3(0.0f, 0.0f, 0.0f);
+      t_v[i].binormal = vec3(0.0f, 0.0f, 0.0f);
     }
     out.indices.resize(indices.size() * sizeof(u32_face));
     memcpy(&out.indices[0], &indices[0], indices.size() * sizeof(u32_face));
@@ -151,8 +153,9 @@ struct Raw_Mesh_Obj {
         {"NORMAL",
          {0, offsetof(GLRF_Vertex_t, normal), vk::Format::eR32G32B32Sfloat}},
         {"TANGENT",
-         {0, offsetof(GLRF_Vertex_t, tangent),
-          vk::Format::eR32G32B32A32Sfloat}},
+         {0, offsetof(GLRF_Vertex_t, tangent), vk::Format::eR32G32B32Sfloat}},
+        {"BINORMAL",
+         {0, offsetof(GLRF_Vertex_t, binormal), vk::Format::eR32G32B32Sfloat}},
         {"TEXCOORD_0",
          {0, offsetof(GLRF_Vertex_t, texcoord), vk::Format::eR32G32Sfloat}},
     };
@@ -276,13 +279,19 @@ static Raw_Mesh_3p16i subdivide_cone(uint32_t level, float radius,
 // We are gonna use one simplified material schema for everything
 struct PBR_Material {
   // R8G8B8A8
-  i32 normal_id;
+  i32 normal_id = -1;
   // R8G8B8A8
-  i32 albedo_id;
+  i32 albedo_id = -1;
   // R8G8B8A8
-  i32 ao_id;
+  i32 ao_id = -1;
   // R8G8B8A8
-  i32 metalness_roughness_id;
+  i32 metalness_roughness_id = -1;
+};
+
+struct Transform_Node {
+  mat4 transform;
+  std::vector<u32> meshes;
+  std::vector<u32> children;
 };
 
 // To make things simple we use one format of meshes
@@ -290,6 +299,7 @@ struct PBR_Model {
   std::vector<Image_Raw> images;
   std::vector<Raw_Mesh_Opaque> meshes;
   std::vector<PBR_Material> materials;
+  std::vector<Transform_Node> nodes;
 };
 
 struct Collision {

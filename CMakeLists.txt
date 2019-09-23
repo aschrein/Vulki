@@ -54,7 +54,7 @@ add_custom_command(OUTPUT kernel.o
                    DEPENDS "src/kernel.ispc")
 
 
-set(LIBS marl OpenMP::OpenMP_CXX meshoptimizer tinyobjloader glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util pthread boost_system boost_filesystem boost_thread)
+set(LIBS assimp marl OpenMP::OpenMP_CXX meshoptimizer tinyobjloader glfw glslang gtest spirv-cross-reflect spirv-cross-core spirv-cross-c spirv-cross-util pthread boost_system boost_filesystem boost_thread)
 
 
 add_executable(shader_parser shader_parser.cpp)

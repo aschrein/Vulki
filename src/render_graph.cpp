@@ -1179,7 +1179,8 @@ struct Graphics_Utils_State {
     cur_cs = _set_or_create_shader(filename);
   }
   void RS_set_depth_stencil_state(bool enable_depth_test, vk::CompareOp cmp_op,
-                                  bool enable_depth_write, float max_depth, float depth_bias) {
+                                  bool enable_depth_write, float max_depth,
+                                  float depth_bias) {
     cur_gfx_state.enable_depth_test = enable_depth_test;
     cur_gfx_state.cmp_op = cmp_op;
     cur_gfx_state.enable_depth_write = enable_depth_write;
@@ -1204,6 +1205,21 @@ struct Graphics_Utils_State {
           u32 new_image_id =
               images.push(device_wrapper.alloc_state->allocate_image(
                   img.create_info, VMA_MEMORY_USAGE_GPU_ONLY));
+          // @Cleanup: Clear image upon creation
+          auto &pass = passes[cur_gfx_state.pass];
+          auto &cmd = device_wrapper.cur_cmd();
+          _end_pass(cmd, pass);
+          auto &new_img = images[new_image_id];
+          new_img.barrier(cmd, device_wrapper.graphics_queue_family_id,
+                          vk::ImageLayout::eTransferDstOptimal,
+                          vk::AccessFlagBits::eColorAttachmentWrite);
+          cmd.clearColorImage(
+              new_img.image, vk::ImageLayout::eTransferDstOptimal,
+              vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f}),
+              {vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0u,
+                                         1u, 0u, 1u)});
+          _begin_pass(cmd, pass);
+          //
           RT_Details new_rt{};
           new_rt.name = id;
           new_rt.image_id = new_image_id;
@@ -1720,7 +1736,8 @@ void Graphics_Utils::CS_set_shader(std::string const &filename) {
 void Graphics_Utils::RS_set_depth_stencil_state(bool enable_depth_test,
                                                 vk::CompareOp cmp_op,
                                                 bool enable_depth_write,
-                                                float max_depth, float depth_bias) {
+                                                float max_depth,
+                                                float depth_bias) {
   return ((Graphics_Utils_State *)this->pImpl)
       ->RS_set_depth_stencil_state(enable_depth_test, cmp_op,
                                    enable_depth_write, max_depth, depth_bias);
