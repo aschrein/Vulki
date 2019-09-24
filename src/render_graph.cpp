@@ -313,6 +313,8 @@ struct Descriptor_Frame {
                  vk::DescriptorType::eStorageImage);
     auto raw_descsets = get_or_create_descsets(pwrap);
     for (auto set : raw_descsets) {
+      // If this fires it means that we're trying to modify a set that is
+      // already bound
       ASSERT_PANIC(dirty_set.find((u64)(VkDescriptorSet)set) ==
                    dirty_set.end());
     }
@@ -329,10 +331,10 @@ struct Descriptor_Frame {
                                  .setSampler(vk::Sampler()))},
         {});
   }
-  void update_sampled_image_descriptor(Pipeline_Wrapper &pwrap,
-                                       std::string const &name,
-                                       vk::ImageView image_view,
-                                       vk::Sampler sampler, u32 offset = 0u) {
+  void update_sampled_image_descriptor(
+      Pipeline_Wrapper &pwrap, std::string const &name,
+      vk::ImageView image_view, vk::Sampler sampler, u32 offset = 0u,
+      vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal) {
     ASSERT_PANIC(pwrap.resource_slots.find(name) != pwrap.resource_slots.end());
     auto slot = pwrap.resource_slots[name];
     ASSERT_PANIC(slot.layout.descriptorType ==
@@ -349,11 +351,10 @@ struct Descriptor_Frame {
              .setDescriptorCount(1)
              .setDstArrayElement(offset)
              .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
-             .setPImageInfo(
-                 &vk::DescriptorImageInfo()
-                      .setImageView(image_view)
-                      .setImageLayout(vk::ImageLayout::eShaderReadOnlyOptimal)
-                      .setSampler(sampler))},
+             .setPImageInfo(&vk::DescriptorImageInfo()
+                                 .setImageView(image_view)
+                                 .setImageLayout(layout)
+                                 .setSampler(sampler))},
         {});
   }
 };
@@ -1267,6 +1268,8 @@ struct Graphics_Utils_State {
   }
   void bind_image(std::string const &name, u32 res_id, u32 index,
                   Image_View view) {
+    // @TODO: Allow modifications after descriptors set binding
+    ASSERT_PANIC(!bound_pipe);
     _Resource_View _view;
     _view.res_id = res_id;
     _view.layers = view.layers;
@@ -1282,7 +1285,8 @@ struct Graphics_Utils_State {
     bind_image(name, res_id, index, view);
   }
   void bind_resource(std::string const &name, u32 id, u32 index) {
-    // @TODO: Checks
+    // @TODO: Allow modifications after descriptors set binding
+    ASSERT_PANIC(!bound_pipe);
     id_binding_table[{name, index}] = _Resource_View{.res_id = id};
   }
   void bind_resource(std::string const &name, std::string const &id,
@@ -1456,6 +1460,22 @@ struct Graphics_Utils_State {
     auto &dframe = get_cur_descframe();
     // @Cleanup
     _end_pass(cmd, pass);
+    // Detect simultaneous read-write bindings
+    boost::unordered_set<u32> storage_images;
+    for (auto &item : id_binding_table) {
+      if (!pipeline.has_descriptor(item.first.first))
+        continue;
+      auto type = pipeline.get_type(item.first.first);
+      if (type == vk::DescriptorType::eStorageImage) {
+        storage_images.insert(item.second.res_id);
+      } else if (type == vk::DescriptorType::eCombinedImageSampler) {
+
+      } else if (type == vk::DescriptorType::eUniformBuffer) {
+
+      } else {
+        ASSERT_PANIC(false);
+      }
+    }
     for (auto &item : id_binding_table) {
       if (!pipeline.has_descriptor(item.first.first))
         continue;
@@ -1490,12 +1510,19 @@ struct Graphics_Utils_State {
       } else if (type == vk::DescriptorType::eCombinedImageSampler) {
         auto &img = images[img_id];
         // @Cleanup
-        img.barrier(cmd, device_wrapper.graphics_queue_family_id,
-                    vk::ImageLayout::eShaderReadOnlyOptimal,
-                    vk::AccessFlagBits::eShaderRead);
+        if (storage_images.find(_view.res_id) == storage_images.end()) {
+          img.barrier(cmd, device_wrapper.graphics_queue_family_id,
+                      vk::ImageLayout::eShaderReadOnlyOptimal,
+                      vk::AccessFlagBits::eShaderRead);
+        } else {
+          img.barrier(cmd, device_wrapper.graphics_queue_family_id,
+                      vk::ImageLayout::eGeneral,
+                      vk::AccessFlagBits::eShaderRead |
+                          vk::AccessFlagBits::eShaderWrite);
+        }
         dframe.update_sampled_image_descriptor(pipeline, item.first.first,
                                                _get_view(_view), sampler.get(),
-                                               item.first.second);
+                                               item.first.second, img.layout);
       } else if (type == vk::DescriptorType::eUniformBuffer) {
         auto &buf = buffers[buf_id];
         dframe.update_descriptor(pipeline, item.first.first, buf.buffer, 0,

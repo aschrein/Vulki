@@ -271,16 +271,41 @@ struct Pipeline_Wrapper : public Slot {
     ASSERT_PANIC(shaderStage.module);
     auto set_bindings = out.collect_sets();
     for (auto &set_binding : set_bindings) {
+      vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT binding_infos;
+      std::vector<vk::DescriptorBindingFlagsEXT> binding_flags;
+      ito(set_binding.size()) {
+        // @Cleanup: Right now enable bindless extension for arays > 1
+        if (set_binding[i].descriptorCount > 1)
+          binding_flags.push_back(
+              // vk::DescriptorBindingFlagBitsEXT::eUpdateAfterBind |
+              vk::DescriptorBindingFlagBitsEXT::ePartiallyBound
+              //| vk::DescriptorBindingFlagBitsEXT::eVariableDescriptorCount
+          );
+        else
+          binding_flags.push_back(vk::DescriptorBindingFlagsEXT(0));
+      }
+      binding_infos.setBindingCount(set_binding.size())
+          .setPBindingFlags(&binding_flags[0]);
       out.set_layouts.push_back(device.createDescriptorSetLayoutUnique(
           vk::DescriptorSetLayoutCreateInfo()
+              // @TODO: Enable partially bound resources where it's needed
+              // @See: device.cpp
+              .setPNext((void *)&binding_infos)
+              // #shaderSampledImageArrayNonUniformIndexing
+              //
+              // @TODO: Check for availability
+              .setFlags(vk::DescriptorSetLayoutCreateFlagBits::
+                            eUpdateAfterBindPoolEXT)
               .setPBindings(&set_binding[0])
               .setBindingCount(set_binding.size())));
     }
+
     auto raw_set_layouts = out.get_raw_descset_layouts();
     auto push_range = vk::PushConstantRange()
                           .setOffset(0)
                           .setSize(push_constants_size)
                           .setStageFlags(vk::ShaderStageFlagBits::eAll);
+
     if (push_constants_size) {
       out.pipeline_layout = device.createPipelineLayoutUnique(
           vk::PipelineLayoutCreateInfo()
@@ -355,8 +380,8 @@ struct Pipeline_Wrapper : public Slot {
       vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT binding_infos;
       std::vector<vk::DescriptorBindingFlagsEXT> binding_flags;
       ito(set_binding.size()) {
-        // @Cleanup: Right now enable bindless extension for arays > 10
-        if (set_binding[i].descriptorCount > 10)
+        // @Cleanup: Right now enable bindless extension for arays > 1
+        if (set_binding[i].descriptorCount > 1)
           binding_flags.push_back(
               // vk::DescriptorBindingFlagBitsEXT::eUpdateAfterBind |
               vk::DescriptorBindingFlagBitsEXT::ePartiallyBound
