@@ -16,12 +16,15 @@ cd build
 cmake ../
 cmake --build . --target all
 ```
+
 ## Features
 * PBR framework
   * Mipmap generation
   * GLTF import
+    * Assimp/TinyGLTF
 * Vulkan framework skeleton
   * Simple mid level api
+  * Single threaded single command buffer submission
 * Shader reload with inotify/dir_update
 * Gizmos
   * Translation
@@ -29,6 +32,7 @@ cmake --build . --target all
 * Shader preprocessing/reflection
   * Auto infer input layout
   * Generate data structures with paddings
+
 ## TODO
 * PBR rasterization framework
   * IBL
@@ -45,6 +49,7 @@ cmake --build . --target all
     * Increase granularity
     * Don't crash if compilation fails
 * Vulkan framework skeleton
+  * Multi-threaded multi-command buffer submission
 * Gizmos
   * Rotation
 * Try different raymarching optimizations

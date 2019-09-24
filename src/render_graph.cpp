@@ -476,14 +476,38 @@ std::vector<u8> build_mips(std::vector<u8> const &data, u32 width, u32 height,
   return out;
 }
 
+struct _Resource_View {
+  u32 res_id = 0;
+  u32 base_level = 0;
+  u32 levels = 0;
+  u32 base_layer = 0;
+  u32 layers = 0;
+  bool operator==(_Resource_View const &that) const {
+    return memcmp(this, &that, sizeof(*this)) == 0;
+  }
+};
+
+struct _Resource_View_Hash {
+  u64 operator()(_Resource_View const &state) const {
+    u64 out = 0ull;
+    u8 *data = (u8 *)&state;
+    ito(sizeof(_Resource_View)) { out = out ^ std::hash<u8>()(data[i]); }
+    return out;
+  }
+};
+
 struct Graphics_Utils_State {
   // #Definitions
+  Device_Wrapper device_wrapper;
+  boost::unordered_map<u32,
+                       boost::unordered_map<_Resource_View, vk::UniqueImageView,
+                                            _Resource_View_Hash>>
+      image_view_table;
   Simple_Monitor simple_monitor;
   boost::unordered_map<Graphics_Pipeline_State, u32,
                        Graphics_Pipeline_State_Hash>
       gfx_pipelines;
   google::dense_hash_map<u32, u32> cs_pipelines;
-  Device_Wrapper device_wrapper;
   vk::UniqueSampler sampler;
   /////////////////////////////
   // Slot based resources
@@ -516,7 +540,9 @@ struct Graphics_Utils_State {
 
   /////////////////////////////
   // Immediate resource tracking
-  boost::unordered_map<std::pair<std::string, u32>, u32> id_binding_table;
+  // (name, slot) -> res_view
+  boost::unordered_map<std::pair<std::string, u32>, _Resource_View>
+      id_binding_table;
   Graphics_Pipeline_State cur_gfx_state;
   u32 cur_cs;
   google::dense_hash_map<u32, Image_Layout> cur_image_layouts;
@@ -718,6 +744,16 @@ struct Graphics_Utils_State {
         buffers.remove(res.ref);
       } else {
         ASSERT_PANIC(false);
+      }
+      auto res_id = res.id;
+      // Invalidate views
+      if (image_view_table.find(res_id) != image_view_table.end()) {
+        auto &entry = image_view_table.find(res_id)->second;
+        for (auto &view : entry) {
+          view.second.reset(vk::ImageView());
+        }
+        entry.clear();
+        image_view_table.erase(res_id);
       }
       res.type = Resource_Type::NONE;
       res.ref = 0;
@@ -1063,7 +1099,7 @@ struct Graphics_Utils_State {
         if (res.type == Resource_Type::RT) {
           auto &rt = rts[res.ref];
           auto &img = images[rt.image_id];
-          views.push_back(img.view.get());
+          views.push_back(_get_view(_Resource_View{.res_id = res_id}));
         }
       }
       pass_details.fb = device_wrapper.device->createFramebufferUnique(
@@ -1198,9 +1234,56 @@ struct Graphics_Utils_State {
     cur_gfx_state.max_depth = max_depth;
     cur_gfx_state.depth_bias_const = depth_bias;
   }
-
+  vk::ImageView _get_view(_Resource_View _view) {
+    auto &res = resources[_view.res_id];
+    u32 img_id = 0;
+    if (res.type == Resource_Type::RT) {
+      auto &rt = rts[res.ref];
+      img_id = rt.image_id;
+    } else if (res.type == Resource_Type::TEXTURE) {
+      img_id = res.ref;
+    } else {
+      ASSERT_PANIC(false);
+    }
+    // @Warning: Creates an entry
+    auto &entry = image_view_table[_view.res_id];
+    if (entry.find(_view) == entry.end()) {
+      auto &img = images[img_id];
+      // Fix the default image view
+      auto c_view = _view;
+      if (c_view.layers == 0) {
+        ASSERT_PANIC(c_view.base_layer < img.create_info.arrayLayers);
+        c_view.layers = img.create_info.arrayLayers - c_view.base_layer;
+      }
+      if (c_view.levels == 0) {
+        ASSERT_PANIC(c_view.base_level < img.create_info.mipLevels);
+        c_view.levels = img.create_info.mipLevels - c_view.base_level;
+      }
+      entry.insert({_view, img.create_view(device_wrapper.device.get(),
+                                           c_view.base_level, c_view.levels,
+                                           c_view.base_layer, c_view.layers)});
+    }
+    return entry.find(_view)->second.get();
+  }
+  void bind_image(std::string const &name, u32 res_id, u32 index,
+                  Image_View view) {
+    _Resource_View _view;
+    _view.res_id = res_id;
+    _view.layers = view.layers;
+    _view.levels = view.levels;
+    _view.base_layer = view.base_layer;
+    _view.base_level = view.base_level;
+    id_binding_table[{name, index}] = _view;
+  }
+  void bind_image(std::string const &name, std::string const &res_name,
+                  u32 index, Image_View view) {
+    ASSERT_PANIC(res_name[0] != '~');
+    u32 res_id = get_resource_id(res_name);
+    bind_image(name, res_id, index, view);
+  }
   void bind_resource(std::string const &name, u32 id, u32 index) {
-    id_binding_table[{name, index}] = id;
+    // @TODO: Checks
+    id_binding_table[{name, index}] = _Resource_View{.res_id = id};
   }
   void bind_resource(std::string const &name, std::string const &id,
                      u32 index) {
@@ -1243,11 +1326,10 @@ struct Graphics_Utils_State {
           ASSERT_PANIC(false);
         }
       }
-      id_binding_table[{name, index}] = history_use.find(res_name)->second;
-
+      // Images only for now
+      bind_resource(name, history_use.find(res_name)->second, index);
     } else {
-      id_binding_table[{name, index}] =
-          resource_name_table.find(res_name)->second;
+      bind_resource(name, get_resource_id(id), index);
     }
   }
 
@@ -1377,8 +1459,9 @@ struct Graphics_Utils_State {
     for (auto &item : id_binding_table) {
       if (!pipeline.has_descriptor(item.first.first))
         continue;
+      auto &_view = item.second;
       // @TODO: Check for valid ids
-      auto &res = resources[item.second];
+      auto &res = resources[_view.res_id];
       u32 img_id = 0;
       u32 buf_id = 0;
       if (res.type == Resource_Type::RT) {
@@ -1392,6 +1475,7 @@ struct Graphics_Utils_State {
         // @TODO
         ASSERT_PANIC(false);
       }
+
       auto type = pipeline.get_type(item.first.first);
       if (type == vk::DescriptorType::eStorageImage) {
         ASSERT_PANIC(img_id);
@@ -1402,7 +1486,7 @@ struct Graphics_Utils_State {
                     vk::AccessFlagBits::eShaderRead |
                         vk::AccessFlagBits::eShaderWrite);
         dframe.update_storage_image_descriptor(
-            pipeline, item.first.first, img.view.get(), item.first.second);
+            pipeline, item.first.first, _get_view(_view), item.first.second);
       } else if (type == vk::DescriptorType::eCombinedImageSampler) {
         auto &img = images[img_id];
         // @Cleanup
@@ -1410,7 +1494,7 @@ struct Graphics_Utils_State {
                     vk::ImageLayout::eShaderReadOnlyOptimal,
                     vk::AccessFlagBits::eShaderRead);
         dframe.update_sampled_image_descriptor(pipeline, item.first.first,
-                                               img.view.get(), sampler.get(),
+                                               _get_view(_view), sampler.get(),
                                                item.first.second);
       } else if (type == vk::DescriptorType::eUniformBuffer) {
         auto &buf = buffers[buf_id];
@@ -1654,13 +1738,13 @@ struct Graphics_Utils_State {
       img.barrier(cmd, device_wrapper.graphics_queue_family_id,
                   vk::ImageLayout::eShaderReadOnlyOptimal,
                   vk::AccessFlagBits::eShaderRead);
-      view = img.view.get();
+      view = _get_view(_Resource_View{.res_id = res_id});
     } else if (res.type == Resource_Type::TEXTURE) {
       auto &img = images[res.ref];
       img.barrier(cmd, device_wrapper.graphics_queue_family_id,
                   vk::ImageLayout::eShaderReadOnlyOptimal,
                   vk::AccessFlagBits::eShaderRead);
-      view = img.view.get();
+      view = _get_view(_Resource_View{.res_id = res_id});
     } else {
       ASSERT_PANIC(false);
     }
@@ -1770,7 +1854,12 @@ void Graphics_Utils::bind_resource(std::string const &name,
                                    std::string const &id, u32 index) {
   return ((Graphics_Utils_State *)this->pImpl)->bind_resource(name, id, index);
 }
-
+void Graphics_Utils::bind_image(std::string const &name,
+                                std::string const &res_name, u32 index,
+                                Image_View view) {
+  return ((Graphics_Utils_State *)this->pImpl)
+      ->bind_image(name, res_name, index, view);
+}
 void *Graphics_Utils::map_buffer(u32 id) {
   return ((Graphics_Utils_State *)this->pImpl)->map_buffer(id);
 }

@@ -292,17 +292,7 @@ struct Gizmo_Layer {
           Raw_Mesh_3p16i_Wrapper::create(gu, subdivide_cylinder(8, 1.0f, 1.0f));
     }
     gizmo_drag_state.push_draw(cmds);
-    gu.VS_set_shader("gizmo.vert.glsl");
-    gu.PS_set_shader("gizmo.frag.glsl");
-    gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual, true,
-                                  1.0f);
-    gu.IA_set_topology(vk::PrimitiveTopology::eTriangleList);
-    gu.IA_set_cull_mode(vk::CullModeFlagBits::eNone, vk::FrontFace::eClockwise,
-                        vk::PolygonMode::eLine, 1.0f);
-    Gizmo_Push_Constants tmp_pc{};
-    tmp_pc.proj = camera.proj;
-    tmp_pc.view = camera.view;
-    gu.push_constants(&tmp_pc, sizeof(Gizmo_Push_Constants));
+
     if (cmds.size()) {
       std::vector<Gizmo_Draw_Cmd> cylinders;
       std::vector<Gizmo_Draw_Cmd> spheres;
@@ -347,6 +337,15 @@ struct Gizmo_Layer {
       }
 
       {
+        gu.VS_set_shader("gizmo.vert.glsl");
+        gu.PS_set_shader("gizmo.frag.glsl");
+        gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual, true,
+                                      1.0f);
+        Gizmo_Push_Constants tmp_pc{};
+        tmp_pc.proj = camera.proj;
+        tmp_pc.view = camera.view;
+        gu.push_constants(&tmp_pc, sizeof(Gizmo_Push_Constants));
+
         gu.IA_set_vertex_buffers(
             {render_graph::Buffer_Info{.buf_id = gizmo_instance_buffer,
                                        .offset = 0}},
@@ -366,6 +365,15 @@ struct Gizmo_Layer {
     }
 
     if (line_segments.size()) {
+      gu.VS_set_shader("gizmo_line.vert.glsl");
+      gu.PS_set_shader("gizmo.frag.glsl");
+      gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual, true,
+                                    1.0f);
+      Gizmo_Push_Constants tmp_pc{};
+      tmp_pc.proj = camera.proj;
+      tmp_pc.view = camera.view;
+      gu.push_constants(&tmp_pc, sizeof(Gizmo_Push_Constants));
+
       u32 gizmo_lines_buffer = gu.create_buffer(
           render_graph::Buffer{
               .usage_bits = vk::BufferUsageFlagBits::eVertexBuffer,

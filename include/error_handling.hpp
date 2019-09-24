@@ -40,6 +40,17 @@ using f32 = float;
 #define jto(N) for (u32 j = 0; j < N; j++)
 #define kto(N) for (u32 k = 0; k < N; k++)
 
+static u32 get_mip_levels(u32 width, u32 height) {
+  u32 big_dim = std::max(width, height);
+  u32 mip_levels = 0u;
+  ito(32u) {
+    if ((big_dim & (1u << i)) != 0u) {
+      mip_levels = i + 1u;
+    }
+  }
+  return mip_levels;
+}
+
 template <typename T, size_t N> constexpr size_t __ARRAY_SIZE(T (&)[N]) {
   return N;
 }

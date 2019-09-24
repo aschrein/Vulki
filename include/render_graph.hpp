@@ -41,6 +41,18 @@ struct Buffer_Info {
   u32 offset;
 };
 
+struct Image_View {
+  u32 base_level = 0;
+  u32 levels = 0;
+  u32 base_layer = 0;
+  u32 layers = 0;
+};
+
+struct Binding {
+  std::string name;
+  u32 slot = 0;
+};
+
 // Simplistic immediate(one command queue per frame) OpenGL/DirectX11 like
 // emulation This API doesn't really have a specification or smth
 struct Graphics_Utils {
@@ -71,8 +83,10 @@ struct Graphics_Utils {
   // API call is added on case by case
   void IA_set_topology(vk::PrimitiveTopology topology);
   void IA_set_index_buffer(u32 id, u32 offset, vk::IndexType format);
-//  void IA_set_layout(std::unordered_map<std::string, Vertex_Input> const &layout);
-  void IA_set_vertex_buffers(std::vector<Buffer_Info> const &infos, u32 offset = 0);
+  //  void IA_set_layout(std::unordered_map<std::string, Vertex_Input> const
+  //  &layout);
+  void IA_set_vertex_buffers(std::vector<Buffer_Info> const &infos,
+                             u32 offset = 0);
   // @TODO: Split this function
   void IA_set_cull_mode(vk::CullModeFlags cull_mode, vk::FrontFace front_face,
                         vk::PolygonMode polygon_mode, float line_width);
@@ -80,9 +94,15 @@ struct Graphics_Utils {
   void PS_set_shader(std::string const &filename);
   void CS_set_shader(std::string const &filename);
   void RS_set_depth_stencil_state(bool enable_depth_test, vk::CompareOp cmp_op,
-                                  bool enable_depth_write, float max_depth, float depth_bias = 0.0f);
+                                  bool enable_depth_write, float max_depth,
+                                  float depth_bias = 0.0f);
+  // General purpose binding i.e. all mips, 0 offset covers 90% usecase
   void bind_resource(std::string const &name, u32 id, u32 index = 0);
-  void bind_resource(std::string const &name, std::string const &id, u32 index = 0);
+  void bind_resource(std::string const &name, std::string const &id,
+                     u32 index = 0);
+  // Specialized binding with base mip/layer selection
+  void bind_image(std::string const &name, std::string const &res_name,
+                  u32 index = 0, Image_View view = {});
 
   void *map_buffer(u32 id);
   void unmap_buffer(u32 id);
@@ -213,7 +233,8 @@ struct Raw_Mesh_3p16i_Wrapper {
     //    }
     return out;
   }
-  void draw(render_graph::Graphics_Utils &gu, u32 instances = 1, u32 first_instance = 0) {
+  void draw(render_graph::Graphics_Utils &gu, u32 instances = 1,
+            u32 first_instance = 0) {
     gu.IA_set_vertex_buffers(
         {render_graph::Buffer_Info{.buf_id = vertex_buffer, .offset = 0}});
     gu.IA_set_index_buffer(index_buffer, 0, vk::IndexType::eUint16);

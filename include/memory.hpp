@@ -39,7 +39,6 @@ struct VmaImage : public Slot {
   RAW_MOVABLE(VmaImage)
   VmaAllocator allocator;
   vk::Image image;
-  vk::UniqueImageView view;
   vk::ImageCreateInfo create_info;
   VmaAllocation allocation;
   vk::ImageLayout layout;
@@ -68,9 +67,33 @@ struct VmaImage : public Slot {
     this->access_flags = new_access_flags;
     this->layout = new_layout;
   }
+  vk::UniqueImageView create_view(vk::Device device, u32 base_level, u32 levels,
+                                  u32 base_layer, u32 layers) {
+    vk::ImageViewType view_type;
+    switch (create_info.imageType) {
+    case vk::ImageType::e2D:
+      view_type = vk::ImageViewType::e2D;
+      break;
+    case vk::ImageType::e3D:
+      view_type = vk::ImageViewType::e3D;
+      break;
+    default:
+      ASSERT_PANIC(false && "Unsupported image type");
+    }
+    return device.createImageViewUnique(vk::ImageViewCreateInfo(
+        vk::ImageViewCreateFlags(), image, view_type, create_info.format,
+        vk::ComponentMapping(vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG,
+                             vk::ComponentSwizzle::eB,
+                             vk::ComponentSwizzle::eA),
+        vk::ImageSubresourceRange()
+            .setBaseMipLevel(base_level)
+            .setBaseArrayLayer(base_layer)
+            .setLayerCount(layers)
+            .setLevelCount(levels)
+            .setAspectMask(aspect)));
+  }
   void destroy() {
     if (image) {
-      view.reset(vk::ImageView(VkImageView(0u)));
       vmaDestroyImage(allocator, image, allocation);
       memset(this, 0, sizeof(*this));
     }
@@ -134,26 +157,7 @@ struct Alloc_State {
     out.create_info.setPNext(nullptr);
     out.create_info.setPQueueFamilyIndices(nullptr);
     out.aspect = aspect;
-    vk::ImageViewType view_type;
-    switch (create_info.imageType) {
-    case vk::ImageType::e2D:
-      view_type = vk::ImageViewType::e2D;
-      break;
-    case vk::ImageType::e3D:
-      view_type = vk::ImageViewType::e3D;
-      break;
-    default:
-      ASSERT_PANIC(false && "Unsupported image type");
-    }
-    out.view = device.createImageViewUnique(vk::ImageViewCreateInfo(
-        vk::ImageViewCreateFlags(), out.image, view_type, create_info.format,
-        vk::ComponentMapping(vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG,
-                             vk::ComponentSwizzle::eB,
-                             vk::ComponentSwizzle::eA),
-        vk::ImageSubresourceRange()
-            .setLayerCount(create_info.arrayLayers)
-            .setLevelCount(create_info.mipLevels)
-            .setAspectMask(aspect)));
+
     return out;
   }
   ~Alloc_State() { vmaDestroyAllocator(allocator); }

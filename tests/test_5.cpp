@@ -137,6 +137,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     }
   };
   gu.run_loop([&] {
+    u32 bb_miplevels = get_mip_levels(u32(wsize.x), u32(wsize.y));
     gu.create_compute_pass(
         "postprocess", {"shading.HDR", "gizmo_layer.color"},
         {render_graph::Resource{
@@ -193,6 +194,30 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.CS_set_shader("pbr_shading.comp.glsl");
           gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
         });
+
+//    gu.create_compute_pass(
+//        "depth_mips_build", {"depth_linearize"},
+//        {render_graph::Resource{
+//            .name = "depth_mips",
+//            .type = render_graph::Type::Image,
+//            .image_info = render_graph::Image{.format = vk::Format::eR32Sfloat,
+//                                              .use = render_graph::Use::UAV,
+//                                              .width = u32(wsize.x),
+//                                              .height = u32(wsize.y),
+//                                              .depth = 1,
+//                                              .levels = bb_miplevels,
+//                                              .layers = 1}}},
+//        [&] {
+//          sh_linearize_depth_comp::push_constants pc{};
+//          pc.zfar = gizmo_layer.camera.zfar;
+//          pc.znear = gizmo_layer.camera.znear;
+//          gu.push_constants(&pc, sizeof(pc));
+
+//          gu.bind_resource("out_image", "depth_linear");
+//          gu.bind_resource("in_depth", "g_pass.depth");
+//          gu.CS_set_shader("linearize_depth.comp.glsl");
+//          gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
+//        });
     gu.create_compute_pass(
         "depth_linearize", {"g_pass.depth"},
         {render_graph::Resource{
