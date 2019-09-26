@@ -2,8 +2,8 @@
 #include "device.hpp"
 #include "error_handling.hpp"
 #include "tinyobjloader/tiny_obj_loader.h"
-#include <glm/glm.hpp>
 #include <glm/ext.hpp>
+#include <glm/glm.hpp>
 #include <map>
 #include <vector>
 
@@ -284,19 +284,59 @@ struct PBR_Material {
   // R8G8B8A8
   i32 albedo_id = -1;
   // R8G8B8A8
-  i32 ao_id = -1;
-  // R8G8B8A8
-  i32 metalness_roughness_id = -1;
+  // AO+Roughness+Metalness
+  i32 arm_id = -1;
+  float metal_factor = 1.0f;
+  float roughness_factor = 1.0f;
+  vec4 albedo_factor = vec4(1.0f);
 };
+
+// https://github.com/graphitemaster/normals_revisited
+static float minor(const float m[16], int r0, int r1, int r2, int c0, int c1,
+                   int c2) {
+  return m[4 * r0 + c0] * (m[4 * r1 + c1] * m[4 * r2 + c2] -
+                           m[4 * r2 + c1] * m[4 * r1 + c2]) -
+         m[4 * r0 + c1] * (m[4 * r1 + c0] * m[4 * r2 + c2] -
+                           m[4 * r2 + c0] * m[4 * r1 + c2]) +
+         m[4 * r0 + c2] * (m[4 * r1 + c0] * m[4 * r2 + c1] -
+                           m[4 * r2 + c0] * m[4 * r1 + c1]);
+}
+
+static void cofactor(const float src[16], float dst[16]) {
+  dst[0] = minor(src, 1, 2, 3, 1, 2, 3);
+  dst[1] = -minor(src, 1, 2, 3, 0, 2, 3);
+  dst[2] = minor(src, 1, 2, 3, 0, 1, 3);
+  dst[3] = -minor(src, 1, 2, 3, 0, 1, 2);
+  dst[4] = -minor(src, 0, 2, 3, 1, 2, 3);
+  dst[5] = minor(src, 0, 2, 3, 0, 2, 3);
+  dst[6] = -minor(src, 0, 2, 3, 0, 1, 3);
+  dst[7] = minor(src, 0, 2, 3, 0, 1, 2);
+  dst[8] = minor(src, 0, 1, 3, 1, 2, 3);
+  dst[9] = -minor(src, 0, 1, 3, 0, 2, 3);
+  dst[10] = minor(src, 0, 1, 3, 0, 1, 3);
+  dst[11] = -minor(src, 0, 1, 3, 0, 1, 2);
+  dst[12] = -minor(src, 0, 1, 2, 1, 2, 3);
+  dst[13] = minor(src, 0, 1, 2, 0, 2, 3);
+  dst[14] = -minor(src, 0, 1, 2, 0, 1, 3);
+  dst[15] = minor(src, 0, 1, 2, 0, 1, 2);
+}
 
 struct Transform_Node {
   vec3 offset;
   quat rotation;
+  float scale = 1.0f;
+  //  mat4 transform = mat4(1.0f);
   std::vector<u32> meshes;
   std::vector<u32> children;
   mat4 get_transform() {
-    return glm::translate(mat4(1.0f), offset)
-    * (mat4)rotation;
+    //  return transform;
+    return glm::translate(mat4(1.0f), offset) * (mat4)rotation *
+           glm::scale(mat4(1.0f), vec3(scale, scale, scale));
+  }
+  mat4 get_cofactor() {
+    mat4 out{};
+    mat4 transform = get_transform();
+    cofactor(&transform[0][0], &out[0][0]);
   }
 };
 

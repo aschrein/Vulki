@@ -97,8 +97,16 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
 
     ImGui::End();
     ImGui::Begin("Rendering configuration");
-    gizmo_layer.push_line(vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, 1.0f),
-                          vec3(0.0f, 0.0f, 1.0f));
+    ImGui::Checkbox("Camera jitter", &gizmo_layer.jitter_on);
+    auto images = gu.get_img_list();
+    std::vector<char const *> images_;
+    for (auto &img_name: images) {
+      images_.push_back(img_name.c_str());
+    }
+    static int item_current = 0;
+    ImGui::Combo("Select Image", &item_current, &images_[0], images_.size());
+    auto wsize = ImGui::GetWindowSize();
+    gu.ImGui_Image(images[item_current], wsize.x - 2, wsize.x - 2);
     ImGui::End();
     ImGui::Begin("Metrics");
     ImGui::End();
@@ -106,13 +114,13 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
       std::exit(0);
     }
   });
-  auto cubemap = load_image("cubemaps/pink_sunrise.hdr");
+  auto spheremap = load_image("spheremaps/whale_skeleton.hdr");
   auto test_model = load_gltf_pbr(
       //      "models/sponza-gltf-pbr/sponza.glb");
-      //       "models/Sponza/Sponza.gltf");
-      //            "models/SciFiHelmet.gltf");
+      //             "models/Sponza/Sponza.gltf");
+      //                  "models/SciFiHelmet.gltf");
       "models/scene.gltf");
-  u32 cubemap_id = 0;
+  u32 spheremap_id = 0;
   std::vector<Raw_Mesh_Opaque_Wrapper> models;
   std::vector<PBR_Material> materials;
   std::vector<u32> textures;
@@ -127,8 +135,10 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
       pc.transform = transform;
       pc.albedo_id = material.albedo_id;
       pc.normal_id = material.normal_id;
-      pc.ao_id = material.ao_id;
-      pc.metalness_roughness_id = material.metalness_roughness_id;
+      pc.arm_id = material.arm_id;
+      pc.albedo_factor = material.albedo_factor;
+      pc.metal_factor = material.metal_factor;
+      pc.roughness_factor = material.roughness_factor;
       gu.push_constants(&pc, sizeof(pc));
       model.draw(gu);
     }
@@ -136,7 +146,111 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
       traverse_node(child_id, transform);
     }
   };
+  bool initialized = false;
   gu.run_loop([&] {
+    u32 spheremap_mip_levels =
+        get_mip_levels(spheremap.width, spheremap.height);
+    gu.create_compute_pass(
+        "init_pass", {},
+        {
+            render_graph::Resource{
+                .name = "IBL.specular",
+                .type = render_graph::Type::Image,
+                .image_info =
+                    render_graph::Image{.format =
+                                            vk::Format::eR32G32B32A32Sfloat,
+                                        .use = render_graph::Use::UAV,
+                                        .width = spheremap.width,
+                                        .height = spheremap.height,
+                                        .depth = 1,
+                                        .levels = spheremap_mip_levels,
+                                        .layers = 1}},
+            render_graph::Resource{
+                .name = "IBL.diffuse",
+                .type = render_graph::Type::Image,
+                .image_info =
+                    render_graph::Image{.format =
+                                            vk::Format::eR32G32B32A32Sfloat,
+                                        .use = render_graph::Use::UAV,
+                                        .width = spheremap.width / 8,
+                                        .height = spheremap.height / 8,
+                                        .depth = 1,
+                                        .levels = 1,
+                                        .layers = 1}},
+            render_graph::Resource{
+                .name = "IBL.LUT",
+                .type = render_graph::Type::Image,
+                .image_info =
+                    render_graph::Image{.format =
+                                            vk::Format::eR32G32B32A32Sfloat,
+                                        .use = render_graph::Use::UAV,
+                                        .width = 128,
+                                        .height = 128,
+                                        .depth = 1,
+                                        .levels = 1,
+                                        .layers = 1}},
+
+        },
+        [&, spheremap_mip_levels] {
+          if (initialized)
+            return;
+          if (!initialized) {
+            //          if (spheremap_id)
+            //            gu.release_resource(spheremap_id);
+            spheremap_id = gu.create_texture2D(spheremap, true);
+            ito(test_model.meshes.size()) {
+              auto &model = test_model.meshes[i];
+              materials.push_back(test_model.materials[i]);
+              models.push_back(Raw_Mesh_Opaque_Wrapper::create(gu, model));
+            }
+            ito(test_model.images.size()) {
+              auto &img = test_model.images[i];
+              textures.push_back(gu.create_texture2D(img, true));
+            }
+            initialized = true;
+          }
+
+          gu.CS_set_shader("ibl_integrator.comp.glsl");
+          gu.bind_resource("in_image", spheremap_id);
+          gu.bind_resource("out_image", "IBL.diffuse", 0);
+          gu.bind_resource("out_image", "IBL.LUT", 1);
+          ito(spheremap_mip_levels) {
+            gu.bind_image(
+                "out_image", "IBL.specular", i + 2,
+                render_graph::Image_View{.base_level = i, .levels = 1});
+          }
+          const uint DIFFUSE = 0;
+          const uint SPECULAR = 1;
+          const uint LUT = 2;
+          {
+            sh_ibl_integrator_comp::push_constants pc{};
+            pc.level = 0;
+            pc.max_level = spheremap_mip_levels;
+            pc.mode = LUT;
+            gu.push_constants(&pc, sizeof(pc));
+            gu.dispatch((128 + 15) / 16, (128 + 15) / 16, 1);
+          }
+          u32 width = spheremap.width;
+          u32 height = spheremap.height;
+          {
+            sh_ibl_integrator_comp::push_constants pc{};
+            pc.level = 0;
+            pc.max_level = spheremap_mip_levels;
+            pc.mode = DIFFUSE;
+            gu.push_constants(&pc, sizeof(pc));
+            gu.dispatch((width / 8 + 15) / 16, (height / 8 + 15) / 16, 1);
+          }
+          ito(spheremap_mip_levels) {
+            sh_ibl_integrator_comp::push_constants pc{};
+            pc.level = i;
+            pc.max_level = spheremap_mip_levels;
+            pc.mode = SPECULAR;
+            gu.push_constants(&pc, sizeof(pc));
+            gu.dispatch((width + 15) / 16, (height + 15) / 16, 1);
+            width = std::max(1u, width / 2);
+            height = std::max(1u, height / 2);
+          }
+        });
     gu.create_compute_pass(
         "postprocess", {"shading.HDR", "gizmo_layer.color"},
         {render_graph::Resource{
@@ -171,8 +285,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
         });
     gu.create_compute_pass(
         "shading",
-        {"g_pass.albedo", "g_pass.normal", "g_pass.metal", "depth_linear",
-         "~shading.HDR"},
+        {"g_pass.albedo", "g_pass.normal", "g_pass.metal", "depth_mips",
+         "~shading.HDR", "IBL.specular", "IBL.LUT", "IBL.diffuse"},
         {render_graph::Resource{
             .name = "shading.HDR",
             .type = render_graph::Type::Image,
@@ -185,13 +299,36 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                                     .levels = 1,
                                     .layers = 1}}},
         [&] {
+          static bool prev_cam_moved = false;
+          sh_pbr_shading_comp::UBO ubo{};
+          ubo.camera_up = gizmo_layer.camera.up;
+          ubo.camera_pos = gizmo_layer.camera.pos;
+          ubo.camera_right = gizmo_layer.camera.right;
+          ubo.camera_look = gizmo_layer.camera.look;
+          ubo.camera_inv_tan = 1.0f / std::tan(gizmo_layer.camera.fov / 2.0f);
+          ubo.camera_jitter = gizmo_layer.camera_jitter;
+          ubo.taa_weight =
+              (gizmo_layer.camera_moved || prev_cam_moved) ? 0.0f : 0.95f;
+          prev_cam_moved = gizmo_layer.camera_moved;
+          u32 ubo_id = gu.create_buffer(
+              render_graph::Buffer{.usage_bits =
+                                       vk::BufferUsageFlagBits::eUniformBuffer,
+                                   .size = sizeof(ubo)},
+              &ubo);
+          gu.bind_resource("UBO", ubo_id);
+
           gu.bind_resource("out_image", "shading.HDR");
           gu.bind_resource("g_albedo", "g_pass.albedo");
           gu.bind_resource("g_normal", "g_pass.normal");
           gu.bind_resource("g_metal", "g_pass.metal");
           gu.bind_resource("history", "~shading.HDR");
+          gu.bind_resource("g_depth", "depth_mips");
+          gu.bind_resource("textures", "IBL.diffuse", 0);
+          gu.bind_resource("textures", "IBL.specular", 1);
+          gu.bind_resource("textures", "IBL.LUT", 2);
           gu.CS_set_shader("pbr_shading.comp.glsl");
           gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
+          gu.release_resource(ubo_id);
         });
     u32 bb_miplevels = get_mip_levels(u32(wsize.x), u32(wsize.y));
     gu.create_compute_pass(
@@ -281,18 +418,6 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
 
         },
         wsize.x, wsize.y, [&] {
-          if (!cubemap_id) {
-            cubemap_id = gu.create_texture2D(cubemap, true);
-            ito(test_model.meshes.size()) {
-              auto &model = test_model.meshes[i];
-              materials.push_back(test_model.materials[i]);
-              models.push_back(Raw_Mesh_Opaque_Wrapper::create(gu, model));
-            }
-            ito(test_model.images.size()) {
-              auto &img = test_model.images[i];
-              textures.push_back(gu.create_texture2D(img, true));
-            }
-          }
           gu.clear_color({0.0f, 0.0f, 0.0f, 0.0f});
           gu.clear_depth(1.0f);
           gu.VS_set_shader("gltf.vert.glsl");
@@ -315,6 +440,16 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                                         false, 1.0f, -0.1f);
           traverse_node(0, test_model.nodes[0].get_transform());
           gu.release_resource(ubo_id);
+          int N = 16;
+          float dx = 10.0f;
+          float half = ((N - 1) * dx) / 2.0f;
+          ito(N) {
+            float x = i * dx - half;
+            gizmo_layer.push_line(vec3(x, 0.0f, -half), vec3(x, 0.0f, half),
+                                  vec3(1.0f, 1.0f, 1.0f));
+            gizmo_layer.push_line(vec3(-half, 0.0f, x), vec3(half, 0.0f, x),
+                                  vec3(1.0f, 1.0f, 1.0f));
+          }
           gizmo_layer.draw(gu);
         });
     gu.create_render_pass(
@@ -359,18 +494,6 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
 
         },
         wsize.x, wsize.y, [&] {
-          if (!cubemap_id) {
-            cubemap_id = gu.create_texture2D(cubemap, true);
-            ito(test_model.meshes.size()) {
-              auto &model = test_model.meshes[i];
-              materials.push_back(test_model.materials[i]);
-              models.push_back(Raw_Mesh_Opaque_Wrapper::create(gu, model));
-            }
-            ito(test_model.images.size()) {
-              auto &img = test_model.images[i];
-              textures.push_back(gu.create_texture2D(img, true));
-            }
-          }
           gu.clear_color({0.0f, 0.0f, 0.0f, 0.0f});
           gu.clear_depth(1.0f);
           gu.VS_set_shader("gltf.vert.glsl");

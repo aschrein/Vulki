@@ -3,6 +3,7 @@
 #include "error_handling.hpp"
 #include "memory.hpp"
 #include "primitives.hpp"
+#include "random.hpp"
 #include "render_graph.hpp"
 #include "shader_compiler.hpp"
 
@@ -191,8 +192,8 @@ struct Gizmo_Drag_State {
 
 struct Camera {
   float phi = 0.0;
-  float theta = M_PI / 2.0f;
-  float distance = 10.0f;
+  float theta = M_PI / 4.0f;
+  float distance = 100.0f;
   float mx = 0.0f, my = 0.0f;
   vec3 look_at = vec3(0.0f, 0.0f, 0.0f);
   float aspect = 1.0;
@@ -206,7 +207,7 @@ struct Camera {
   vec3 look;
   vec3 right;
   vec3 up;
-  void update() {
+  void update(vec2 jitter = vec2(0.0f, 0.0f)) {
     /*-------------------*/
     /* Update the camera */
     /*-------------------*/
@@ -217,6 +218,8 @@ struct Camera {
     right = normalize(cross(look, vec3(0.0f, 1.0f, 0.0f)));
     up = normalize(cross(right, look));
     proj = glm::perspective(fov, aspect, znear, zfar);
+    proj[2][0] += jitter.x;
+    proj[2][1] += jitter.x;
     view = glm::lookAt(pos, look_at, vec3(0.0f, 1.0f, 0.0f));
   }
   mat4 viewproj() { return proj * view; }
@@ -228,6 +231,11 @@ struct Gizmo_Layer {
   // Camera state //
   //////////////////
   Camera camera;
+  bool camera_moved = false;
+  vec2 camera_jitter;
+  uint cur_halton_id;
+  bool jitter_on = true;
+  const uint MAX_HALTON = 64u;
   vec3 mouse_ray;
   float mx, my;
 
@@ -395,6 +403,12 @@ struct Gizmo_Layer {
   }
 
   void on_imgui_viewport() {
+    push_line(camera.look_at, camera.look_at + vec3(0.0f, 0.0f, 1.0f),
+              vec3(0.0f, 0.0f, 1.0f));
+    push_line(camera.look_at, camera.look_at + vec3(0.0f, 1.0f, 0.0f),
+              vec3(0.0f, 1.0f, 0.0f));
+    push_line(camera.look_at, camera.look_at + vec3(1.0f, 0.0f, 0.0f),
+              vec3(1.0f, 0.0f, 0.0f));
     auto cur_time = clock();
     auto dt = float(double(cur_time - last_time) / CLOCKS_PER_SEC);
     last_time = cur_time;
@@ -416,12 +430,23 @@ struct Gizmo_Layer {
     /*-------------------*/
     /* Update the camera */
     /*-------------------*/
+    if (jitter_on) {
+      camera_jitter =
+          vec2(halton(cur_halton_id + 1, 2), halton(cur_halton_id + 1, 3));
+      camera_jitter = camera_jitter * 0.5f - 0.5f;
+    } else {
+      camera_jitter = vec2(0.0f, 0.0f);
+    }
+    cur_halton_id = (cur_halton_id + 1) % MAX_HALTON;
     camera.aspect =
         float(example_viewport.extent.width) / example_viewport.extent.height;
-    camera.update();
+    camera.update(
+        (camera_jitter * 4.0f) /
+        vec2(example_viewport.extent.width, example_viewport.extent.height));
     if (ImGui::GetIO().MouseReleased[0]) {
       gizmo_drag_state.on_mouse_release();
     }
+    camera_moved = false;
     if (ImGui::IsWindowHovered()) {
       ///////// Low precision timer
 
@@ -439,9 +464,9 @@ struct Gizmo_Layer {
                             camera.up * my);
       gizmo_drag_state.on_mouse_move(camera.pos, camera.look, mouse_ray);
       // Normalize camera motion so that diagonal moves are not bigger
-      float camera_speed = 20.0f;
+      float camera_speed = 4.0f * camera.distance;
       if (ImGui::GetIO().KeysDown[GLFW_KEY_LEFT_SHIFT]) {
-        camera_speed = 40.0f;
+        camera_speed = 10.0f * camera.distance;
       }
       vec3 camera_diff = vec3(0.0f, 0.0f, 0.0f);
       if (ImGui::GetIO().KeysDown[GLFW_KEY_W]) {
@@ -457,8 +482,10 @@ struct Gizmo_Layer {
         camera_diff += camera.right;
       }
       // It's always of length of 0.0 or 1.0 so just check
-      if (glm::dot(camera_diff, camera_diff) > 1.0e-3f)
+      if (glm::dot(camera_diff, camera_diff) > 1.0e-3f) {
+        camera_moved = true;
         camera.look_at += glm::normalize(camera_diff) * camera_speed * dt;
+      }
 
       if (ImGui::GetIO().MouseDown[0]) {
         if (!mouse_last_down) {
@@ -487,14 +514,17 @@ struct Gizmo_Layer {
             } else if (camera.theta < eps) {
               camera.theta = eps;
             }
+            camera_moved = true;
           }
         }
       }
       old_mpos = mpos;
       auto scroll_y = ImGui::GetIO().MouseWheel;
-      camera.distance += camera.distance * 1.e-1 * scroll_y;
-      camera.distance = clamp(camera.distance, eps, 100.0f);
-
+      if (scroll_y) {
+        camera_moved = true;
+        camera.distance += camera.distance * 2.e-1 * scroll_y;
+        camera.distance = clamp(camera.distance, eps, 1000.0f);
+      }
       mouse_last_down = ImGui::GetIO().MouseDown[0];
     }
   }

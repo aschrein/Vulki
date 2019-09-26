@@ -20,7 +20,8 @@ void main() {
     vec4 in_value = texelFetch(in_image, ivec2(gl_GlobalInvocationID.xy), 0);
     vec4 gizmo_value = texelFetch(gizmo_image, ivec2(gl_GlobalInvocationID.xy), 0);
     in_value.a = 1.0;
-    in_value = mix(in_value, gizmo_value, gizmo_value.a);
+
+    //in_value = mix(in_value, gizmo_value, gizmo_value.a);
     imageStore(out_image, ivec2(gl_GlobalInvocationID.xy), sqrt(in_value)
       + uniforms.offset + push_constants.offset);
 }

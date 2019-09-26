@@ -119,6 +119,7 @@ struct Graphics_Utils {
   void set_on_gui(std::function<void()> fn);
   void run_loop(std::function<void()> fn);
 
+  std::vector<std::string> get_img_list();
   void ImGui_Image(std::string const &name, u32 width, u32 height);
   void ImGui_Emit_Stats();
 

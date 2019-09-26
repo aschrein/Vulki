@@ -21,17 +21,20 @@ layout(set = 0, binding = 0, std140) uniform UBO {
 layout(push_constant) uniform PC {
   mat4 transform;
   int albedo_id;
-  int ao_id;
   int normal_id;
-  int metalness_roughness_id;
+  int arm_id;
+  float metal_factor;
+  float roughness_factor;
+  vec4 albedo_factor;
 } push_constants;
 
 void main() {
   vec4 wpos = uniforms.view * push_constants.transform * vec4(POSITION, 1.0);
   out_position = POSITION;
-  out_normal = (push_constants.transform * vec4(NORMAL, 0.0)).xyz;
-  out_tangent = (push_constants.transform * vec4(TANGENT, 0.0)).xyz;
-  out_binormal = (push_constants.transform * vec4(BINORMAL, 0.0)).xyz;
+  // @TODO: Use matrix of cofactors
+  out_normal = normalize((push_constants.transform * vec4(NORMAL, 0.0)).xyz);
+  out_tangent = normalize((push_constants.transform * vec4(TANGENT, 0.0)).xyz);
+  out_binormal = normalize((push_constants.transform * vec4(BINORMAL, 0.0)).xyz);
   out_texcoord = TEXCOORD_0;
   gl_Position = uniforms.proj * wpos;
 }

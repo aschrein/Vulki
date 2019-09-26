@@ -723,9 +723,9 @@ struct Graphics_Utils_State {
         vk::SamplerCreateInfo()
             .setMinFilter(vk::Filter::eLinear)
             .setMagFilter(vk::Filter::eLinear)
-            .setAddressModeU(vk::SamplerAddressMode::eClampToBorder)
-            .setAddressModeV(vk::SamplerAddressMode::eClampToBorder)
-            .setMaxLod(1));
+            .setAddressModeU(vk::SamplerAddressMode::eRepeat)
+            .setAddressModeV(vk::SamplerAddressMode::eRepeat)
+            .setMaxLod(100));
     desc_frames.resize(3);
     for (auto &frame : desc_frames)
       // @Cleanup?
@@ -1055,6 +1055,12 @@ struct Graphics_Utils_State {
         // Insert factory reference
         resource_factory_table.insert({res_id, pass_id});
         pass_details.output.push_back(output[i].name);
+        {
+          // #Debug
+          auto &img = images[image_id];
+          device_wrapper.name_image(img.image, output[i].name.c_str());
+        }
+
       }
       // @TODO Named buffers
       else {
@@ -1355,6 +1361,15 @@ struct Graphics_Utils_State {
     } else {
       ASSERT_PANIC(false);
     }
+  }
+  std::vector<std::string> get_img_list() {
+    std::vector<std::string> out;
+    for (auto &item : resource_name_table) {
+      auto &res = resources[item.second];
+      if (res.type == Resource_Type::RT || res.type == Resource_Type::TEXTURE)
+        out.push_back(item.first);
+    }
+    return out;
   }
   void push_constants(void *data, size_t size) {
     ASSERT_PANIC(size <= 128);
@@ -1896,7 +1911,9 @@ void Graphics_Utils::unmap_buffer(u32 id) {
 void Graphics_Utils::push_constants(void *data, size_t size) {
   return ((Graphics_Utils_State *)this->pImpl)->push_constants(data, size);
 }
-
+std::vector<std::string> Graphics_Utils::get_img_list() {
+  return ((Graphics_Utils_State *)this->pImpl)->get_img_list();
+}
 void Graphics_Utils::clear_color(vec4 value) {
   return ((Graphics_Utils_State *)this->pImpl)->clear_color(value);
 }

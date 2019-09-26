@@ -12,6 +12,7 @@
 #include "assimp/Importer.hpp"
 #include "assimp/postprocess.h"
 #include "assimp/scene.h"
+#include <assimp/pbrmaterial.h>
 
 #include <filesystem>
 
@@ -155,10 +156,7 @@ PBR_Model load_obj_pbr(char const *filename) {
   PBR_Model pbr_out;
   ito(out.size()) {
     pbr_out.meshes.push_back(out[i].get_opaque());
-    pbr_out.materials.push_back(PBR_Material{.normal_id = -1,
-                                             .albedo_id = -1,
-                                             .ao_id = -1,
-                                             .metalness_roughness_id = -1});
+    pbr_out.materials.push_back(PBR_Material{});
   }
   return pbr_out;
 }
@@ -188,8 +186,9 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
   }
   quat rotation(rot_mat);
 
-    tnode.offset = offset;
-    tnode.rotation = rotation;
+  //  tnode.offset = offset;
+  tnode.rotation = rotation;
+  //  tnode.transform = transform;
 
   for (unsigned int i = 0; i < node->mNumMeshes; i++) {
     aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
@@ -235,7 +234,20 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
 
     aiMaterial *material = scene->mMaterials[mesh->mMaterialIndex];
     PBR_Material out_material;
-
+    float metal_base;
+    float roughness_base;
+    aiColor4D albedo_base;
+    material->Get(AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_BASE_COLOR_FACTOR,
+                  albedo_base);
+    material->Get(AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_METALLIC_FACTOR,
+                  metal_base);
+    material->Get(AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_ROUGHNESS_FACTOR,
+                  roughness_base);
+    out_material.metal_factor = metal_base;
+    out_material.roughness_factor = roughness_base;
+    out_material.albedo_factor =
+        vec4(albedo_base.r, albedo_base.g, albedo_base.b, albedo_base.a);
+    //    material->GetTexture();
     for (int tex = aiTextureType_NONE; tex <= aiTextureType_UNKNOWN; tex++) {
       aiTextureType type = static_cast<aiTextureType>(tex);
 
@@ -248,19 +260,27 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
         full_path = full_path.append(relative_path.C_Str());
         out.images.emplace_back(load_image(full_path));
         switch (type) {
-        case aiTextureType_AMBIENT:
-          out_material.ao_id = i32(out.images.size() - 1);
-          break;
         case aiTextureType_NORMALS:
           out_material.normal_id = i32(out.images.size() - 1);
           break;
         case aiTextureType_DIFFUSE:
           out_material.albedo_id = i32(out.images.size() - 1);
           break;
+
         case aiTextureType_SPECULAR:
-          out_material.metalness_roughness_id = i32(out.images.size() - 1);
+        case aiTextureType_SHININESS:
+        case aiTextureType_REFLECTION:
+//        case aiTextureType_AMBIENT:
+        // @Cleanup :(
+        // Some models downloaded from sketchfab have metallic-roughness
+        // imported as unknown/lightmap and have (ao, roughness, metalness)
+        // as components
+        case aiTextureType_LIGHTMAP:
+          out_material.arm_id = i32(out.images.size() - 1);
           break;
         default:
+          std::cerr << "[LOAD][WARNING] Unrecognized image type: " << type
+                    << " with full path: " << full_path << "\n";
           //          ASSERT_PANIC(false && "Unsupported texture type");
           break;
         }
@@ -459,10 +479,7 @@ PBR_Model tinygltf_load_gltf_pbr(std::string const &filename) {
       }
       ASSERT_PANIC(opaque_mesh.attributes.size() ==
                    sizeof(GLRF_Vertex_t) * vertex_count);
-      PBR_Material material{.normal_id = -1,
-                            .albedo_id = -1,
-                            .ao_id = -1,
-                            .metalness_roughness_id = -1};
+      PBR_Material material{};
       {
         ASSERT_PANIC(primitive.material >= 0);
         auto mat = model.materials[primitive.material];
@@ -499,11 +516,11 @@ PBR_Model tinygltf_load_gltf_pbr(std::string const &filename) {
         }
         if (ao_map_id >= 0) {
           out.images.push_back(convert_image(ao_map_id));
-          material.ao_id = i32(out.images.size()) - 1;
+          material.arm_id = i32(out.images.size()) - 1;
         }
         if (metalness_map_id >= 0) {
           out.images.push_back(convert_image(metalness_map_id));
-          material.metalness_roughness_id = i32(out.images.size()) - 1;
+          material.arm_id = i32(out.images.size()) - 1;
         }
       }
       out.meshes.push_back(opaque_mesh);
