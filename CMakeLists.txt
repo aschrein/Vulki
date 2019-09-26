@@ -41,7 +41,7 @@ add_subdirectory(3rdparty/SPIRV-Cross)
 add_subdirectory(3rdparty/tinyobjloader)
 add_subdirectory(3rdparty/meshoptimizer)
 add_subdirectory(3rdparty/marl)
-
+add_subdirectory(3rdparty/assimp)
 
 file(GLOB SOURCE "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widgets.cpp 3rdparty/imgui/imgui_draw.cpp 3rdparty/imgui/imgui_demo.cpp 3rdparty/imgui/examples/imgui_impl_vulkan.cpp 3rdparty/imgui/examples/imgui_impl_glfw.cpp)
 # file(GLOB 3RD_SOURCE 3rdparty/SPIRV-Reflect/spirv_reflect.c)
@@ -142,13 +142,16 @@ if(NOT EXISTS ${CMAKE_BINARY_DIR}/models)
         )
 endif()
 
-if(NOT EXISTS ${CMAKE_BINARY_DIR}/cubemaps)
+if(NOT EXISTS ${CMAKE_BINARY_DIR}/spheremaps)
     execute_process(
-        COMMAND mkdir ${CMAKE_BINARY_DIR}/cubemaps
+        COMMAND mkdir ${CMAKE_BINARY_DIR}/spheremaps
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         )
-    file(DOWNLOAD https://hdrihaven.com/files/hdris/industrial_pipe_and_valve_01_2k.hdr cubemaps/industrial.hdr SHOW_PROGRESS)
-    file(DOWNLOAD https://hdrihaven.com/files/hdris/lythwood_field_2k.hdr cubemaps/lythwood_field.hdr SHOW_PROGRESS)
-    file(DOWNLOAD https://hdrihaven.com/files/hdris/pink_sunrise_2k.hdr cubemaps/pink_sunrise.hdr SHOW_PROGRESS)
+    file(DOWNLOAD https://hdrihaven.com/files/hdris/industrial_pipe_and_valve_01_2k.hdr spheremaps/industrial.hdr SHOW_PROGRESS)
+    file(DOWNLOAD https://hdrihaven.com/files/hdris/lythwood_field_2k.hdr spheremaps/lythwood_field.hdr SHOW_PROGRESS)
+    file(DOWNLOAD https://hdrihaven.com/files/hdris/pink_sunrise_2k.hdr spheremaps/pink_sunrise.hdr SHOW_PROGRESS)
+    file(DOWNLOAD https://hdrihaven.com/files/hdris/vintage_measuring_lab_2k.hdr spheremaps/vintage_measuring_lab.hdr SHOW_PROGRESS)
+    file(DOWNLOAD https://hdrihaven.com/files/hdris/whale_skeleton_2k.hdr spheremaps/whale_skeleton.hdr SHOW_PROGRESS)
+    file(DOWNLOAD https://hdrihaven.com/files/hdris/studio_small_06_2k.hdr spheremaps/studio_small.hdr SHOW_PROGRESS)
 
 endif()

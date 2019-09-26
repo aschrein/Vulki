@@ -1,0 +1,8 @@
+commit a75fc4563afb8ab0f894b1ee6395d31f6814eb91
+Merge: 2d2889f7 12a10112
+Author: Kim Kulling <kimkulling@users.noreply.github.com>
+Date:   Wed Sep 25 16:56:52 2019 +0200
+
+    Merge pull request #2669 from theakman2/issue_2668
+    
+    Fix: Mismatched new/free in gltf2 importer (fixes #2668)
