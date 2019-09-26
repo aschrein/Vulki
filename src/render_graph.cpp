@@ -378,6 +378,7 @@ std::vector<u8> build_mips(std::vector<u8> const &data, u32 width, u32 height,
   u32 bpc = 4u;
   switch (format) {
   case vk::Format::eR8G8B8A8Unorm:
+  case vk::Format::eR8G8B8A8Srgb:
     bpc = 4u;
     break;
   case vk::Format::eR32G32B32Sfloat:
@@ -416,6 +417,23 @@ std::vector<u8> build_mips(std::vector<u8> const &data, u32 width, u32 height,
       return vec4(float(r) / 255.0f, float(g) / 255.0f, float(b) / 255.0f,
                   float(a) / 255.0f);
     }
+    case vk::Format::eR8G8B8A8Srgb: {
+      u8 r = out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc];
+      u8 g =
+          out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc + 1u];
+      u8 b =
+          out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc + 2u];
+      u8 a =
+          out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc + 3u];
+
+      auto out = vec4(float(r) / 255.0f, float(g) / 255.0f, float(b) / 255.0f,
+                      float(a) / 255.0f);
+      out.r = std::pow(out.r, 2.2f);
+      out.g = std::pow(out.g, 2.2f);
+      out.b = std::pow(out.b, 2.2f);
+      out.a = std::pow(out.a, 2.2f);
+      return out;
+    }
     case vk::Format::eR32G32B32Sfloat: {
       f32 r = load_f32(coord, level, 0u);
       f32 g = load_f32(coord, level, 1u);
@@ -439,6 +457,22 @@ std::vector<u8> build_mips(std::vector<u8> const &data, u32 width, u32 height,
       u8 g = u8(255.0f * val.y);
       u8 b = u8(255.0f * val.z);
       u8 a = u8(255.0f * val.w);
+      u8 *dst =
+          &out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc];
+      dst[0] = r;
+      dst[1] = g;
+      dst[2] = b;
+      dst[3] = a;
+      return;
+    }
+    case vk::Format::eR8G8B8A8Srgb: {
+      auto size = mip_sizes[level];
+      ito(4) val[i] = std::pow(val[i], 1.0f / 2.2f);
+      u8 r = u8(255.0f * val.x);
+      u8 g = u8(255.0f * val.y);
+      u8 b = u8(255.0f * val.z);
+      u8 a = u8(255.0f * val.w);
+
       u8 *dst =
           &out[mip_offsets[level] + coord.x * bpc + coord.y * size.x * bpc];
       dst[0] = r;
@@ -828,8 +862,11 @@ struct Graphics_Utils_State {
     return resources.push({.type = Resource_Type::TEXTURE, .ref = image_id});
   }
   u32 create_uav_image(u32 width, u32 height, vk::Format format, u32 levels,
-                       u32 layers) {}
+                       u32 layers) {
+    ASSERT_PANIC(false);
+  }
   u32 create_buffer(Buffer info, void const *initial_data) {
+    ASSERT_PANIC(info.size);
     auto buf_id = buffers.push(device_wrapper.alloc_state->allocate_buffer(
         vk::BufferCreateInfo().setSize(info.size).setUsage(info.usage_bits),
         VMA_MEMORY_USAGE_CPU_TO_GPU));
@@ -848,6 +885,7 @@ struct Graphics_Utils_State {
                          std::vector<Resource> const &output, u32 width,
                          u32 height, std::function<void()> on_exec,
                          Pass_Type type = Pass_Type::Graphics) {
+    ASSERT_PANIC(width && height);
     // @TODO: partial invalidation
     if (pass_name_table.find(name) != pass_name_table.end()) {
       auto pass_id = pass_name_table.find(name)->second;
@@ -1487,6 +1525,7 @@ struct Graphics_Utils_State {
 
       } else if (type == vk::DescriptorType::eUniformBuffer) {
 
+      } else if (type == vk::DescriptorType::eStorageBuffer) {
       } else {
         ASSERT_PANIC(false);
       }
@@ -1539,6 +1578,10 @@ struct Graphics_Utils_State {
                                                _get_view(_view), sampler.get(),
                                                item.first.second, img.layout);
       } else if (type == vk::DescriptorType::eUniformBuffer) {
+        auto &buf = buffers[buf_id];
+        dframe.update_descriptor(pipeline, item.first.first, buf.buffer, 0,
+                                 buf.create_info.size, type, item.first.second);
+      } else if (type == vk::DescriptorType::eStorageBuffer) {
         auto &buf = buffers[buf_id];
         dframe.update_descriptor(pipeline, item.first.first, buf.buffer, 0,
                                  buf.create_info.size, type, item.first.second);

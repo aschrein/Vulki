@@ -193,7 +193,7 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
   for (unsigned int i = 0; i < node->mNumMeshes; i++) {
     aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
     Raw_Mesh_Opaque opaque_mesh{};
-    using GLRF_Vertex_t = Vertex_3p3n4b2t;
+    using GLRF_Vertex_t = GLRF_Vertex_Static;
     auto write_bytes = [&](u8 *src, size_t size) {
       // f32 *debug = (f32*)src;
       ito(size) opaque_mesh.attributes.push_back(src[i]);
@@ -258,13 +258,15 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
         std::string full_path;
         full_path = dir + "/";
         full_path = full_path.append(relative_path.C_Str());
-        out.images.emplace_back(load_image(full_path));
+        vk::Format format = vk::Format::eR8G8B8A8Srgb;
+
         switch (type) {
         case aiTextureType_NORMALS:
-          out_material.normal_id = i32(out.images.size() - 1);
+          format = vk::Format::eR8G8B8A8Unorm;
+          out_material.normal_id = i32(out.images.size());
           break;
         case aiTextureType_DIFFUSE:
-          out_material.albedo_id = i32(out.images.size() - 1);
+          out_material.albedo_id = i32(out.images.size());
           break;
 
         case aiTextureType_SPECULAR:
@@ -276,7 +278,8 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
         // imported as unknown/lightmap and have (ao, roughness, metalness)
         // as components
         case aiTextureType_LIGHTMAP:
-          out_material.arm_id = i32(out.images.size() - 1);
+//          format = vk::Format::eR8G8B8A8Unorm;
+          out_material.arm_id = i32(out.images.size());
           break;
         default:
           std::cerr << "[LOAD][WARNING] Unrecognized image type: " << type
@@ -284,6 +287,7 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
           //          ASSERT_PANIC(false && "Unsupported texture type");
           break;
         }
+        out.images.emplace_back(load_image(full_path, format));
       } else {
       }
     }
@@ -416,7 +420,7 @@ PBR_Model tinygltf_load_gltf_pbr(std::string const &filename) {
 
         // accessor.type == TINYGLTF_TYPE_SCALAR;
       }
-      using GLRF_Vertex_t = Vertex_3p3n4b2t;
+      using GLRF_Vertex_t = GLRF_Vertex_Static;
       opaque_mesh.binding = {
           {"POSITION",
            {0, offsetof(GLRF_Vertex_t, position),
@@ -530,7 +534,7 @@ PBR_Model tinygltf_load_gltf_pbr(std::string const &filename) {
   return out;
 }
 
-Image_Raw load_image(std::string const &filename) {
+Image_Raw load_image(std::string const &filename, vk::Format format) {
   if (filename.find(".hdr") != std::string::npos) {
     int width, height, channels;
     unsigned char *result;
@@ -563,7 +567,7 @@ Image_Raw load_image(std::string const &filename) {
     Image_Raw out;
     out.width = width;
     out.height = height;
-    out.format = vk::Format::eR8G8B8A8Unorm;
+    out.format = format;
     out.data.resize(width * height * 4u);
     memcpy(&out.data[0], image, out.data.size());
     stbi_image_free(image);

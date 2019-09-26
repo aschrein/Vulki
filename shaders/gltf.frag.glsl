@@ -37,7 +37,7 @@ void main() {
   vec4 out_arm;
   if (push_constants.albedo_id >= 0) {
     vec4 s0 = texture(textures[nonuniformEXT(push_constants.albedo_id)], in_texcoord, -1.0);
-    s0 = pow(s0, vec4(2.2));
+//    s0 = pow(s0, vec4(2.2));
     out_albedo = push_constants.albedo_factor * s0;
   } else {
     out_albedo = push_constants.albedo_factor;
@@ -59,7 +59,7 @@ void main() {
   }
   if (push_constants.arm_id >= 0) {
     vec4 s0 = texture(textures[nonuniformEXT(push_constants.arm_id)], in_texcoord, -2.0);
-    s0 = pow(s0, vec4(2.2));
+//    s0 = pow(s0, vec4(2.2));
     out_arm = vec4(1.0, push_constants.roughness_factor, push_constants.metal_factor, 1.0f) * s0;
   } else {
     out_arm = vec4(1.0, push_constants.roughness_factor, push_constants.metal_factor, 1.0f);

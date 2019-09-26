@@ -77,7 +77,7 @@ struct Vertex_3p3n2t {
   vec3 normal;
   vec2 texcoord;
 };
-struct Vertex_3p3n4b2t {
+struct GLRF_Vertex_Static {
   vec3 position;
   vec3 normal;
   vec3 tangent;
@@ -133,7 +133,7 @@ struct Raw_Mesh_Obj {
     Raw_Mesh_Opaque out;
     // Kind of standard here for gltf vertices
     // @See gltf.vert.glsl
-    using GLRF_Vertex_t = Vertex_3p3n4b2t;
+    using GLRF_Vertex_t = GLRF_Vertex_Static;
     out.attributes.resize(vertices.size() * sizeof(GLRF_Vertex_t));
     GLRF_Vertex_t *t_v = (GLRF_Vertex_t *)&out.attributes[0];
     ito(vertices.size()) {

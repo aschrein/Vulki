@@ -17,7 +17,6 @@ IF (NOT Vulkan_FOUND)
     ENDIF()
 ENDIF()
 
-
 IF (NOT Vulkan_FOUND)
 	message(FATAL_ERROR "Could not find Vulkan library!")
 ELSE()

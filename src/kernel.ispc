@@ -27,6 +27,7 @@ vec4 make_vec4(float x, float y, float z, float w) {
   return result;
 }
 struct Packed_UG {
+  float invtransform[16];
   uint * uniform bins_indices;
   uint * uniform ids;
   float min[3], max[3];
@@ -179,6 +180,14 @@ vec4 mat4_mul_vec4(const float m[16], vec4 a) {
   result.w = m[12] * a.x + m[13] * a.y + m[14] * a.z + m[15] * a.w;
   return result;
 }
+vec4 mat4_mul_vec4(const uniform float *m, vec4 a) {
+  vec4 result;
+  result.x = m[0] * a.x + m[1] * a.y + m[2] * a.z + m[3] * a.w;
+  result.y = m[4] * a.x + m[5] * a.y + m[6] * a.z + m[7] * a.w;
+  result.z = m[8] * a.x + m[9] * a.y + m[10] * a.z + m[11] * a.w;
+  result.w = m[12] * a.x + m[13] * a.y + m[14] * a.z + m[15] * a.w;
+  return result;
+}
 float dot(vec3 a, vec3 b) {
   return a.x * b.x + a.y * b.y + a.z * b.z;
 }
@@ -314,6 +323,10 @@ bool intersect_box(Packed_UG * uniform ug, vec3 ray_invdir, vec3 ray_origin,
 bool ispc_iterate(Packed_UG * uniform ug,
             vec3 * uniform vertices, uint * uniform faces,
             vec3 ray_dir, vec3 ray_origin, Collision * uniform out_collision, varying int ray_id) {
+  vec4 _ray_origin = mat4_mul_vec4(ug->invtransform, make_vec4(ray_origin.x, ray_origin.y, ray_origin.z, 1.0f));
+  ray_origin = make_vec3(_ray_origin.x, _ray_origin.y, _ray_origin.z);
+  vec4 _ray_dir = mat4_mul_vec4(ug->invtransform, make_vec4(ray_dir.x, ray_dir.y, ray_dir.z, 1.0f));
+  ray_dir = make_vec3(_ray_dir.x, _ray_dir.y, _ray_dir.z);
   vec3 ray_invdir = make_vec3(1.0f / ray_dir.x, 1.0f / ray_dir.y, 1.0f / ray_dir.z);
   float hit_min;
   float hit_max;
@@ -374,9 +387,12 @@ bool ispc_iterate(Packed_UG * uniform ug,
       uint items_count = ug->bins_indices[2 * o + 1];
       for (uint i = bin_offset; i < bin_offset + items_count; i++) {
         uint face_id = ug->ids[i] * 3;
-        vec3 v0 = vertices[face_id];
-        vec3 v1 = vertices[face_id + 1];
-        vec3 v2 = vertices[face_id + 2];
+        uint i0 = faces[face_id];
+        uint i1 = faces[face_id + 1];
+        uint i2 = faces[face_id + 2];
+        vec3 v0 = vertices[i0];
+        vec3 v1 = vertices[i1];
+        vec3 v2 = vertices[i2];
         Collision col;
         if (ray_triangle_test_moller(ray_origin, ray_dir, v0,
                                    v1, v2, col))
