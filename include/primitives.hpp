@@ -448,7 +448,6 @@ struct PBR_Model {
 };
 
 struct Collision {
-  vec3 position, normal;
   u32 mesh_id, face_id;
   float t, u, v;
 };
@@ -456,6 +455,8 @@ struct Collision {
 static bool ray_triangle_test_moller(vec3 ray_origin, vec3 ray_dir, vec3 v0,
                                      vec3 v1, vec3 v2,
                                      Collision &out_collision) {
+  float invlength = 1.0f / std::sqrt(glm::dot(ray_dir, ray_dir));
+  ray_dir *= invlength;
 
   const float EPSILON = 1.0e-6f;
   vec3 edge1, edge2, h, s, q;
@@ -480,12 +481,13 @@ static bool ray_triangle_test_moller(vec3 ray_origin, vec3 ray_dir, vec3 v0,
   float t = f * glm::dot(edge2, q);
   if (t > EPSILON) // ray intersection
   {
-    out_collision.t = t;
+    out_collision.t = t * invlength;
     out_collision.u = u;
     out_collision.v = v;
-    out_collision.normal = glm::normalize(cross(edge1, edge2));
-    out_collision.normal *= sign(-glm::dot(ray_dir, out_collision.normal));
-    out_collision.position = ray_origin + ray_dir * t;
+    //    out_collision.normal = glm::normalize(cross(edge1, edge2));
+    //    out_collision.normal *= sign(-glm::dot(ray_dir,
+    //    out_collision.normal)); out_collision.position = ray_origin + ray_dir
+    //    * t;
 
     return true;
   } else // This means that there is a line intersection but not a ray
@@ -526,8 +528,8 @@ static bool ray_triangle_test_woop(vec3 ray_origin, vec3 ray_dir, vec3 a,
     out_collision.t = t;
     out_collision.u = u;
     out_collision.v = v;
-    out_collision.normal = glm::normalize(n) * sign(-ray_dir_local.z);
-    out_collision.position = ray_origin + ray_dir * t;
+    //    out_collision.normal = glm::normalize(n) * sign(-ray_dir_local.z);
+    //    out_collision.position = ray_origin + ray_dir * t;
     return true;
   }
   return false;

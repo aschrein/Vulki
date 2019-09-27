@@ -124,7 +124,7 @@ void main() {
     vec3 color = ao * (FssEss * radiance + diffuse_color * irradiance);
     if (depth > 10000.0)
        color = vec3(0.5);
-//      color = sample_cubemap(ray_dir, 0.0, 1);
+//      color = sample_cubemap(ray_dir, 0.0, IBL_RADIANCE);
 
     vec4 gizmo_value = texelFetch(g_gizmo, ivec2(gl_GlobalInvocationID.xy), 0);
     color = mix(color, gizmo_value.xyz,

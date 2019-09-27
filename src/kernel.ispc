@@ -36,7 +36,6 @@ struct Packed_UG {
   uint mesh_id;
 };
 struct Collision {
-  vec3 position, normal;
   uint mesh_id, face_id;
   float t, u, v;
 };
@@ -254,8 +253,8 @@ bool ray_triangle_test_woop(vec3 ray_origin, vec3 ray_dir, vec3 a,
     out_collision.t = t;
     out_collision.u = u;
     out_collision.v = v;
-    out_collision.normal = mul_k(normalize(n), sign(-ray_dir_local.z));
-    out_collision.position = add(ray_origin, mul_k(ray_dir, t));
+    //out_collision.normal = mul_k(normalize(n), sign(-ray_dir_local.z));
+    //out_collision.position = add(ray_origin, mul_k(ray_dir, t));
     return true;
   }
   return false;
@@ -263,7 +262,7 @@ bool ray_triangle_test_woop(vec3 ray_origin, vec3 ray_dir, vec3 a,
 bool ray_triangle_test_moller(vec3 ray_origin, vec3 ray_dir, vec3 v0,
                                      vec3 v1, vec3 v2,
                                      Collision &out_collision) {
-
+  
   const float EPSILON = 1.0e-5f;
   vec3 edge1, edge2, h, s, q;
   float a, f, u, v;
@@ -290,10 +289,10 @@ bool ray_triangle_test_moller(vec3 ray_origin, vec3 ray_dir, vec3 v0,
     out_collision.t = t;
     out_collision.u = u;
     out_collision.v = v;
-    out_collision.normal = normalize(cross(edge1, edge2));
-    out_collision.normal = mul_k(out_collision.normal,
-                        (float)sign(-dot(ray_dir, out_collision.normal)));
-    out_collision.position = add(ray_origin, mul_k(ray_dir, t));
+    // out_collision.normal = normalize(cross(edge1, edge2));
+    // out_collision.normal = mul_k(out_collision.normal,
+                        // (float)sign(-dot(ray_dir, out_collision.normal)));
+    //out_collision.position = add(ray_origin, mul_k(ray_dir, t));
 
     return true;
   } else // This means that there is a line intersection but not a ray
@@ -328,6 +327,8 @@ bool ispc_iterate(Packed_UG * uniform ug,
   ray_origin = make_vec3(_ray_origin.x, _ray_origin.y, _ray_origin.z);
   vec4 _ray_dir = mat4_mul_vec4(ug->invtransform, make_vec4(ray_dir.x, ray_dir.y, ray_dir.z, 1.0f));
   ray_dir = make_vec3(_ray_dir.x, _ray_dir.y, _ray_dir.z);
+  float ray_dir_invlength = 1.0f / sqrt(dot(ray_dir, ray_dir));
+  vec3 ray_dir_normalized = mul_k(ray_dir, ray_dir_invlength);
   vec3 ray_invdir = make_vec3(1.0f / ray_dir.x, 1.0f / ray_dir.y, 1.0f / ray_dir.z);
   float hit_min;
   float hit_max;
@@ -395,9 +396,10 @@ bool ispc_iterate(Packed_UG * uniform ug,
         vec3 v1 = vertices[i1];
         vec3 v2 = vertices[i2];
         Collision col;
-        if (ray_triangle_test_moller(ray_origin, ray_dir, v0,
+        if (ray_triangle_test_moller(ray_origin, ray_dir_normalized, v0,
                                    v1, v2, col))
         {
+	  col.t *= ray_dir_invlength;
           if (col.t < min_collision.t &&
               col.t < (t_max + hit_min) * (1.0f + 1.0e-4f)) {
             col.mesh_id = ug->mesh_id;
