@@ -7,6 +7,7 @@ layout (set = 0, binding = 2) uniform sampler2D g_albedo;
 layout (set = 0, binding = 3) uniform sampler2D g_normal;
 layout (set = 0, binding = 4) uniform sampler2D g_metal;
 layout (set = 0, binding = 5) uniform sampler2D g_depth;
+layout (set = 0, binding = 6) uniform sampler2D g_gizmo;
 
 layout(set = 2, binding = 0) uniform sampler2D textures[128];
 
@@ -24,6 +25,7 @@ layout(set = 1, binding = 0, std140) uniform UBO {
   uvec3 light_table_size;
   vec4 offset;
   float taa_weight;
+  float display_gizmo_layer;
 } g_ubo;
 
 layout(set = 1, binding = 1) buffer LightTable { uint data[]; }
@@ -123,6 +125,10 @@ void main() {
     if (depth > 10000.0)
        color = vec3(0.5);
 //      color = sample_cubemap(ray_dir, 0.0, 1);
+
+    vec4 gizmo_value = texelFetch(g_gizmo, ivec2(gl_GlobalInvocationID.xy), 0);
+    color = mix(color, gizmo_value.xyz,
+          g_ubo.display_gizmo_layer * gizmo_value.a);
 
     vec3 h = texelFetch(history, ivec2(gl_GlobalInvocationID.xy), 0).xyz;
 //    color = vec3(roughness);

@@ -849,7 +849,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           });
     }
     gu.create_compute_pass(
-        "postprocess", {"shading.HDR", "gizmo_layer.color"},
+        "postprocess", {"shading.HDR"},
         {render_graph::Resource{
             .name = "postprocess.HDR",
             .type = render_graph::Type::Image,
@@ -863,20 +863,19 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                                     .layers = 1}}},
         [&] {
           sh_postprocess_comp::push_constants pc{};
-          pc.display_gizmo_layer = display_gizmo_layer ? 1.0f : 0.0f;
           pc.offset = vec4(drag_val, drag_val, drag_val, drag_val);
 
           gu.push_constants(&pc, sizeof(pc));
           gu.bind_resource("out_image", "postprocess.HDR");
           gu.bind_resource("in_image", "shading.HDR");
-          gu.bind_resource("gizmo_image", "gizmo_layer.color");
           gu.CS_set_shader("postprocess.comp.glsl");
           gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
         });
     gu.create_compute_pass(
         "shading",
         {"g_pass.albedo", "g_pass.normal", "g_pass.metal", "depth_mips",
-         "~shading.HDR", "IBL.specular", "IBL.LUT", "IBL.diffuse"},
+         "~shading.HDR", "IBL.specular", "IBL.LUT", "IBL.diffuse",
+         "g_pass.gizmo"},
         {render_graph::Resource{
             .name = "shading.HDR",
             .type = render_graph::Type::Image,
@@ -900,6 +899,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           ubo.taa_weight =
               (gizmo_layer.camera_moved || prev_cam_moved) ? 0.0f : 0.95f;
           prev_cam_moved = gizmo_layer.camera_moved;
+          ubo.display_gizmo_layer = display_gizmo_layer ? 1.0f : 0.0f;
           u32 ubo_id = gu.create_buffer(
               render_graph::Buffer{.usage_bits =
                                        vk::BufferUsageFlagBits::eUniformBuffer,
@@ -911,6 +911,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.bind_resource("g_albedo", "g_pass.albedo");
           gu.bind_resource("g_normal", "g_pass.normal");
           gu.bind_resource("g_metal", "g_pass.metal");
+          gu.bind_resource("g_gizmo", "g_pass.gizmo");
           gu.bind_resource("history", "~shading.HDR");
           gu.bind_resource("g_depth", "depth_mips");
           gu.bind_resource("textures", "IBL.diffuse", 0);
@@ -988,75 +989,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.CS_set_shader("linearize_depth.comp.glsl");
           gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
         });
-    gu.create_render_pass(
-        "gizmo_layer", {},
-        {
-            render_graph::Resource{
-                .name = "gizmo_layer.color",
-                .type = render_graph::Type::RT,
-                .rt_info =
-                    render_graph::RT{.format = vk::Format::eR32G32B32A32Sfloat,
-                                     .target =
-                                         render_graph::Render_Target::Color}},
-            render_graph::Resource{
-                .name = "gizmo_layer.depth",
-                .type = render_graph::Type::RT,
-                .rt_info =
-                    render_graph::RT{.format = vk::Format::eD32Sfloat,
-                                     .target =
-                                         render_graph::Render_Target::Depth}},
 
-        },
-        wsize.x, wsize.y, [&] {
-          gu.clear_color({0.0f, 0.0f, 0.0f, 0.0f});
-          gu.clear_depth(1.0f);
-          gu.VS_set_shader("gltf.vert.glsl");
-          gu.PS_set_shader("red.frag.glsl");
-          sh_gltf_vert::UBO ubo{};
-          ubo.proj = gizmo_layer.camera.proj;
-          ubo.view = gizmo_layer.camera.view;
-          ubo.camera_pos = gizmo_layer.camera.pos;
-          u32 ubo_id = gu.create_buffer(
-              render_graph::Buffer{.usage_bits =
-                                       vk::BufferUsageFlagBits::eUniformBuffer,
-                                   .size = sizeof(sh_gltf_vert::UBO)},
-              &ubo);
-          gu.bind_resource("UBO", ubo_id);
-          gu.IA_set_topology(vk::PrimitiveTopology::eTriangleList);
-          gu.IA_set_cull_mode(vk::CullModeFlagBits::eBack,
-                              vk::FrontFace::eClockwise, vk::PolygonMode::eLine,
-                              1.0f);
-          gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual,
-                                        false, 1.0f, -0.1f);
-          traverse_node(0, mat4(1.0f));
-          gu.release_resource(ubo_id);
-          int N = 16;
-          float dx = 10.0f;
-          float half = ((N - 1) * dx) / 2.0f;
-          ito(N) {
-            float x = i * dx - half;
-            gizmo_layer.push_line(vec3(x, 0.0f, -half), vec3(x, 0.0f, half),
-                                  vec3(1.0f, 1.0f, 1.0f));
-            gizmo_layer.push_line(vec3(-half, 0.0f, x), vec3(half, 0.0f, x),
-                                  vec3(1.0f, 1.0f, 1.0f));
-          }
-          if (display_ug) {
-            std::vector<vec3> ug_lines;
-            for (auto &snode : scene_nodes) {
-              std::vector<vec3> ug_lines_t;
-              snode.ug.fill_lines_render(ug_lines_t);
-              for (auto &p : ug_lines_t) {
-                vec4 t = snode.transform * vec4(p, 1.0f);
-                ug_lines.push_back(vec3(t.x, t.y, t.z));
-              }
-            }
-            ito(ug_lines.size() / 2) {
-              gizmo_layer.push_line(ug_lines[i * 2], ug_lines[i * 2 + 1],
-                                    vec3(1.0f, 1.0f, 1.0f));
-            }
-          }
-          gizmo_layer.draw(gu);
-        });
     gu.create_render_pass(
         "g_pass", {},
         {
@@ -1083,7 +1016,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                                      .target =
                                          render_graph::Render_Target::Color}},
             render_graph::Resource{
-                .name = "g_pass.vel",
+                .name = "g_pass.gizmo",
                 .type = render_graph::Type::RT,
                 .rt_info =
                     render_graph::RT{.format = vk::Format::eR32G32B32A32Sfloat,
@@ -1125,6 +1058,47 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           }
 
           traverse_node(0, mat4(1.0f));
+          if (display_gizmo_layer) {
+            gu.VS_set_shader("gltf.vert.glsl");
+            gu.PS_set_shader("red.frag.glsl");
+
+            gu.IA_set_topology(vk::PrimitiveTopology::eTriangleList);
+            gu.IA_set_cull_mode(vk::CullModeFlagBits::eBack,
+                                vk::FrontFace::eClockwise,
+                                vk::PolygonMode::eLine, 1.0f);
+            gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual,
+                                          false, 1.0f, -0.1f);
+            traverse_node(0, mat4(1.0f));
+
+            int N = 16;
+            float dx = 10.0f;
+            float half = ((N - 1) * dx) / 2.0f;
+            ito(N) {
+              float x = i * dx - half;
+              gizmo_layer.push_line(vec3(x, 0.0f, -half), vec3(x, 0.0f, half),
+                                    vec3(1.0f, 1.0f, 1.0f));
+              gizmo_layer.push_line(vec3(-half, 0.0f, x), vec3(half, 0.0f, x),
+                                    vec3(1.0f, 1.0f, 1.0f));
+            }
+            if (display_ug) {
+              std::vector<vec3> ug_lines;
+              for (auto &snode : scene_nodes) {
+                std::vector<vec3> ug_lines_t;
+                snode.ug.fill_lines_render(ug_lines_t);
+                for (auto &p : ug_lines_t) {
+                  vec4 t = snode.transform * vec4(p, 1.0f);
+                  ug_lines.push_back(vec3(t.x, t.y, t.z));
+                }
+              }
+              ito(ug_lines.size() / 2) {
+                gizmo_layer.push_line(ug_lines[i * 2], ug_lines[i * 2 + 1],
+                                      vec3(1.0f, 1.0f, 1.0f));
+              }
+            }
+            gizmo_layer.draw(gu);
+          }
+          gu.release_resource(ubo_id);
+
           //          u32 i = 0;
           //          for (auto &model : models) {
           //            auto &material = materials[i];
