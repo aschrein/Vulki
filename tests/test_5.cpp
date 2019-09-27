@@ -43,6 +43,7 @@ struct ISPC_Packed_UG {
   float _min[3], _max[3];
   uint bin_count[3];
   float bin_size;
+  uint mesh_id;
 };
 extern "C" void ispc_trace(ISPC_Packed_UG *ug, void *vertices, uint *faces,
                            vec3 *ray_dir, vec3 *ray_origin,
@@ -71,6 +72,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   Image_Raw spheremap;
   PBR_Model pbr_model;
   struct Scene_Node {
+    u32 id;
+    u32 material_id;
     mat4 transform;
     mat4 invtransform;
     std::vector<GLRF_Vertex_Static> vertices;
@@ -79,6 +82,22 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     UG ug = UG(1.0f, 1.0f);
     Packed_UG packed_ug;
     Oct_Tree octree;
+  };
+  auto get_interpolated_vertex = [&](Scene_Node &node, u32 face_id, vec2 uv) {
+    auto face = node.indices[face_id];
+    auto v0 = node.vertices[face.v0];
+    auto v1 = node.vertices[face.v1];
+    auto v2 = node.vertices[face.v2];
+    float k1 = uv.x;
+    float k2 = uv.y;
+    float k0 = 1.0f - uv.x - uv.y;
+    GLRF_Vertex_Static vertex;
+    vertex.normal = v0.normal * k0 + v1.normal * k1 + v2.normal * k2;
+    vertex.position = v0.position * k0 + v1.position * k1 + v2.position * k2;
+    vertex.tangent = v0.tangent * k0 + v1.tangent * k1 + v2.tangent * k2;
+    vertex.binormal = v0.binormal * k0 + v1.binormal * k1 + v2.binormal * k2;
+    vertex.texcoord = v0.texcoord * k0 + v1.texcoord * k1 + v2.texcoord * k2;
+    return vertex.transform(node.transform);
   };
   std::vector<Scene_Node> scene_nodes;
   auto load_env = [&](std::string const &filename) {
@@ -95,6 +114,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
       for (auto i : node.meshes) {
         auto &mesh = pbr_model.meshes[i];
         Scene_Node snode;
+        snode.id = scene_nodes.size() + 1;
+        snode.material_id = i;
         // @TODO: Update transform separately
         snode.transform = transform;
         snode.invtransform = glm::inverse(transform);
@@ -174,7 +195,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
 
   bool trace_ispc = true;
   u32 jobs_per_item = 32 * 100;
-  bool use_jobs = false;
+  bool use_jobs = true;
   u32 max_jobs_per_iter = 32 * 10000;
 
   marl::Scheduler scheduler;
@@ -241,15 +262,13 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
         float(gizmo_layer.example_viewport.extent.width) /
         gizmo_layer.example_viewport.extent.height;
   };
-  auto reset_path_tracing_state = [&](u32 width, u32 height) {
-    grab_path_tracing_cam();
-    path_tracing_queue.reset();
-    path_tracing_image.init(width, height);
-    path_tracing_camera.aspect = f32(width) / height;
+  auto add_primary_rays = [&]() {
+    u32 width = path_tracing_image.width;
+    u32 height = path_tracing_image.height;
     ito(height) {
       jto(width) {
         // 16 samples per pixel
-        uint N_Samples = 16;
+        uint N_Samples = 1;
         kto(N_Samples) {
           f32 jitter_u = halton(k + 1, 2);
           f32 jitter_v = halton(k + 1, 3);
@@ -268,15 +287,28 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
       }
     }
   };
+  auto reset_path_tracing_state = [&](u32 width, u32 height) {
+    grab_path_tracing_cam();
+    path_tracing_queue.reset();
+    path_tracing_image.init(width, height);
+    path_tracing_camera.aspect = f32(width) / height;
+    add_primary_rays();
+  };
 
   auto path_tracing_iteration = [&] {
-    auto light_value = [](vec3 ray_dir, vec3 color) {
-      float brightness = (0.5f * (0.5f + 0.5f * ray_dir.z));
-      float r = (0.01f * std::pow(0.5f - 0.5f * ray_dir.z, 4.0f));
-      float g = (0.01f * std::pow(0.5f - 0.5f * ray_dir.x, 4.0f));
-      float b = (0.01f * std::pow(0.5f - 0.5f * ray_dir.y, 4.0f));
-      return vec4(color.x * (brightness + r), color.x * (g + brightness),
-                  color.x * (brightness + b), 1.0f);
+    auto light_value = [&spheremap](vec3 ray_dir, vec3 color) {
+      //      float brightness = (0.5f * (0.5f + 0.5f * ray_dir.z));
+      //      float r = (0.01f * std::pow(0.5f - 0.5f * ray_dir.z, 4.0f));
+      //      float g = (0.01f * std::pow(0.5f - 0.5f * ray_dir.x, 4.0f));
+      //      float b = (0.01f * std::pow(0.5f - 0.5f * ray_dir.y, 4.0f));
+      //      return vec4(color.x * (brightness + r), color.x * (g +
+      //      brightness),
+      //                  color.x * (brightness + b), 1.0f);
+      float theta = std::acos(ray_dir.y);
+      vec2 xy = glm::normalize(vec2(ray_dir.z, ray_dir.x));
+      float phi = -std::atan2(xy.x, xy.y);
+      return vec4(color, 1.0f) *
+             spheremap.sample(vec2((phi / M_PI / 2.0f) + 0.5f, theta / M_PI));
     };
     if (trace_ispc) {
       u32 jobs_sofar = 0;
@@ -302,7 +334,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           ito((ray_jobs.size() + jobs_per_item - 1) / jobs_per_item) {
             work_payload.push_back(JobPayload{
                 .func =
-                    [&scene_nodes, &ray_origins, &ray_dirs, &ray_collisions](JobDesc desc) {
+                    [&scene_nodes, &ray_origins, &ray_dirs,
+                     &ray_collisions](JobDesc desc) {
                       for (auto &node : scene_nodes) {
                         ISPC_Packed_UG ispc_packed_ug;
                         ispc_packed_ug.ids = &node.packed_ug.ids[0];
@@ -310,10 +343,12 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                             &node.packed_ug.arena_table[0];
                         memcpy(ispc_packed_ug._min, &node.packed_ug.min, 12);
                         memcpy(ispc_packed_ug._max, &node.packed_ug.max, 12);
-                        memcpy(ispc_packed_ug.invtransform, &glm::transpose(node.invtransform)[0][0], 64);
+                        memcpy(ispc_packed_ug.invtransform,
+                               &glm::transpose(node.invtransform)[0][0], 64);
                         memcpy(ispc_packed_ug.bin_count,
                                &node.packed_ug.bin_count, 12);
                         ispc_packed_ug.bin_size = node.packed_ug.bin_size;
+                        ispc_packed_ug.mesh_id = node.id;
                         uint _tmp = desc.size;
                         ispc_trace(
                             &ispc_packed_ug, (void *)&node.positions_flat[0],
@@ -346,9 +381,11 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
             ispc_packed_ug.bins_indices = &node.packed_ug.arena_table[0];
             memcpy(ispc_packed_ug._min, &node.packed_ug.min, 12);
             memcpy(ispc_packed_ug._max, &node.packed_ug.max, 12);
-            memcpy(ispc_packed_ug.invtransform, &glm::transpose(node.invtransform)[0][0], 64);
+            memcpy(ispc_packed_ug.invtransform,
+                   &glm::transpose(node.invtransform)[0][0], 64);
             memcpy(ispc_packed_ug.bin_count, &node.packed_ug.bin_count, 12);
             ispc_packed_ug.bin_size = node.packed_ug.bin_size;
+            ispc_packed_ug.mesh_id = node.id;
             uint _tmp = ray_jobs.size();
             ispc_trace(&ispc_packed_ug, (void *)&node.positions_flat[0],
                        (uint *)&node.indices[0], &ray_dirs[0], &ray_origins[0],
@@ -367,26 +404,53 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
               path_tracing_image.add_value(job.pixel_x, job.pixel_y,
                                            vec4(0.0f, 0.0f, 0.0f, job.weight));
             } else {
-              vec3 tangent =
-                  glm::normalize(glm::cross(job.ray_dir, min_col.normal));
-              vec3 binormal = glm::cross(tangent, min_col.normal);
-              u32 secondary_N = 4 / (1 << job.depth);
-              ito(secondary_N) {
-                vec3 rand = frand.rand_unit_sphere();
-                auto new_job = job;
-                new_job.ray_dir =
-                    glm::normalize(min_col.normal * (1.0f + rand.z) +
-                                   tangent * rand.x + binormal * rand.y);
-                new_job.ray_origin = min_col.position;
-                new_job.weight *= 1.0f / secondary_N * 0.5f;
-                new_job.depth += 1;
-                path_tracing_queue.enqueue(new_job);
+              auto &node = scene_nodes[min_col.mesh_id - 1];
+              auto face = node.indices[min_col.face_id];
+              vec2 uv = vec2(min_col.u, min_col.v);
+              auto vertex = get_interpolated_vertex(node, min_col.face_id, uv);
+
+              auto &mat = pbr_model.materials[node.material_id];
+              vec4 albedo =
+                  pbr_model.images[mat.albedo_id].sample(vertex.texcoord);
+              if (albedo.a < 0.5f) {
+                job.ray_origin = min_col.position - min_col.normal * 1.0e-3f;
+                path_tracing_queue.enqueue(job);
+              } else {
+                vec4 normal_map =
+                    pbr_model.images[mat.normal_id].sample(vertex.texcoord);
+                path_tracing_image.add_value(job.pixel_x, job.pixel_y, albedo);
+                //              vec3 refl = glm::reflect(job.ray_dir,
+                //              vertex.normal); vec3 tangent = vertex.tangent;
+                //              vec3 binormal = vertex.binormal;
+                //              u32 secondary_N = 4 / (1 << job.depth);
+                //              ito(secondary_N) {
+                //                vec3 rand =
+                //                    frand.uniform_sample_cone(0.01f, tangent,
+                //                    binormal, refl);
+                //                auto new_job = job;
+                //                new_job.ray_dir = rand;
+                //                //                    glm::normalize(normal *
+                //                (1.0f + rand.z) +
+                //                //                                   tangent *
+                //                rand.x + binormal
+                //                //                                   *
+                //                rand.y); new_job.ray_origin =
+                //                min_col.position; new_job.weight *= 1.0f /
+                //                secondary_N * 0.5f; new_job.depth += 1;
+                //                new_job.color = vec3(albedo) * job.color;
+                //                path_tracing_queue.enqueue(new_job);
+                //              }
               }
             }
           } else {
-            path_tracing_image.add_value(
-                job.pixel_x, job.pixel_y,
-                job.weight * light_value(job.ray_dir, vec3(1.0f, 1.0f, 1.0f)));
+            if (job.depth == 0) {
+              path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+                                           vec4(0.5f, 0.5f, 0.5f, job.weight));
+            } else {
+              path_tracing_image.add_value(
+                  job.pixel_x, job.pixel_y,
+                  job.weight * light_value(job.ray_dir, job.color));
+            }
           }
         }
       }
@@ -401,10 +465,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
         bool col_found = false;
         Collision min_col{.t = 1.0e10f};
         for (auto &node : scene_nodes) {
-          vec4 new_ray_dir = // node.invtransform *
-          vec4(job.ray_dir, 1.0f);
-          vec4 new_ray_origin = // node.invtransform *
-          vec4(job.ray_origin, 1.0f);
+          vec4 new_ray_dir = node.invtransform * vec4(job.ray_dir, 1.0f);
+          vec4 new_ray_origin = node.invtransform * vec4(job.ray_origin, 1.0f);
           node.ug.iterate(new_ray_dir, new_ray_origin,
                           [&](std::vector<u32> const &items, float t_max) {
                             bool any_hit = false;
@@ -419,9 +481,9 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                                                          new_ray_dir, v0, v1,
                                                          v2, col)) {
                                 if (col.t < min_col.t && col.t < t_max) {
-                                  min_col = col;
-                                  col.mesh_id = 0;
+                                  col.mesh_id = node.id;
                                   col.face_id = face_id;
+                                  min_col = col;
                                   col_found = any_hit = true;
                                 }
                               }
@@ -433,36 +495,57 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
         if (col_found) {
           // path_tracing_image.add_value(job.pixel_x, job.pixel_y,
           //                              vec4(1.0f, 1.0f, 1.0f, 1.0f));
-          if (job.depth == 0) {
+          if (job.depth == 1) {
             // Terminate
             path_tracing_image.add_value(job.pixel_x, job.pixel_y,
                                          vec4(0.0f, 0.0f, 0.0f, job.weight));
           } else {
-            vec3 tangent =
-                glm::normalize(glm::cross(job.ray_dir, min_col.normal));
-            vec3 binormal = glm::cross(tangent, min_col.normal);
-            u32 secondary_N = 16;
-            // if (min_col.material_id >= 0) {
-            //   auto const &mat = test_model.materials[min_col.material_id];
-            //   path_tracing_image.add_value(
-            //       job.pixel_x, job.pixel_y,
-            //       job.weight * light_value(job.ray_dir, vec3(mat.emission[0],
-            //                                                  mat.emission[1],
-            //                                                  mat.emission[2])));
-            // }
-            ito(secondary_N) {
-              vec3 rand = frand.rand_unit_sphere();
-              auto new_job = job;
+            auto &node = scene_nodes[min_col.mesh_id - 1];
+            auto face = node.indices[min_col.face_id];
+            vec2 uv = vec2(min_col.u, min_col.v);
+            auto vertex = get_interpolated_vertex(node, min_col.face_id, uv);
 
-              new_job.ray_dir =
-                  glm::normalize(min_col.normal * (1.0f + rand.z) +
-                                 tangent * rand.x + binormal * rand.y);
-              new_job.ray_origin = min_col.position;
-              new_job.weight *= 1.0f / secondary_N;
-              new_job.color = new_job.color;
-              new_job.depth += 1;
-              path_tracing_queue.enqueue(new_job);
+            auto &mat = pbr_model.materials[node.material_id];
+            vec4 albedo =
+                pbr_model.images[mat.albedo_id].sample(vertex.texcoord);
+            if (albedo.a < 0.5f) {
+              job.ray_origin = min_col.position - min_col.normal * 1.0e-3f;
+              path_tracing_queue.enqueue(job);
+            } else {
+              vec4 normal_map =
+                  pbr_model.images[mat.normal_id].sample(vertex.texcoord);
+              path_tracing_image.add_value(job.pixel_x, job.pixel_y, albedo);
             }
+            //            vec3 tangent =
+            //                glm::normalize(glm::cross(job.ray_dir,
+            //                min_col.normal));
+            //            vec3 binormal = glm::cross(tangent, min_col.normal);
+            //            u32 secondary_N = 16;
+            //            // if (min_col.material_id >= 0) {
+            //            //   auto const &mat =
+            //            test_model.materials[min_col.material_id];
+            //            //   path_tracing_image.add_value(
+            //            //       job.pixel_x, job.pixel_y,
+            //            //       job.weight * light_value(job.ray_dir,
+            //            vec3(mat.emission[0],
+            //            // mat.emission[1],
+            //            // mat.emission[2])));
+            //            // }
+            //            ito(secondary_N) {
+            //              vec3 rand = frand.rand_unit_sphere();
+            //              auto new_job = job;
+
+            //              new_job.ray_dir =
+            //                  glm::normalize(min_col.normal * (1.0f + rand.z)
+            //                  +
+            //                                 tangent * rand.x + binormal *
+            //                                 rand.y);
+            //              new_job.ray_origin = min_col.position;
+            //              new_job.weight *= 1.0f / secondary_N;
+            //              new_job.color = new_job.color;
+            //              new_job.depth += 1;
+            //              path_tracing_queue.enqueue(new_job);
+            //            }
           }
         } else {
           path_tracing_image.add_value(job.pixel_x, job.pixel_y,
@@ -496,7 +579,9 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   render_graph::Graphics_Utils gu = render_graph::Graphics_Utils::create();
   float drag_val = 0.0;
 
-  bool display_gizmo_layer = false;
+  // #IMGUI
+  bool display_gizmo_layer = true;
+  bool display_ug = false;
   gu.set_on_gui([&] {
     gizmo_layer.on_imgui_begin();
     static bool show_demo = true;
@@ -554,20 +639,28 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     ImGui::End();
     ImGui::Begin("Rendering configuration");
     if (ImGui::Button("Render with path tracer")) {
-
-      reset_path_tracing_state(512, 512);
+      reset_path_tracing_state(256, 256);
     }
-    ImGui::Checkbox("Camera jitter", &gizmo_layer.jitter_on);
+    if (ImGui::Button("Add primary rays")) {
+      add_primary_rays();
+    }
+
+    ImGui::Checkbox("Camera           jitter", &gizmo_layer.jitter_on);
     ImGui::Checkbox("Gizmo layer", &display_gizmo_layer);
+    ImGui::Checkbox("Display UG", &display_ug);
     ImGui::Checkbox("Use ISPC", &trace_ispc);
     ImGui::Checkbox("Use MT", &use_jobs);
     // Select in the list of named images available for display
     auto images = gu.get_img_list();
     std::vector<char const *> images_;
-    for (auto &img_name : images) {
-      images_.push_back(img_name.c_str());
-    }
     static int item_current = 0;
+    int i = 0;
+    for (auto &img_name : images) {
+      if (img_name == "path_traced_scene")
+        item_current = i;
+      images_.push_back(img_name.c_str());
+      i++;
+    }
     ImGui::Combo("Select Image", &item_current, &images_[0], images_.size());
     auto wsize = ImGui::GetWindowSize();
     // @TODO: Select mip level
@@ -743,13 +836,15 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
             u32 buf_id = gu.create_buffer(
                 render_graph::Buffer{
                     .usage_bits = vk::BufferUsageFlagBits::eStorageBuffer,
-                    .size = u32(path_tracing_image.data.size() * sizeof(path_tracing_image.data[0]))},
+                    .size = u32(path_tracing_image.data.size() *
+                                sizeof(path_tracing_image.data[0]))},
                 &path_tracing_image.data[0]);
 
             gu.bind_resource("Bins", buf_id);
             gu.bind_resource("out_image", "path_traced_scene");
             gu.CS_set_shader("swap_image.comp.glsl");
-            gu.dispatch(u32(path_tracing_image.width + 15) / 16, u32(path_tracing_image.height + 15) / 16, 1);
+            gu.dispatch(u32(path_tracing_image.width + 15) / 16,
+                        u32(path_tracing_image.height + 15) / 16, 1);
             gu.release_resource(buf_id);
           });
     }
@@ -773,8 +868,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
 
           gu.push_constants(&pc, sizeof(pc));
           gu.bind_resource("out_image", "postprocess.HDR");
-          gu.bind_resource("in_image", "shading.HDR");          // textures[1]);
-          gu.bind_resource("gizmo_image", "gizmo_layer.color"); // textures[1]);
+          gu.bind_resource("in_image", "shading.HDR");
+          gu.bind_resource("gizmo_image", "gizmo_layer.color");
           gu.CS_set_shader("postprocess.comp.glsl");
           gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
         });
@@ -945,18 +1040,20 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
             gizmo_layer.push_line(vec3(-half, 0.0f, x), vec3(half, 0.0f, x),
                                   vec3(1.0f, 1.0f, 1.0f));
           }
-          std::vector<vec3> ug_lines;
-          for (auto &snode : scene_nodes) {
-            std::vector<vec3> ug_lines_t;
-            snode.ug.fill_lines_render(ug_lines_t);
-            for (auto &p : ug_lines_t) {
-              vec4 t = snode.transform * vec4(p, 1.0f);
-              ug_lines.push_back(vec3(t.x, t.y, t.z));
+          if (display_ug) {
+            std::vector<vec3> ug_lines;
+            for (auto &snode : scene_nodes) {
+              std::vector<vec3> ug_lines_t;
+              snode.ug.fill_lines_render(ug_lines_t);
+              for (auto &p : ug_lines_t) {
+                vec4 t = snode.transform * vec4(p, 1.0f);
+                ug_lines.push_back(vec3(t.x, t.y, t.z));
+              }
             }
-          }
-          ito(ug_lines.size() / 2) {
-            gizmo_layer.push_line(ug_lines[i * 2], ug_lines[i * 2 + 1],
-                                  vec3(1.0f, 1.0f, 1.0f));
+            ito(ug_lines.size() / 2) {
+              gizmo_layer.push_line(ug_lines[i * 2], ug_lines[i * 2 + 1],
+                                    vec3(1.0f, 1.0f, 1.0f));
+            }
           }
           gizmo_layer.draw(gu);
         });

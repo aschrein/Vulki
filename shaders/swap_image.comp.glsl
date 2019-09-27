@@ -15,5 +15,5 @@ void main() {
       in_value = vec4((xy.x/8) % 2 == 0 ? 0.0 : 1.0, (xy.y/8) % 2 == 0 ? 1.0 : 0.0 , 0.0, 1.0);
     }
     imageStore(out_image, ivec2(gl_GlobalInvocationID.xy),
-        in_value/in_value.w);
+        sqrt(in_value/in_value.w));
 }

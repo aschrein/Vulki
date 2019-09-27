@@ -234,7 +234,7 @@ struct Gizmo_Layer {
   bool camera_moved = false;
   vec2 camera_jitter;
   uint cur_halton_id;
-  bool jitter_on = true;
+  bool jitter_on = false;
   const uint MAX_HALTON = 64u;
   vec3 mouse_ray;
   float mx, my;

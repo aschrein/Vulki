@@ -33,11 +33,12 @@ struct Packed_UG {
   float min[3], max[3];
   uint bin_count[3];
   float bin_size;
+  uint mesh_id;
 };
 struct Collision {
   vec3 position, normal;
   uint mesh_id, face_id;
-  float t, u, v, du, dv;
+  float t, u, v;
 };
 // https://stackoverflow.com/questions/1148309/inverting-a-4x4-matrix
 bool invert_matrix(const float m[16], float invOut[16])
@@ -399,6 +400,8 @@ bool ispc_iterate(Packed_UG * uniform ug,
         {
           if (col.t < min_collision.t &&
               col.t < (t_max + hit_min) * (1.0f + 1.0e-4f)) {
+            col.mesh_id = ug->mesh_id;
+            col.face_id = face_id/3;
             min_collision = col;
             found = true;
           }

@@ -47,6 +47,88 @@ struct Image_Raw {
   u32 height;
   vk::Format format;
   std::vector<u8> data;
+  vec4 load(uvec2 coord) {
+    u32 bpc = 4u;
+    switch (format) {
+    case vk::Format::eR8G8B8A8Unorm:
+    case vk::Format::eR8G8B8A8Srgb:
+      bpc = 4u;
+      break;
+    case vk::Format::eR32G32B32Sfloat:
+      bpc = 12u;
+      break;
+    default:
+      ASSERT_PANIC(false && "unsupported format");
+    }
+    auto load_f32 = [&](uvec2 coord, u32 component) {
+      uvec2 size = uvec2(width, height);
+      return *(
+          f32 *)&data[coord.x * bpc + coord.y * size.x * bpc + component * 4u];
+    };
+    uvec2 size = uvec2(width, height);
+    if (coord.x >= size.x)
+      coord.x = size.x - 1;
+    if (coord.y >= size.y)
+      coord.y = size.y - 1;
+    switch (format) {
+    case vk::Format::eR8G8B8A8Unorm: {
+      u8 r = data[coord.x * bpc + coord.y * size.x * bpc];
+      u8 g = data[coord.x * bpc + coord.y * size.x * bpc + 1u];
+      u8 b = data[coord.x * bpc + coord.y * size.x * bpc + 2u];
+      u8 a = data[coord.x * bpc + coord.y * size.x * bpc + 3u];
+      return vec4(float(r) / 255.0f, float(g) / 255.0f, float(b) / 255.0f,
+                  float(a) / 255.0f);
+    }
+    case vk::Format::eR8G8B8A8Srgb: {
+      u8 r = data[coord.x * bpc + coord.y * size.x * bpc];
+      u8 g = data[coord.x * bpc + coord.y * size.x * bpc + 1u];
+      u8 b = data[coord.x * bpc + coord.y * size.x * bpc + 2u];
+      u8 a = data[coord.x * bpc + coord.y * size.x * bpc + 3u];
+
+      auto out = vec4(float(r) / 255.0f, float(g) / 255.0f, float(b) / 255.0f,
+                      float(a) / 255.0f);
+      out.r = std::pow(out.r, 2.2f);
+      out.g = std::pow(out.g, 2.2f);
+      out.b = std::pow(out.b, 2.2f);
+      out.a = std::pow(out.a, 2.2f);
+      return out;
+    }
+    case vk::Format::eR32G32B32Sfloat: {
+      f32 r = load_f32(coord, 0u);
+      f32 g = load_f32(coord, 1u);
+      f32 b = load_f32(coord, 2u);
+      return vec4(r, g, b, 1.0f);
+    }
+    default:
+      ASSERT_PANIC(false && "unsupported format");
+    }
+  };
+  vec4 sample(vec2 uv) {
+    uvec2 size = uvec2(width, height);
+    vec2 suv = uv * vec2(float(size.x - 1u), float(size.y - 1u));
+    uvec2 coord[] = {
+        uvec2(u32(suv.x), u32(suv.y)),
+        uvec2(u32(suv.x), u32(suv.y + 1.0f)),
+        uvec2(u32(suv.x + 1.0f), u32(suv.y)),
+        uvec2(u32(suv.x + 1.0f), u32(suv.y + 1.0f)),
+    };
+    ito(4) {
+      if (coord[i].x >= size.x)
+        coord[i].x = size.x - 1;
+      if (coord[i].y >= size.y)
+        coord[i].y = size.y - 1;
+    }
+    vec2 fract = vec2(suv.x - std::floor(suv.x), suv.y - std::floor(suv.y));
+    float weights[] = {
+        (1.0f - fract.x) * (1.0f - fract.y),
+        (1.0f - fract.x) * (fract.y),
+        (fract.x) * (1.0f - fract.y),
+        (fract.x) * (fract.y),
+    };
+    vec4 result = vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    ito(4) result += load(coord[i]) * weights[i];
+    return result;
+  };
 };
 
 struct Vertex_Attribute {
@@ -77,12 +159,59 @@ struct Vertex_3p3n2t {
   vec3 normal;
   vec2 texcoord;
 };
+
+// https://github.com/graphitemaster/normals_revisited
+static float minor(const float m[16], int r0, int r1, int r2, int c0, int c1,
+                   int c2) {
+  return m[4 * r0 + c0] * (m[4 * r1 + c1] * m[4 * r2 + c2] -
+                           m[4 * r2 + c1] * m[4 * r1 + c2]) -
+         m[4 * r0 + c1] * (m[4 * r1 + c0] * m[4 * r2 + c2] -
+                           m[4 * r2 + c0] * m[4 * r1 + c2]) +
+         m[4 * r0 + c2] * (m[4 * r1 + c0] * m[4 * r2 + c1] -
+                           m[4 * r2 + c0] * m[4 * r1 + c1]);
+}
+
+static void cofactor(const float src[16], float dst[16]) {
+  dst[0] = minor(src, 1, 2, 3, 1, 2, 3);
+  dst[1] = -minor(src, 1, 2, 3, 0, 2, 3);
+  dst[2] = minor(src, 1, 2, 3, 0, 1, 3);
+  dst[3] = -minor(src, 1, 2, 3, 0, 1, 2);
+  dst[4] = -minor(src, 0, 2, 3, 1, 2, 3);
+  dst[5] = minor(src, 0, 2, 3, 0, 2, 3);
+  dst[6] = -minor(src, 0, 2, 3, 0, 1, 3);
+  dst[7] = minor(src, 0, 2, 3, 0, 1, 2);
+  dst[8] = minor(src, 0, 1, 3, 1, 2, 3);
+  dst[9] = -minor(src, 0, 1, 3, 0, 2, 3);
+  dst[10] = minor(src, 0, 1, 3, 0, 1, 3);
+  dst[11] = -minor(src, 0, 1, 3, 0, 1, 2);
+  dst[12] = -minor(src, 0, 1, 2, 1, 2, 3);
+  dst[13] = minor(src, 0, 1, 2, 0, 2, 3);
+  dst[14] = -minor(src, 0, 1, 2, 0, 1, 3);
+  dst[15] = minor(src, 0, 1, 2, 0, 1, 2);
+}
+
+static mat4 cofactor(mat4 const &in) {
+  mat4 out;
+  cofactor(&in[0][0], &out[0][0]);
+  return out;
+}
+
 struct GLRF_Vertex_Static {
   vec3 position;
   vec3 normal;
   vec3 tangent;
   vec3 binormal;
   vec2 texcoord;
+  GLRF_Vertex_Static transform(mat4 const &transform) {
+    GLRF_Vertex_Static out;
+    mat4 cmat = cofactor(transform);
+    out.position = vec3(transform * vec4(position, 1.0f));
+    out.normal = vec3(cmat * vec4(normal, 0.0f));
+    out.tangent = vec3(cmat * vec4(tangent, 0.0f));
+    out.binormal = vec3(cmat * vec4(binormal, 0.0f));
+    out.texcoord = texcoord;
+    return out;
+  }
 };
 struct Vertex_3p3n3c2t_mat {
   vec3 position;
@@ -291,36 +420,6 @@ struct PBR_Material {
   vec4 albedo_factor = vec4(1.0f);
 };
 
-// https://github.com/graphitemaster/normals_revisited
-static float minor(const float m[16], int r0, int r1, int r2, int c0, int c1,
-                   int c2) {
-  return m[4 * r0 + c0] * (m[4 * r1 + c1] * m[4 * r2 + c2] -
-                           m[4 * r2 + c1] * m[4 * r1 + c2]) -
-         m[4 * r0 + c1] * (m[4 * r1 + c0] * m[4 * r2 + c2] -
-                           m[4 * r2 + c0] * m[4 * r1 + c2]) +
-         m[4 * r0 + c2] * (m[4 * r1 + c0] * m[4 * r2 + c1] -
-                           m[4 * r2 + c0] * m[4 * r1 + c1]);
-}
-
-static void cofactor(const float src[16], float dst[16]) {
-  dst[0] = minor(src, 1, 2, 3, 1, 2, 3);
-  dst[1] = -minor(src, 1, 2, 3, 0, 2, 3);
-  dst[2] = minor(src, 1, 2, 3, 0, 1, 3);
-  dst[3] = -minor(src, 1, 2, 3, 0, 1, 2);
-  dst[4] = -minor(src, 0, 2, 3, 1, 2, 3);
-  dst[5] = minor(src, 0, 2, 3, 0, 2, 3);
-  dst[6] = -minor(src, 0, 2, 3, 0, 1, 3);
-  dst[7] = minor(src, 0, 2, 3, 0, 1, 2);
-  dst[8] = minor(src, 0, 1, 3, 1, 2, 3);
-  dst[9] = -minor(src, 0, 1, 3, 0, 2, 3);
-  dst[10] = minor(src, 0, 1, 3, 0, 1, 3);
-  dst[11] = -minor(src, 0, 1, 3, 0, 1, 2);
-  dst[12] = -minor(src, 0, 1, 2, 1, 2, 3);
-  dst[13] = minor(src, 0, 1, 2, 0, 2, 3);
-  dst[14] = -minor(src, 0, 1, 2, 0, 1, 3);
-  dst[15] = minor(src, 0, 1, 2, 0, 1, 2);
-}
-
 struct Transform_Node {
   vec3 offset;
   quat rotation;
@@ -351,7 +450,7 @@ struct PBR_Model {
 struct Collision {
   vec3 position, normal;
   u32 mesh_id, face_id;
-  float t, u, v, du, dv;
+  float t, u, v;
 };
 // Möller–Trumbore intersection algorithm
 static bool ray_triangle_test_moller(vec3 ray_origin, vec3 ray_dir, vec3 v0,

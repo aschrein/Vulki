@@ -28,6 +28,21 @@ public:
       return (rand % range) + begin;
     }
   }
+  // Z is up here
+  vec3 polar_to_cartesian(float sinTheta, float cosTheta, float sinPhi,
+                          float cosPhi) {
+    return vec3(sinTheta * cosPhi, sinTheta * sinPhi, cosTheta);
+  }
+  // Z is up here
+  vec3 uniform_sample_cone(float cos_theta_max, vec3 xbasis, vec3 ybasis,
+                           vec3 zbasis) {
+    vec2 rand = vec2(rand_unit_float(), rand_unit_float());
+    float cosTheta = (1.0f - rand.x) + rand.x * cos_theta_max;
+    float sinTheta = std::sqrt(1.0f - cosTheta * cosTheta);
+    float phi = rand.y * M_PI * 2.0f;
+    vec3 samplev = polar_to_cartesian(sinTheta, cosTheta, sin(phi), cos(phi));
+    return samplev.x * xbasis + samplev.y * ybasis + samplev.z * zbasis;
+  }
   vec3 rand_unit_sphere() {
     while (true) {
       vec3 pos = rand_unit_cube();
