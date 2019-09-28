@@ -28,7 +28,11 @@ vec4 make_vec4(float x, float y, float z, float w) {
 }
 struct Packed_UG {
   float invtransform[16];
+  // An array of (bin_offset, cnt)
+  // bin_offset points to this->ids, where bin_offset==0 means no items
+  // With an entry for each cell in the uniform grid
   uint * uniform bins_indices;
+  // An array of face_ids
   uint * uniform ids;
   float min[3], max[3];
   uint bin_count[3];
@@ -323,12 +327,16 @@ bool intersect_box(Packed_UG * uniform ug, vec3 ray_invdir, vec3 ray_origin,
 bool ispc_iterate(Packed_UG * uniform ug,
             vec3 * uniform vertices, uint * uniform faces,
             vec3 ray_dir, vec3 ray_origin, Collision * uniform out_collision, varying int ray_id) {
+  // Transform ray origin/direction into inverse model space
   vec4 _ray_origin = mat4_mul_vec4(ug->invtransform, make_vec4(ray_origin.x, ray_origin.y, ray_origin.z, 1.0f));
   ray_origin = make_vec3(_ray_origin.x, _ray_origin.y, _ray_origin.z);
   vec4 _ray_dir = mat4_mul_vec4(ug->invtransform, make_vec4(ray_dir.x, ray_dir.y, ray_dir.z, 1.0f));
   ray_dir = make_vec3(_ray_dir.x, _ray_dir.y, _ray_dir.z);
+  // For triangle-ray intersection we need a normalized ray direction
+  // Then we just scale t *= inv_length which makes it global world scale
   float ray_dir_invlength = 1.0f / sqrt(dot(ray_dir, ray_dir));
   vec3 ray_dir_normalized = mul_k(ray_dir, ray_dir_invlength);
+  // Inverse ray for uniform grid iteration
   vec3 ray_invdir = make_vec3(1.0f / ray_dir.x, 1.0f / ray_dir.y, 1.0f / ray_dir.z);
   float hit_min;
   float hit_max;
@@ -388,6 +396,7 @@ bool ispc_iterate(Packed_UG * uniform ug,
       bool found = false;
       uint items_count = ug->bins_indices[2 * o + 1];
       for (uint i = bin_offset; i < bin_offset + items_count; i++) {
+	// Vertex fetch
         uint face_id = ug->ids[i] * 3;
         uint i0 = faces[face_id];
         uint i1 = faces[face_id + 1];
@@ -399,8 +408,12 @@ bool ispc_iterate(Packed_UG * uniform ug,
         if (ray_triangle_test_moller(ray_origin, ray_dir_normalized, v0,
                                    v1, v2, col))
         {
+	  // Make it world scale as we use a normalized ray for the test
 	  col.t *= ray_dir_invlength;
-          if (col.t < min_collision.t &&
+          if (
+	      // Check that this is closer that the solution we already have
+	      col.t < min_collision.t &&
+	      // Check that the point lies within the current uniform grid cell
               col.t < (t_max + hit_min) * (1.0f + 1.0e-4f)) {
             col.mesh_id = ug->mesh_id;
             col.face_id = face_id/3;
@@ -423,9 +436,15 @@ bool ispc_iterate(Packed_UG * uniform ug,
 }
 
 export void ispc_trace(Packed_UG * uniform ug,
-                  vec3 * uniform vertices, uint * uniform faces,
-                  vec3 * uniform ray_dir, vec3 * uniform ray_origin,
-                  Collision * uniform out_collision, uniform uint * uniform ray_count)
+		       // Model space positions
+		       vec3 * uniform vertices,
+		       // Index buffer
+		       uint * uniform faces,
+		       // Normalized ray direction and world space ray origin
+		       vec3 * uniform ray_dir, vec3 * uniform ray_origin,
+		       // An array of collisions to write to
+		       Collision * uniform out_collision,
+		       uniform uint * uniform ray_count)
 {
   foreach(i = 0 ... ray_count[0]) {
     ispc_iterate(ug, vertices, faces, ray_dir[i], ray_origin[i], out_collision, i);

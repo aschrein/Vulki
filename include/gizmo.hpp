@@ -236,7 +236,7 @@ struct Gizmo_Layer {
   uint cur_halton_id;
   bool jitter_on = false;
   const uint MAX_HALTON = 64u;
-  vec3 mouse_ray;
+  vec3 mouse_ray = vec3(1.0f, 0.0f, 0.0f);
   float mx, my;
 
   ImVec2 old_mpos{};

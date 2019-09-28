@@ -278,7 +278,7 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
         // imported as unknown/lightmap and have (ao, roughness, metalness)
         // as components
         case aiTextureType_LIGHTMAP:
-//          format = vk::Format::eR8G8B8A8Unorm;
+          format = vk::Format::eR8G8B8A8Unorm;
           out_material.arm_id = i32(out.images.size());
           break;
         default:

@@ -273,8 +273,8 @@ struct PT_Manager {
     u32 height = path_tracing_image.height;
     ito(height) {
       jto(width) {
-        // 16 samples per pixel
-        uint N_Samples = 1;
+        // samples per pixel
+        uint N_Samples = 16;
         kto(N_Samples) {
           f32 jitter_u = halton(i + path_tracing_camera.halton_counter + 1, 2);
           f32 jitter_v = halton(i + path_tracing_camera.halton_counter + 1, 3);
@@ -445,17 +445,13 @@ struct PT_Manager {
                 }
                 float metalness = arm.b;
                 float roughness = arm.g;
-                roughness *= roughness;
+                //                roughness *= roughness;
                 normal_map = normal_map * 2.0f - vec4(1.0f);
                 vec3 normal = glm::normalize(normal_map.y * vertex.tangent +
                                              normal_map.x * vertex.binormal +
                                              normal_map.z * vertex.normal);
                 vec3 refl = glm::reflect(job.ray_dir, normal);
-                vec3 up = abs(refl.y) < 0.999 ? vec3(0.0, 1.0, 0.0)
-                                              : vec3(0.0, 0.0, 1.0);
-                vec3 tangent = glm::normalize(glm::cross(up, refl));
-                vec3 binormal = glm::cross(tangent, refl);
-                tangent = glm::cross(binormal, refl);
+
                 // PBR Definitions
                 vec3 N = normal;
                 vec3 V = -job.ray_dir;
@@ -467,25 +463,43 @@ struct PT_Manager {
                   float F = FresnelSchlickRoughness(saturate(dot(N, V)), 0.04f,
                                                     roughness);
                   if (F > frand.rand_unit_float() - metalness) {
+                    //                  if (0.5f > frand.rand_unit_float()) {
                     // Specular
-                    vec3 H = importanceSampleGGX(xi, roughness, N);
-                    vec3 L = 2.0f * glm::dot(V, H) * H - V;
+                    //                    vec3 H = importanceSampleGGX(xi,
+                    //                    roughness, N); vec3 L = reflect(-V,
+                    //                    H);
+                    float pdf;
+                    vec3 L = getHemisphereGGXSample(xi, N, V, roughness, pdf);
                     float NoL = saturate(dot(N, L));
-                    float NoH = saturate(dot(N, H));
-                    if (NoL > 0.0f) {
-                      float pdf = D_GGX(NoH, roughness) / 4.0 + 0.001;
-                      auto new_job = job;
-                      new_job.ray_dir = L;
-                      new_job.ray_origin =
-                          vertex.position + vertex.normal * 1.0e-3f;
-                      new_job.weight *= 1.0f / secondary_N * pdf / NoL;
-                      new_job.depth += 1;
-                      vec3 spec_color = glm::mix(vec3(DIELECTRIC_SPECULAR), vec3(albedo), vec3(metalness));
-                      new_job.color = spec_color * job.color;
-                      path_tracing_queue.enqueue(new_job);
-                    }
+                    //                    float NoH = saturate(dot(N, H));
+                    //                    float NoV = saturate(dot(N, V));
+                    // if (NoL > 0.0f) {
+                    //                      float pdf =
+                    //                      V_SmithGGXCorrelated(NoV, NoL,
+                    //                      roughness);
+                    //                      vec3 brdf =
+                    //                          eval_cook_torrance_BRDF(roughness,
+                    //                          F0, L, V, N, H);
+
+                    auto new_job = job;
+                    new_job.ray_dir = L;
+                    new_job.ray_origin =
+                        vertex.position + vertex.normal * 1.0e-3f;
+                    new_job.weight *= 1.0f / secondary_N;
+                    new_job.depth += 1;
+                    vec3 F0 =
+                        glm::mix(vec3(0.04f), vec3(albedo), vec3(metalness));
+                    new_job.color =
+                        pdf * (ggx(N, V, L, roughness, F0) * job.color) * NoL;
+                    path_tracing_queue.enqueue(new_job);
+                    //}
                   } else {
                     // Diffuse
+                    vec3 up = abs(normal.y) < 0.999 ? vec3(0.0, 1.0, 0.0)
+                                                    : vec3(0.0, 0.0, 1.0);
+                    vec3 tangent = glm::normalize(glm::cross(up, normal));
+                    vec3 binormal = glm::cross(tangent, normal);
+                    tangent = glm::cross(binormal, normal);
                     auto new_job = job;
                     vec3 rand = SampleHemisphere_Cosinus(xi);
 
@@ -537,8 +551,8 @@ struct PT_Manager {
                               Collision col = {};
 
                               if (ray_triangle_test_moller(new_ray_origin,
-                                                         new_ray_dir, v0, v1,
-                                                         v2, col)) {
+                                                           new_ray_dir, v0, v1,
+                                                           v2, col)) {
                                 if (col.t < min_col.t && col.t < t_max) {
                                   col.mesh_id = node.id;
                                   col.face_id = face_id;
