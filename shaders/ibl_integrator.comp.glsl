@@ -151,7 +151,7 @@ vec3 prefilterEnvMap(float roughness, vec3 R)
       float omegaS = 1.0 / (float(numSamples) * pdf);
       // Solid angle  of pixel
       float omegaP = 4.0 * PI / (6.0 * imgSize  * imgSize);
-      float mipLevel = max(0.5 * log2(omegaS / omegaP), 0.0);
+      float mipLevel = max(0.25 * log2(omegaS / omegaP), 0.0);
       prefilteredColor += sample_cubemap(L, mipLevel).rgb * NoL;
       totalWeight += NoL;
     }
@@ -273,7 +273,7 @@ void main() {
     } else {
       imageStore(out_image[push_constants.level + 2], xy,
                vec4(convolve_specular(uv,
-                      float(push_constants.level)/push_constants.max_level), 1.0));
+                      float(push_constants.level)/(push_constants.max_level)), 1.0));
     }
   }
 }

@@ -7,7 +7,6 @@
 
 #include "error_handling.hpp"
 #include "gizmo.hpp"
-#include "mat.hpp"
 #include "model_loader.hpp"
 #include "particle_sim.hpp"
 #include "primitives.hpp"
@@ -20,6 +19,7 @@ using namespace glm;
 
 struct Scene_Node {
   u32 id;
+  u32 pbr_node_id;
   u32 material_id;
   mat4 transform;
   mat4 invtransform;
@@ -36,6 +36,23 @@ struct Scene {
   Image_Raw spheremap;
   PBR_Model pbr_model;
   std::vector<Scene_Node> scene_nodes;
+  void update_transforms() {
+    std::function<void(u32, mat4)> enter_node = [&](u32 node_id,
+                                                    mat4 transform) {
+      auto &node = pbr_model.nodes[node_id];
+      for (auto i : node.meshes) {
+        auto &mesh = pbr_model.meshes[i];
+        node.update_cache(transform);
+      }
+      for (auto child_id : node.children) {
+        enter_node(child_id, node.transform_cache);
+      }
+    };
+    enter_node(0, mat4(1.0f));
+    for (auto &snode : scene_nodes) {
+      snode.transform = pbr_model.nodes[snode.pbr_node_id].transform_cache;
+    }
+  }
   void load_env(std::string const &filename) {
     spheremap = load_image(filename);
   };
@@ -49,6 +66,7 @@ struct Scene {
       for (auto i : node.meshes) {
         auto &mesh = pbr_model.meshes[i];
         Scene_Node snode;
+        snode.pbr_node_id = node_id;
         snode.id = scene_nodes.size() + 1;
         snode.material_id = i;
         // @TODO: Update transform separately
@@ -180,9 +198,20 @@ struct PT_Manager {
     f32 invtan;
     f32 aspect;
     vec3 _debug_pos;
+    bool _debug_hit = false;
+    bool _grab_path = false;
+    std::vector<vec3> _debug_path;
     u32 halton_counter = 0;
     vec3 gen_ray(f32 u, f32 v) {
       return normalize(look * invtan + up * v + aspect * right * u);
+    }
+    vec2 get_pixel(vec3 v) {
+      float z = dot(v, look);
+      float x = dot(v, right);
+      float y = dot(v, up);
+      z /= invtan;
+      x /= aspect;
+      return vec2(x, y);
     }
   } path_tracing_camera;
   void update_debug_ray(Scene &scene, vec3 ray_origin, vec3 ray_dir) {
@@ -217,20 +246,28 @@ struct PT_Manager {
                       });
     }
     if (col_found) {
+      path_tracing_camera._debug_hit = true;
       path_tracing_camera._debug_pos = ray_origin + ray_dir * min_col.t;
+    } else {
+      path_tracing_camera._debug_hit = false;
     }
   }
   struct Path_Tracing_Image {
     std::vector<vec4> data;
-    u32 width, height;
+    u32 width = 0u, height = 0u;
+    std::mutex mutex;
     void init(u32 _width, u32 _height) {
+      ASSERT_PANIC(_width && _height);
       width = _width;
       height = _height;
       // Pitch less flat array
       data.clear();
       data.resize(width * height);
     }
-    void add_value(u32 x, u32 y, vec4 val) { data[x + y * width] += val; }
+    void add_value(u32 x, u32 y, vec4 val) {
+      std::scoped_lock<std::mutex> sl(mutex);
+      data[x + y * width] += val;
+    }
     vec4 get_value(u32 x, u32 y) { return data[x + y * width]; }
   } path_tracing_image;
 
@@ -245,16 +282,49 @@ struct PT_Manager {
 
   struct Path_Tracing_Queue {
     std::deque<Path_Tracing_Job> job_queue;
+    std::mutex mutex;
     Path_Tracing_Job dequeue() {
       auto back = job_queue.back();
       job_queue.pop_back();
       return back;
     }
-    void enqueue(Path_Tracing_Job job) { job_queue.push_front(job); }
+    void enqueue(Path_Tracing_Job job) {
+      std::scoped_lock<std::mutex> sl(mutex);
+      job_queue.push_front(job);
+    }
     bool has_job() { return !job_queue.empty(); }
     void reset() { job_queue.clear(); }
   } path_tracing_queue;
-
+  void eval_debug_ray(Scene &scene) {
+    u32 width = path_tracing_image.width;
+    u32 height = path_tracing_image.height;
+    if (!width || !height || !path_tracing_camera._debug_hit)
+      return;
+    vec3 p = path_tracing_camera._debug_pos;
+    vec3 v = glm::normalize(p - path_tracing_camera.pos);
+    vec2 uv = path_tracing_camera.get_pixel(v);
+    ASSERT_PANIC(uv.x > -1.0f && uv.y > -1.0f);
+    ASSERT_PANIC(uv.x < 1.0f && uv.y < 1.0f);
+    uvec2 pixels = uvec2((uv.x * 0.5f + 0.5f) * f32(width),
+                         (-uv.y * 0.5f + 0.5f) * f32(height));
+    ASSERT_PANIC(pixels.x < width && pixels.y < height);
+    Path_Tracing_Job job;
+    job.ray_dir = v;
+    job.ray_origin = path_tracing_camera.pos;
+    job.pixel_x = pixels.x;
+    job.pixel_y = pixels.y;
+    job.weight = 1.0f;
+    job.color = vec3(1.0f, 1.0f, 1.0f);
+    job.depth = 0;
+    path_tracing_queue.reset();
+    path_tracing_queue.enqueue(job);
+    path_tracing_camera._grab_path = true;
+    path_tracing_camera._debug_path.clear();
+    path_tracing_camera._debug_path.push_back(job.ray_origin);
+    while (path_tracing_queue.has_job())
+      path_tracing_iteration(scene);
+    path_tracing_camera._grab_path = false;
+  }
   void grab_path_tracing_cam(Camera const &camera, float aspect) {
     path_tracing_camera.pos = camera.pos;
     path_tracing_camera.look = camera.look;
@@ -399,132 +469,184 @@ struct PT_Manager {
                        &ray_collisions[0], &_tmp);
           }
         }
-        ito(ray_jobs.size()) {
-          auto job = ray_jobs[i];
-          auto min_col = ray_collisions[i];
-          if (min_col.t < FLT_MAX) {
+        {
+          WorkPayload work_payload;
+          ito((ray_jobs.size() + jobs_per_item - 1) / jobs_per_item) {
+            work_payload.push_back(JobPayload{
+                .func = {[this, &scene, &ray_jobs, &ray_collisions,
+                          light_value](JobDesc desc) {
+                  for (u32 i = desc.offset; i < desc.offset + desc.size; i++) {
+                    auto job = ray_jobs[i];
+                    auto min_col = ray_collisions[i];
+                    if (min_col.t < FLT_MAX) {
 
-            // path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-            //                              vec4(1.0f, 1.0f, 1.0f, 1.0f));
-            if (job.depth == 3) {
-              // Terminate
-              path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-                                           vec4(0.0f, 0.0f, 0.0f, job.weight));
-            } else {
-              auto &node = scene.scene_nodes[min_col.mesh_id - 1];
-              auto face = node.indices[min_col.face_id];
-              vec2 uv = vec2(min_col.u, min_col.v);
-              auto vertex =
-                  scene.get_interpolated_vertex(node, min_col.face_id, uv);
+                      // path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+                      //                              vec4(1.0f, 1.0f, 1.0f, 1.0f));
+                      if (job.depth == 3) {
+                        // Terminate
+                        path_tracing_image.add_value(
+                            job.pixel_x, job.pixel_y,
+                            vec4(0.0f, 0.0f, 0.0f, job.weight));
+                      } else {
+                        auto &node = scene.scene_nodes[min_col.mesh_id - 1];
+                        auto face = node.indices[min_col.face_id];
+                        vec2 uv = vec2(min_col.u, min_col.v);
+                        auto vertex = scene.get_interpolated_vertex(
+                            node, min_col.face_id, uv);
 
-              auto &mat = scene.pbr_model.materials[node.material_id];
-              vec4 albedo = mat.albedo_factor;
-              if (mat.albedo_id >= 0) {
-                albedo = mat.albedo_factor *
-                         scene.pbr_model.images[mat.albedo_id].sample(
-                             vertex.texcoord);
-              }
+                        auto &mat = scene.pbr_model.materials[node.material_id];
+                        vec4 albedo = mat.albedo_factor;
+                        if (mat.albedo_id >= 0) {
+                          albedo = mat.albedo_factor *
+                                   scene.pbr_model.images[mat.albedo_id].sample(
+                                       vertex.texcoord);
+                        }
 
-              if (glm::dot(job.ray_dir, vertex.normal) > 0.0f) {
-                job.ray_origin = vertex.position + vertex.normal * 1.0e-3f;
-                path_tracing_queue.enqueue(job);
-              } else if (albedo.a < 0.5f) {
-                job.ray_origin = vertex.position - vertex.normal * 1.0e-3f;
-                path_tracing_queue.enqueue(job);
-              } else {
-                vec4 normal_map = vec4(0.0f, 0.0f, 1.0f, 0.0f);
-                if (mat.normal_id >= 0) {
-                  normal_map = scene.pbr_model.images[mat.normal_id].sample(
-                      vertex.texcoord);
-                }
-                vec4 arm =
-                    vec4(1.0f, mat.roughness_factor, mat.metal_factor, 1.0f);
-                if (mat.arm_id >= 0) {
-                  arm = arm * scene.pbr_model.images[mat.arm_id].sample(
-                                  vertex.texcoord);
-                }
-                float metalness = arm.b;
-                float roughness = arm.g;
-                //                roughness *= roughness;
-                normal_map = normal_map * 2.0f - vec4(1.0f);
-                vec3 normal = glm::normalize(normal_map.y * vertex.tangent +
+                        if (glm::dot(job.ray_dir, vertex.normal) > 0.0f) {
+                          job.ray_origin =
+                              vertex.position + vertex.normal * 1.0e-3f;
+                          path_tracing_queue.enqueue(job);
+                        } else if (albedo.a < 0.5f) {
+                          job.ray_origin =
+                              vertex.position - vertex.normal * 1.0e-3f;
+                          path_tracing_queue.enqueue(job);
+                        } else {
+                          vec4 normal_map = vec4(0.5f, 0.5f, 1.0f, 0.0f);
+                          if (mat.normal_id >= 0) {
+                            normal_map =
+                                scene.pbr_model.images[mat.normal_id].sample(
+                                    vertex.texcoord);
+                          }
+                          vec4 arm = vec4(1.0f, mat.roughness_factor,
+                                          mat.metal_factor, 1.0f);
+                          if (mat.arm_id >= 0) {
+                            arm =
+                                arm * scene.pbr_model.images[mat.arm_id].sample(
+                                          vertex.texcoord);
+                          }
+                          float metalness = arm.b;
+                          float roughness = arm.g;
+                          roughness = std::max(roughness, 1.0e-3f);
+                          normal_map = normal_map * 2.0f - vec4(1.0f);
+                          vec3 normal =
+                              glm::normalize(normal_map.y * vertex.tangent +
                                              normal_map.x * vertex.binormal +
                                              normal_map.z * vertex.normal);
-                vec3 refl = glm::reflect(job.ray_dir, normal);
+                          vec3 refl = glm::reflect(job.ray_dir, normal);
 
-                // PBR Definitions
-                vec3 N = normal;
-                vec3 V = -job.ray_dir;
-                u32 secondary_N = 4 / (1 << job.depth);
-                ito(secondary_N) {
-                  vec2 xi =
-                      vec2(frand.rand_unit_float(), frand.rand_unit_float());
+                          // PBR Definitions
+                          vec3 N = normal;
+                          vec3 V = -job.ray_dir;
+                          float NoV = saturate(dot(N, V));
+                          u32 secondary_N = 4 / (1 << job.depth);
+                          kto(secondary_N) {
+                            vec2 xi = vec2(frand.rand_unit_float(),
+                                           frand.rand_unit_float());
 
-                  float F = FresnelSchlickRoughness(saturate(dot(N, V)), 0.04f,
-                                                    roughness);
-                  if (F > frand.rand_unit_float() - metalness) {
-                    //                  if (0.5f > frand.rand_unit_float()) {
-                    // Specular
-                    //                    vec3 H = importanceSampleGGX(xi,
-                    //                    roughness, N); vec3 L = reflect(-V,
-                    //                    H);
-                    float pdf;
-                    vec3 L = getHemisphereGGXSample(xi, N, V, roughness, pdf);
-                    float NoL = saturate(dot(N, L));
-                    //                    float NoH = saturate(dot(N, H));
-                    //                    float NoV = saturate(dot(N, V));
-                    // if (NoL > 0.0f) {
-                    //                      float pdf =
-                    //                      V_SmithGGXCorrelated(NoV, NoL,
-                    //                      roughness);
-                    //                      vec3 brdf =
-                    //                          eval_cook_torrance_BRDF(roughness,
-                    //                          F0, L, V, N, H);
+                            float F = FresnelSchlickRoughness(
+                                NoV, DIELECTRIC_SPECULAR, roughness);
+                            vec3 F0 = glm::mix(vec3(DIELECTRIC_SPECULAR),
+                                               vec3(albedo), vec3(metalness));
 
-                    auto new_job = job;
-                    new_job.ray_dir = L;
-                    new_job.ray_origin =
-                        vertex.position + vertex.normal * 1.0e-3f;
-                    new_job.weight *= 1.0f / secondary_N;
-                    new_job.depth += 1;
-                    vec3 F0 =
-                        glm::mix(vec3(0.04f), vec3(albedo), vec3(metalness));
-                    new_job.color =
-                        pdf * (ggx(N, V, L, roughness, F0) * job.color) * NoL;
-                    path_tracing_queue.enqueue(new_job);
-                    //}
-                  } else {
-                    // Diffuse
-                    vec3 up = abs(normal.y) < 0.999 ? vec3(0.0, 1.0, 0.0)
-                                                    : vec3(0.0, 0.0, 1.0);
-                    vec3 tangent = glm::normalize(glm::cross(up, normal));
-                    vec3 binormal = glm::cross(tangent, normal);
-                    tangent = glm::cross(binormal, normal);
-                    auto new_job = job;
-                    vec3 rand = SampleHemisphere_Cosinus(xi);
+                            if (F + metalness > frand.rand_unit_float()) {
+                              float inv_pdf;
+                              vec3 L = getHemisphereGGXSample(
+                                  xi, N, V, roughness, inv_pdf);
+                              float NoL = saturate(dot(N, L));
+                              if (NoL > 0.0f) {
+                                auto new_job = job;
+                                new_job.ray_dir = L;
+                                new_job.ray_origin =
+                                    vertex.position + vertex.normal * 1.0e-3f;
+                                new_job.weight *= 1.0f / secondary_N;
+                                new_job.depth += 1;
 
-                    new_job.ray_dir = glm::normalize(
-                        tangent * rand.x + binormal * rand.y + normal * rand.z);
-                    new_job.ray_origin =
-                        vertex.position + vertex.normal * 1.0e-3f;
-                    new_job.weight *= 1.0f / secondary_N;
-                    new_job.depth += 1;
-                    new_job.color = vec3(albedo) * job.color;
-                    path_tracing_queue.enqueue(new_job);
+                                new_job.color =
+                                    inv_pdf *
+                                    (ggx(N, V, L, roughness, F0) * job.color) *
+                                    NoL;
+                                if (path_tracing_camera._grab_path) {
+                                  path_tracing_camera._debug_path.push_back(
+                                      job.ray_origin);
+                                  path_tracing_camera._debug_path.push_back(
+                                      new_job.ray_origin);
+                                }
+                                path_tracing_queue.enqueue(new_job);
+                              } else {
+//                                // Terminate
+//                                path_tracing_image.add_value(
+//                                    job.pixel_x, job.pixel_y,
+//                                    vec4(0.0f, 0.0f, 0.0f, job.weight));
+                              }
+                              //}
+                            } else {
+                              // Diffuse
+                              vec3 up = abs(normal.y) < 0.999
+                                            ? vec3(0.0, 1.0, 0.0)
+                                            : vec3(0.0, 0.0, 1.0);
+                              vec3 tangent =
+                                  glm::normalize(glm::cross(up, normal));
+                              vec3 binormal = glm::cross(tangent, normal);
+                              tangent = glm::cross(binormal, normal);
+                              auto new_job = job;
+                              vec3 rand = SampleHemisphere_Cosinus(xi);
+
+                              new_job.ray_dir = glm::normalize(
+                                  tangent * rand.x + binormal * rand.y +
+                                  normal * rand.z);
+                              new_job.ray_origin =
+                                  vertex.position + vertex.normal * 1.0e-3f;
+                              new_job.weight *= 1.0f / secondary_N;
+                              new_job.depth += 1;
+                              new_job.color = vec3(albedo) *
+                                              (1.0f - DIELECTRIC_SPECULAR) *
+                                              (1.0f - metalness) * job.color;
+                              if (path_tracing_camera._grab_path) {
+                                path_tracing_camera._debug_path.push_back(
+                                    job.ray_origin);
+                                path_tracing_camera._debug_path.push_back(
+                                    new_job.ray_origin);
+                              }
+                              path_tracing_queue.enqueue(new_job);
+                            }
+                          }
+                        }
+                      }
+                    } else {
+                      if (path_tracing_camera._grab_path) {
+                        path_tracing_camera._debug_path.push_back(
+                            job.ray_origin);
+                        path_tracing_camera._debug_path.push_back(
+                            job.ray_origin + job.ray_dir * 1000.0f);
+                      }
+                      if (job.depth == 0) {
+                        path_tracing_image.add_value(
+                            job.pixel_x, job.pixel_y,
+                            vec4(0.5f, 0.5f, 0.5f, job.weight));
+                      } else {
+                        path_tracing_image.add_value(
+                            job.pixel_x, job.pixel_y,
+                            job.weight * light_value(job.ray_dir, job.color));
+                      }
+                    }
                   }
-                }
-              }
-            }
-          } else {
-            if (job.depth == 0) {
-              path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-                                           vec4(0.5f, 0.5f, 0.5f, job.weight));
-            } else {
-              path_tracing_image.add_value(
-                  job.pixel_x, job.pixel_y,
-                  job.weight * light_value(job.ray_dir, job.color));
-            }
+                }},
+                .desc = JobDesc{
+                    .offset = i * jobs_per_item,
+                    .size = std::min(u32(ray_jobs.size()) - i * jobs_per_item,
+                                     jobs_per_item)}});
           }
+          marl::WaitGroup wg(work_payload.size());
+          // #pragma omp parallel for
+
+          for (u32 i = 0; i < work_payload.size(); i++) {
+            marl::schedule([=] {
+              defer(wg.done());
+              auto work = work_payload[i];
+              work.func(work.desc);
+            });
+          }
+          wg.wait();
         }
       }
     } else {

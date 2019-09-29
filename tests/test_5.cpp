@@ -44,10 +44,11 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   scene.load_env("spheremaps/whale_skeleton.hdr");
   scene.load_model(
       //      "models/sponza-gltf-pbr/sponza.glb");
-            "models/WaterBottle/WaterBottle.gltf");
-      //             "models/Sponza/Sponza.gltf");
-      //                  "models/SciFiHelmet.gltf");
-//      "models/scene.gltf");
+                  "models/WaterBottle/WaterBottle.gltf");
+//      "models/MetalRoughSpheres/MetalRoughSpheres.gltf");
+  //                   "models/Sponza/Sponza.gltf");
+  //                  "models/SciFiHelmet.gltf");
+//        "models/scene.gltf");
 
   struct Path_Tracing_Plane_Push {
     mat4 viewprojmodel;
@@ -59,9 +60,13 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
 
   // #IMGUI
   bool display_gizmo_layer = true;
+  bool enable_ao = false;
   bool display_ug = false;
   gu.set_on_gui([&] {
     gizmo_layer.on_imgui_begin();
+    if (gizmo_layer.mouse_click[0]) {
+      pt_manager.eval_debug_ray(scene);
+    }
     static bool show_demo = true;
     ImGui::Begin("dummy window");
     ImGui::PopStyleVar(3);
@@ -122,9 +127,12 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     if (ImGui::Button("Add primary rays")) {
       pt_manager.add_primary_rays();
     }
-
+    if (ImGui::Button("Reset Path tracer")) {
+      pt_manager.path_tracing_queue.reset();
+    }
     ImGui::Checkbox("Camera jitter", &gizmo_layer.jitter_on);
     ImGui::Checkbox("Gizmo layer", &display_gizmo_layer);
+    ImGui::Checkbox("Enable Raster AO", &enable_ao);
     ImGui::Checkbox("Display UG", &display_ug);
     ImGui::Checkbox("Use ISPC", &pt_manager.trace_ispc);
     ImGui::Checkbox("Use MT", &pt_manager.use_jobs);
@@ -154,15 +162,14 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   std::vector<Raw_Mesh_Opaque_Wrapper> models;
   std::vector<PBR_Material> materials;
   std::vector<u32> textures;
-  std::function<void(u32, mat4)> traverse_node = [&](u32 node_id,
-                                                     mat4 transform) {
+  std::function<void(u32)> traverse_node = [&](u32 node_id) {
     auto &node = scene.pbr_model.nodes[node_id];
-    transform = node.get_transform() * transform;
+
     for (auto i : node.meshes) {
       auto &model = models[i];
       auto &material = materials[i];
       sh_gltf_vert::push_constants pc;
-      pc.transform = transform;
+      pc.transform = node.transform_cache;
       pc.albedo_id = material.albedo_id;
       pc.normal_id = material.normal_id;
       pc.arm_id = material.arm_id;
@@ -173,11 +180,13 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
       model.draw(gu);
     }
     for (auto child_id : node.children) {
-      traverse_node(child_id, transform);
+      traverse_node(child_id);
     }
   };
 
   gu.run_loop([&] {
+    scene.pbr_model.nodes[0].offset = gizmo_layer.gizmo_drag_state.pos;
+    scene.update_transforms();
     pt_manager.update_debug_ray(scene, gizmo_layer.camera.pos,
                                 gizmo_layer.mouse_ray);
     pt_manager.path_tracing_iteration(scene);
@@ -382,7 +391,11 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                                ? 0.0f
                                : 0.95f;
           prev_cam_moved = gizmo_layer.camera_moved;
-          ubo.display_gizmo_layer = display_gizmo_layer ? 1.0f : 0.0f;
+          const uint DISPLAY_GIZMO = 1;
+          const uint DISPLAY_AO = 2;
+          ubo.mask = 0;
+          ubo.mask |= display_gizmo_layer ? DISPLAY_GIZMO : 0;
+          ubo.mask |= enable_ao ? DISPLAY_AO : 0;
           u32 ubo_id = gu.create_buffer(
               render_graph::Buffer{.usage_bits =
                                        vk::BufferUsageFlagBits::eUniformBuffer,
@@ -540,7 +553,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
             gu.bind_resource("textures", tex, i);
           }
 
-          traverse_node(0, mat4(1.0f));
+          traverse_node(0);
           if (display_gizmo_layer) {
             gu.VS_set_shader("gltf.vert.glsl");
             gu.PS_set_shader("red.frag.glsl");
@@ -551,7 +564,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                                 vk::PolygonMode::eLine, 1.0f);
             gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual,
                                           false, 1.0f, -0.1f);
-            traverse_node(0, mat4(1.0f));
+            traverse_node(0);
 
             int N = 16;
             float dx = 10.0f;
@@ -581,6 +594,13 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
               ito(ug_lines.size() / 2) {
                 gizmo_layer.push_line(ug_lines[i * 2], ug_lines[i * 2 + 1],
                                       vec3(1.0f, 1.0f, 1.0f));
+              }
+            }
+            if (pt_manager.path_tracing_camera._debug_path.size() > 1) {
+              ito(pt_manager.path_tracing_camera._debug_path.size() - 1) {
+                auto p0 = pt_manager.path_tracing_camera._debug_path[i];
+                auto p1 = pt_manager.path_tracing_camera._debug_path[i + 1];
+                gizmo_layer.push_line(p0, p1, vec3(1.0f, 1.0f, 0.0f));
               }
             }
             gizmo_layer.draw(gu);

@@ -242,7 +242,7 @@ struct Gizmo_Layer {
   ImVec2 old_mpos{};
   float old_cpa{};
   bool mouse_last_down = false;
-
+  bool mouse_click[3] = {false, false, false};
   std::function<void(int)> on_click;
   // Viewport for this sample's rendering
   vk::Rect2D example_viewport = vk::Rect2D({0, 0}, {32, 32});
@@ -489,10 +489,13 @@ struct Gizmo_Layer {
 
       if (ImGui::GetIO().MouseDown[0]) {
         if (!mouse_last_down) {
+          mouse_click[0] = true;
           if (!gizmo_drag_state.on_mouse_click(camera.pos, mouse_ray) &&
               on_click) {
             on_click(0);
           }
+        } else {
+          mouse_click[0] = false;
         }
 
         if (mpos.x != old_mpos.x || mpos.y != old_mpos.y) {

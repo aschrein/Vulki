@@ -424,9 +424,12 @@ struct Transform_Node {
   vec3 offset;
   quat rotation;
   float scale = 1.0f;
-  //  mat4 transform = mat4(1.0f);
+  mat4 transform_cache = mat4(1.0f);
   std::vector<u32> meshes;
   std::vector<u32> children;
+  void update_cache(mat4 const &parent = mat4(1.0f)) {
+    transform_cache = parent * get_transform();
+  }
   mat4 get_transform() {
     //  return transform;
     return glm::translate(mat4(1.0f), offset) * (mat4)rotation *

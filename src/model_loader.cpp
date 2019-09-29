@@ -168,7 +168,6 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
   ito(4) {
     jto(4) { transform[i][j] = node->mTransformation[j][i]; }
   }
-
   vec3 offset;
   vec3 scale;
 
@@ -188,22 +187,25 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
 
   //  tnode.offset = offset;
   tnode.rotation = rotation;
-  //  tnode.transform = transform;
+  //    tnode.transform = transform;
 
   for (unsigned int i = 0; i < node->mNumMeshes; i++) {
     aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
+    // No support for animated meshes
+    ASSERT_PANIC(!mesh->HasBones());
     Raw_Mesh_Opaque opaque_mesh{};
     using GLRF_Vertex_t = GLRF_Vertex_Static;
     auto write_bytes = [&](u8 *src, size_t size) {
       // f32 *debug = (f32*)src;
       ito(size) opaque_mesh.attributes.push_back(src[i]);
     };
+    float vk = 50.0f;
     for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
       GLRF_Vertex_t vertex{};
 
-      vertex.position.x = mesh->mVertices[i].x;
-      vertex.position.y = mesh->mVertices[i].y;
-      vertex.position.z = mesh->mVertices[i].z;
+      vertex.position.x = mesh->mVertices[i].x * vk;
+      vertex.position.y = mesh->mVertices[i].y * vk;
+      vertex.position.z = mesh->mVertices[i].z * vk;
 
       vertex.tangent.x = mesh->mTangents[i].x;
       vertex.tangent.y = mesh->mTangents[i].y;
@@ -272,11 +274,12 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
         case aiTextureType_SPECULAR:
         case aiTextureType_SHININESS:
         case aiTextureType_REFLECTION:
-//        case aiTextureType_AMBIENT:
-        // @Cleanup :(
-        // Some models downloaded from sketchfab have metallic-roughness
-        // imported as unknown/lightmap and have (ao, roughness, metalness)
-        // as components
+        case aiTextureType_UNKNOWN:
+          //        case aiTextureType_AMBIENT:
+          // @Cleanup :(
+          // Some models downloaded from sketchfab have metallic-roughness
+          // imported as unknown/lightmap and have (ao, roughness, metalness)
+          // as components
         case aiTextureType_LIGHTMAP:
           format = vk::Format::eR8G8B8A8Unorm;
           out_material.arm_id = i32(out.images.size());
@@ -323,8 +326,11 @@ PBR_Model load_gltf_pbr(std::string const &filename) {
   std::filesystem::path p(filename);
   std::filesystem::path dir = p.parent_path();
   const aiScene *scene = importer.ReadFile(
-      filename.c_str(), aiProcess_Triangulate | aiProcess_OptimizeMeshes |
-                            aiProcess_CalcTangentSpace | aiProcess_FlipUVs);
+      filename.c_str(),
+      aiProcess_Triangulate |
+          // @TODO: Find out why transforms are not handled correcly otherwise
+          aiProcess_PreTransformVertices | aiProcess_OptimizeMeshes |
+          aiProcess_CalcTangentSpace | aiProcess_FlipUVs);
   if (!scene) {
     std::cerr << "[FILE] Errors: " << importer.GetErrorString() << "\n";
     ASSERT_PANIC(false);

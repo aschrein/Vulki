@@ -25,8 +25,11 @@ layout(set = 1, binding = 0, std140) uniform UBO {
   uvec3 light_table_size;
   vec4 offset;
   float taa_weight;
-  float display_gizmo_layer;
+  uint mask;
 } g_ubo;
+
+const uint DISPLAY_GIZMO = 1;
+const uint DISPLAY_AO = 2;
 
 layout(set = 1, binding = 1) buffer LightTable { uint data[]; }
 g_light_table;
@@ -87,6 +90,11 @@ return textureLod(textures[id],
 
 #define DIELECTRIC_SPECULAR 0.04
 
+vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness){
+    float val = 1.0 - cosTheta;
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * (val*val*val*val*val); //Faster than pow
+}
+
 void main() {
     ivec2 dim = imageSize(out_image);
     vec2 uv = (vec2(gl_GlobalInvocationID.xy) + vec2(0.5, 0.5) + g_ubo.camera_jitter) / dim;
@@ -105,7 +113,11 @@ void main() {
     vec4 metal = texelFetch(g_metal, ivec2(gl_GlobalInvocationID.xy), 0);
     float depth = texelFetch(g_depth, ivec2(gl_GlobalInvocationID.xy), 0).x;
     float ao = metal.r;
+    if ((g_ubo.mask & DISPLAY_AO) == 0) {
+      ao = 1.0f;
+    }
     float roughness = metal.g;
+    roughness = min(0.9, roughness);
     float metalness = metal.b;
     vec3 pos = ray_dir * depth + ray_origin;
     vec3 refl = normalize(reflect(ray_dir, normal));
@@ -114,22 +126,32 @@ void main() {
     vec3 H = normalize(refl - ray_dir);
     float VoH = clamp(dot(V, H), 0.0, 1.0);
     float NoV = clamp(dot(normal, V), 0.0, 1.0);
-    vec3 diffuse_color = albedo * (1.0 - DIELECTRIC_SPECULAR) * (1.0 - metalness);
-    vec3 F0 = mix(vec3(DIELECTRIC_SPECULAR, DIELECTRIC_SPECULAR, DIELECTRIC_SPECULAR), albedo, metalness);
-    vec2 lut = texture(textures[IBL_LUT], vec2(NoV, roughness)).xy;
+//    vec3 diffuse_color = albedo * (1.0 - DIELECTRIC_SPECULAR) * (1.0 - metalness);
+    vec3 F0 = mix(vec3(DIELECTRIC_SPECULAR), albedo, metalness);
+
+    vec3  kS = fresnelSchlickRoughness(NoV, F0, roughness);
+    vec3  kD = 1.0 - kS;
+    kD *= (1.0 - DIELECTRIC_SPECULAR) * (1.0 - metalness);
+
+    vec2 lut = texture(textures[IBL_LUT], vec2(NoV - 0.01, roughness)).xy;
     vec3 radiance = sample_cubemap(refl, roughness, IBL_RADIANCE);
     vec3 irradiance = sample_cubemap(normal, 0.0, IBL_IRRADIANCE);
-    vec3 FssEss = F0 * lut.x + lut.y;
+    vec3 FssEss = kS * lut.x + lut.y;
 
-    vec3 color = ao * (FssEss * radiance + diffuse_color * irradiance);
+
+
+    vec3 color = ao * (
+    FssEss * radiance
+    +
+    kD * albedo * irradiance
+    );
     if (depth > 10000.0)
        color = vec3(0.5);
 //      color = sample_cubemap(ray_dir, 0.0, IBL_RADIANCE);
-
-    vec4 gizmo_value = texelFetch(g_gizmo, ivec2(gl_GlobalInvocationID.xy), 0);
-    color = mix(color, gizmo_value.xyz,
-          g_ubo.display_gizmo_layer * gizmo_value.a);
-
+    if ((g_ubo.mask & DISPLAY_GIZMO) != 0) {
+      vec4 gizmo_value = texelFetch(g_gizmo, ivec2(gl_GlobalInvocationID.xy), 0);
+      color = mix(color, gizmo_value.xyz, gizmo_value.a);
+    }
     vec3 h = texelFetch(history, ivec2(gl_GlobalInvocationID.xy), 0).xyz;
 //    color = vec3(roughness);
     color = mix(color, h, g_ubo.taa_weight);
