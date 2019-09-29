@@ -36,9 +36,15 @@ struct Scene {
   Image_Raw spheremap;
   PBR_Model pbr_model;
   std::vector<Scene_Node> scene_nodes;
+  void reset() {
+    pbr_model = PBR_Model{};
+    scene_nodes.clear();
+  }
   void update_transforms() {
     std::function<void(u32, mat4)> enter_node = [&](u32 node_id,
                                                     mat4 transform) {
+      if (pbr_model.nodes.size() <= node_id)
+        return;
       auto &node = pbr_model.nodes[node_id];
       for (auto i : node.meshes) {
         auto &mesh = pbr_model.meshes[i];
@@ -344,7 +350,7 @@ struct PT_Manager {
     ito(height) {
       jto(width) {
         // samples per pixel
-        uint N_Samples = 16;
+        uint N_Samples = 64;
         kto(N_Samples) {
           f32 jitter_u = halton(i + path_tracing_camera.halton_counter + 1, 2);
           f32 jitter_v = halton(i + path_tracing_camera.halton_counter + 1, 3);
@@ -526,7 +532,7 @@ struct PT_Manager {
                           }
                           float metalness = arm.b;
                           float roughness = arm.g;
-                          roughness = std::max(roughness, 1.0e-3f);
+                          roughness = std::max(roughness, 1.0e-5f);
                           normal_map = normal_map * 2.0f - vec4(1.0f);
                           vec3 normal =
                               glm::normalize(normal_map.y * vertex.tangent +
@@ -538,21 +544,29 @@ struct PT_Manager {
                           vec3 N = normal;
                           vec3 V = -job.ray_dir;
                           float NoV = saturate(dot(N, V));
-                          u32 secondary_N = 4 / (1 << job.depth);
+                          u32 secondary_N = 1;//2 / (1 << job.depth);
                           kto(secondary_N) {
                             vec2 xi = vec2(frand.rand_unit_float(),
                                            frand.rand_unit_float());
-
+                            // Value used to choose between specular/diffuse
+                            // sample
                             float F = FresnelSchlickRoughness(
                                 NoV, DIELECTRIC_SPECULAR, roughness);
+                            // Reflectance at 0 theta
                             vec3 F0 = glm::mix(vec3(DIELECTRIC_SPECULAR),
                                                vec3(albedo), vec3(metalness));
-
-                            if (F + metalness > frand.rand_unit_float()) {
+                            // Roll a dice and choose between specular and
+                            // diffuse sample based on the fresnel value
+                            if //(true) {
+                            (frand.rand_unit_float() > 0.5f) {
+                            //(F + metalness > frand.rand_unit_float()) {
+                              // Sample GGX half normal and get the PDF
                               float inv_pdf;
                               vec3 L = getHemisphereGGXSample(
                                   xi, N, V, roughness, inv_pdf);
                               float NoL = saturate(dot(N, L));
+                              // Means that the reflected ray is under surface
+                              // Should we multiscatter/absorb/reroll?
                               if (NoL > 0.0f) {
                                 auto new_job = job;
                                 new_job.ray_dir = L;
@@ -560,11 +574,10 @@ struct PT_Manager {
                                     vertex.position + vertex.normal * 1.0e-3f;
                                 new_job.weight *= 1.0f / secondary_N;
                                 new_job.depth += 1;
-
+                                vec3 brdf = ggx(N, V, L, roughness, F0);
                                 new_job.color =
-                                    inv_pdf *
-                                    (ggx(N, V, L, roughness, F0) * job.color) *
-                                    NoL;
+                                    4.0f * inv_pdf * (brdf * job.color) * NoL;
+                                // #Debug
                                 if (path_tracing_camera._grab_path) {
                                   path_tracing_camera._debug_path.push_back(
                                       job.ray_origin);
@@ -573,14 +586,19 @@ struct PT_Manager {
                                 }
                                 path_tracing_queue.enqueue(new_job);
                               } else {
-//                                // Terminate
-//                                path_tracing_image.add_value(
-//                                    job.pixel_x, job.pixel_y,
-//                                    vec4(0.0f, 0.0f, 0.0f, job.weight));
+                                // @TODO: Decide what to do here
+                                //                                // Terminate
+                                //                                path_tracing_image.add_value(
+                                //                                    job.pixel_x,
+                                //                                    job.pixel_y,
+                                //                                    vec4(0.0f,
+                                //                                    0.0f,
+                                //                                    0.0f,
+                                //                                    job.weight));
                               }
                               //}
                             } else {
-                              // Diffuse
+                              // Lambertian diffuse
                               vec3 up = abs(normal.y) < 0.999
                                             ? vec3(0.0, 1.0, 0.0)
                                             : vec3(0.0, 0.0, 1.0);
@@ -589,6 +607,7 @@ struct PT_Manager {
                               vec3 binormal = glm::cross(tangent, normal);
                               tangent = glm::cross(binormal, normal);
                               auto new_job = job;
+                              // Cosine biased sampling
                               vec3 rand = SampleHemisphere_Cosinus(xi);
 
                               new_job.ray_dir = glm::normalize(
@@ -598,9 +617,10 @@ struct PT_Manager {
                                   vertex.position + vertex.normal * 1.0e-3f;
                               new_job.weight *= 1.0f / secondary_N;
                               new_job.depth += 1;
-                              new_job.color = vec3(albedo) *
+                              new_job.color = 2.0f * vec3(albedo) *
                                               (1.0f - DIELECTRIC_SPECULAR) *
                                               (1.0f - metalness) * job.color;
+                              // #Debug
                               if (path_tracing_camera._grab_path) {
                                 path_tracing_camera._debug_path.push_back(
                                     job.ray_origin);
@@ -613,6 +633,7 @@ struct PT_Manager {
                         }
                       }
                     } else {
+                      // #Debug
                       if (path_tracing_camera._grab_path) {
                         path_tracing_camera._debug_path.push_back(
                             job.ray_origin);
@@ -637,8 +658,6 @@ struct PT_Manager {
                                      jobs_per_item)}});
           }
           marl::WaitGroup wg(work_payload.size());
-          // #pragma omp parallel for
-
           for (u32 i = 0; i < work_payload.size(); i++) {
             marl::schedule([=] {
               defer(wg.done());
@@ -751,20 +770,4 @@ struct PT_Manager {
       }
     }
   };
-  //  auto launch_debug_ray = [&](vec3 ray_origin, vec3 ray_dir) {
-  //    path_tracing_queue.reset();
-  //    Path_Tracing_Job job;
-  //    job.ray_dir = ray_dir;
-  //    job.ray_origin = ray_origin;
-  //    job.pixel_x = 0;
-  //    job.pixel_y = 0;
-  //    job.weight = 1.0f;
-  //    job.color = vec3(1.0f, 1.0f, 1.0f);
-  //    job.depth = 0;
-  //    path_tracing_queue.enqueue(job);
-  //    path_tracing_image.init(1, 1);
-  //    path_tracing_gpu_image =
-  //        CPU_Image::create(device_wrapper, 1, 1, vk::Format::eR8G8B8A8Unorm);
-  //    path_tracing_iteration();
-  //  };
 };

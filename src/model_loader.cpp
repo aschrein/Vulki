@@ -161,6 +161,18 @@ PBR_Model load_obj_pbr(char const *filename) {
   return pbr_out;
 }
 
+void calculate_dim(const aiScene *scene, aiNode *node, vec3 &max_dims) {
+  for (unsigned int i = 0; i < node->mNumMeshes; i++) {
+    aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
+    for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
+      kto(3) max_dims[k] = std::max(max_dims[k], mesh->mVertices[i][k]);
+    }
+  }
+  for (unsigned int i = 0; i < node->mNumChildren; i++) {
+    calculate_dim(scene, node->mChildren[i], max_dims);
+  }
+}
+
 void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
                    std::string const &dir, u32 parent_id = 0) {
   Transform_Node tnode{};
@@ -186,8 +198,15 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
   quat rotation(rot_mat);
 
   //  tnode.offset = offset;
-  tnode.rotation = rotation;
+  //  tnode.rotation = rotation;
   //    tnode.transform = transform;
+  // @Cleanup
+  // Size normalization hack
+  float vk = 1.0f;
+  vec3 max_dims = vec3(0.0f);
+  calculate_dim(scene, scene->mRootNode, max_dims);
+  float max_dim = std::max(max_dims.x, std::max(max_dims.y, max_dims.z));
+  vk = 50.0f / max_dim;
 
   for (unsigned int i = 0; i < node->mNumMeshes; i++) {
     aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
@@ -199,21 +218,28 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
       // f32 *debug = (f32*)src;
       ito(size) opaque_mesh.attributes.push_back(src[i]);
     };
-    float vk = 50.0f;
+
+    ////////////////////////
     for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
       GLRF_Vertex_t vertex{};
 
       vertex.position.x = mesh->mVertices[i].x * vk;
       vertex.position.y = mesh->mVertices[i].y * vk;
       vertex.position.z = mesh->mVertices[i].z * vk;
-
-      vertex.tangent.x = mesh->mTangents[i].x;
-      vertex.tangent.y = mesh->mTangents[i].y;
-      vertex.tangent.z = mesh->mTangents[i].z;
-
-      vertex.binormal.x = mesh->mBitangents[i].x;
-      vertex.binormal.y = mesh->mBitangents[i].y;
-      vertex.binormal.z = mesh->mBitangents[i].z;
+      if (mesh->mTangents) {
+        vertex.tangent.x = mesh->mTangents[i].x;
+        vertex.tangent.y = mesh->mTangents[i].y;
+        vertex.tangent.z = mesh->mTangents[i].z;
+      } else {
+        vertex.tangent = vec3(0.0f);
+      }
+      if (mesh->mBitangents) {
+        vertex.binormal.x = mesh->mBitangents[i].x;
+        vertex.binormal.y = mesh->mBitangents[i].y;
+        vertex.binormal.z = mesh->mBitangents[i].z;
+      } else {
+        vertex.binormal = vec3(0.0f);
+      }
 
       vertex.normal.x = mesh->mNormals[i].x;
       vertex.normal.y = mesh->mNormals[i].y;

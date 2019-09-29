@@ -71,11 +71,11 @@ static vec3 getHemisphereGGXSample(vec2 xi, vec3 n, vec3 v, float roughness,
 
   // Sample weight
   float den = (alpha2 - 1.0f) * cosTheta2 + 1.0f;
-  float D = alpha2 / (PI * den * den + 1.0e-6f);
+  float D = alpha2 / (PI * den * den);
   float pdf =
       // This term is eliminated later
       //  D *
-      cosTheta / (4.0f * dot(microNormal, v) + 1.0e-6f);
+      cosTheta / (4.0f * dot(microNormal, v));
   weight = (0.5f / PI) / (pdf + 1.0e-6f);
 
   if (dot(l, n) < 0.0f)
@@ -98,7 +98,7 @@ static vec3 ggx(vec3 n, vec3 v, vec3 l, float roughness, vec3 F0) {
 
   // GGX microfacet distribution function
   float den = (alpha2 - 1.0f) * dotNH * dotNH + 1.0f;
-  float D = alpha2 / (PI * den * den + 1.0e-6f);
+  float D = alpha2 / (PI * den * den);
 
   // Fresnel with Schlick approximation
   vec3 F = F0 + (vec3(1.0f) - F0) * std::pow(1.0f - dotLH, 5.0f);

@@ -32,6 +32,17 @@ using namespace glm;
 
 #include "shaders.h"
 
+void iterate_folder(std::string const &folder, std::vector<std::string> &models,
+                    std::string const &ext) {
+  for (const auto &entry : fs::directory_iterator(folder))
+    if (entry.path().filename().string().find(ext) != std::string::npos) {
+      models.push_back(folder +
+                       entry.path().relative_path().filename().string());
+    } else if (entry.is_directory()) {
+      iterate_folder(entry.path().string() + "/", models, ext);
+    }
+}
+
 TEST(graphics, vulkan_graphics_test_render_graph) try {
   Gizmo_Layer gizmo_layer{};
   PT_Manager pt_manager;
@@ -41,14 +52,14 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   bool reload_env = true;
   bool reload_model = true;
   Scene scene;
+  std::string models_path = "models/";
+  std::vector<std::string> model_filenames;
+  std::vector<std::string> env_filenames;
+
   scene.load_env("spheremaps/whale_skeleton.hdr");
-  scene.load_model(
-      //      "models/sponza-gltf-pbr/sponza.glb");
-                  "models/WaterBottle/WaterBottle.gltf");
-//      "models/MetalRoughSpheres/MetalRoughSpheres.gltf");
-  //                   "models/Sponza/Sponza.gltf");
-  //                  "models/SciFiHelmet.gltf");
-//        "models/scene.gltf");
+
+  iterate_folder("models/", model_filenames, ".gltf");
+  iterate_folder("spheremaps/", env_filenames, ".hdr");
 
   struct Path_Tracing_Plane_Push {
     mat4 viewprojmodel;
@@ -138,19 +149,49 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     ImGui::Checkbox("Use MT", &pt_manager.use_jobs);
     // Select in the list of named images available for display
     auto images = gu.get_img_list();
-    std::vector<char const *> images_;
-    static int item_current = 0;
-    int i = 0;
-    for (auto &img_name : images) {
-      if (img_name == "path_traced_scene")
-        item_current = i;
-      images_.push_back(img_name.c_str());
-      i++;
+
+    static int image_item_current = 0;
+    static int model_item_current = 0;
+    static int env_item_current = 0;
+
+    {
+      std::vector<const char *> _model_filenames;
+      for (auto const &filename : model_filenames)
+        _model_filenames.push_back(filename.c_str());
+
+      if (ImGui::Combo("Select model", &model_item_current,
+                       &_model_filenames[0], _model_filenames.size())) {
+        scene.reset();
+        scene.load_model(_model_filenames[model_item_current]);
+        reload_model = true;
+      }
     }
-    ImGui::Combo("Select Image", &item_current, &images_[0], images_.size());
+    {
+      std::vector<const char *> _env_filenames;
+      for (auto const &filename : env_filenames)
+        _env_filenames.push_back(filename.c_str());
+
+      if (ImGui::Combo("Select env", &env_item_current, &_env_filenames[0],
+                       _env_filenames.size())) {
+        scene.load_env(_env_filenames[env_item_current]);
+        reload_env = true;
+      }
+    }
+    {
+      std::vector<char const *> images_;
+      int i = 0;
+      for (auto &img_name : images) {
+        if (img_name == "path_traced_scene")
+          image_item_current = i;
+        images_.push_back(img_name.c_str());
+        i++;
+      }
+      ImGui::Combo("Select Image", &image_item_current, &images_[0],
+                   images_.size());
+    }
     auto wsize = ImGui::GetWindowSize();
     // @TODO: Select mip level
-    gu.ImGui_Image(images[item_current], wsize.x - 2, wsize.x - 2);
+    gu.ImGui_Image(images[image_item_current], wsize.x - 2, wsize.x - 2);
     ImGui::End();
     ImGui::Begin("Metrics");
     ImGui::End();
@@ -163,6 +204,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   std::vector<PBR_Material> materials;
   std::vector<u32> textures;
   std::function<void(u32)> traverse_node = [&](u32 node_id) {
+    if (scene.pbr_model.nodes.size() <= node_id)
+      return;
     auto &node = scene.pbr_model.nodes[node_id];
 
     for (auto i : node.meshes) {
@@ -185,7 +228,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   };
 
   gu.run_loop([&] {
-    scene.pbr_model.nodes[0].offset = gizmo_layer.gizmo_drag_state.pos;
+    //    scene.pbr_model.nodes[0].offset = gizmo_layer.gizmo_drag_state.pos;
     scene.update_transforms();
     pt_manager.update_debug_ray(scene, gizmo_layer.camera.pos,
                                 gizmo_layer.mouse_ray);
