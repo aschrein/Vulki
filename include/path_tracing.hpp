@@ -146,10 +146,13 @@ struct Scene {
     float k2 = uv.y;
     float k0 = 1.0f - uv.x - uv.y;
     GLRF_Vertex_Static vertex;
-    vertex.normal = v0.normal * k0 + v1.normal * k1 + v2.normal * k2;
+    vertex.normal =
+        safe_normalize(v0.normal * k0 + v1.normal * k1 + v2.normal * k2);
     vertex.position = v0.position * k0 + v1.position * k1 + v2.position * k2;
-    vertex.tangent = v0.tangent * k0 + v1.tangent * k1 + v2.tangent * k2;
-    vertex.binormal = v0.binormal * k0 + v1.binormal * k1 + v2.binormal * k2;
+    vertex.tangent =
+        safe_normalize(v0.tangent * k0 + v1.tangent * k1 + v2.tangent * k2);
+    vertex.binormal =
+        safe_normalize(v0.binormal * k0 + v1.binormal * k1 + v2.binormal * k2);
     vertex.texcoord = v0.texcoord * k0 + v1.texcoord * k1 + v2.texcoord * k2;
     return vertex.transform(node.transform);
   };
@@ -182,6 +185,8 @@ struct JobPayload {
 using WorkPayload = std::vector<JobPayload>;
 
 struct PT_Manager {
+  u32 samples_per_pixel = 256;
+  u32 max_depth = 2;
   bool trace_ispc = true;
   u32 jobs_per_item = 32 * 100;
   bool use_jobs = true;
@@ -218,6 +223,10 @@ struct PT_Manager {
       z /= invtan;
       x /= aspect;
       return vec2(x, y);
+    }
+    void push_debug_line(vec3 a, vec3 b) {
+      _debug_path.push_back(a);
+      _debug_path.push_back(b);
     }
   } path_tracing_camera;
   void update_debug_ray(Scene &scene, vec3 ray_origin, vec3 ray_dir) {
@@ -283,7 +292,9 @@ struct PT_Manager {
     u32 pixel_x, pixel_y;
     f32 weight;
     u32 media_material_id;
-    u32 depth;
+    u32 depth,
+        // Used to track down bugs
+        _depth;
   };
 
   struct Path_Tracing_Queue {
@@ -296,6 +307,8 @@ struct PT_Manager {
     }
     void enqueue(Path_Tracing_Job job) {
       std::scoped_lock<std::mutex> sl(mutex);
+      ASSERT_PANIC(!std::isnan(job.ray_dir.x) && !std::isnan(job.ray_dir.y) &&
+                   !std::isnan(job.ray_dir.z));
       job_queue.push_front(job);
     }
     bool has_job() { return !job_queue.empty(); }
@@ -322,11 +335,12 @@ struct PT_Manager {
     job.weight = 1.0f;
     job.color = vec3(1.0f, 1.0f, 1.0f);
     job.depth = 0;
+    job._depth = 0;
     path_tracing_queue.reset();
     path_tracing_queue.enqueue(job);
     path_tracing_camera._grab_path = true;
     path_tracing_camera._debug_path.clear();
-    path_tracing_camera._debug_path.push_back(job.ray_origin);
+//    path_tracing_camera._debug_path.push_back(job.ray_origin);
     while (path_tracing_queue.has_job())
       path_tracing_iteration(scene);
     path_tracing_camera._grab_path = false;
@@ -349,11 +363,9 @@ struct PT_Manager {
     u32 height = path_tracing_image.height;
     ito(height) {
       jto(width) {
-        // samples per pixel
-        uint N_Samples = 64;
-        kto(N_Samples) {
-          f32 jitter_u = halton(i + path_tracing_camera.halton_counter + 1, 2);
-          f32 jitter_v = halton(i + path_tracing_camera.halton_counter + 1, 3);
+        kto(samples_per_pixel) {
+          f32 jitter_u = halton(k + path_tracing_camera.halton_counter + 1, 2);
+          f32 jitter_v = halton(k + path_tracing_camera.halton_counter + 1, 3);
           f32 u = (f32(j) + jitter_u) / width * 2.0f - 1.0f;
           f32 v = -(f32(i) + jitter_v) / height * 2.0f + 1.0f;
           Path_Tracing_Job job;
@@ -364,11 +376,12 @@ struct PT_Manager {
           job.weight = 1.0f;
           job.color = vec3(1.0f, 1.0f, 1.0f);
           job.depth = 0;
+          job._depth = 0;
           path_tracing_queue.enqueue(job);
         }
       }
     }
-    path_tracing_camera.halton_counter++;
+    path_tracing_camera.halton_counter += samples_per_pixel;
   };
   void reset_path_tracing_state(Camera const &camera, u32 width, u32 height) {
     grab_path_tracing_cam(camera, float(width) / height);
@@ -488,7 +501,7 @@ struct PT_Manager {
 
                       // path_tracing_image.add_value(job.pixel_x, job.pixel_y,
                       //                              vec4(1.0f, 1.0f, 1.0f, 1.0f));
-                      if (job.depth == 3) {
+                      if (job.depth == max_depth) {
                         // Terminate
                         path_tracing_image.add_value(
                             job.pixel_x, job.pixel_y,
@@ -509,13 +522,19 @@ struct PT_Manager {
                         }
 
                         if (glm::dot(job.ray_dir, vertex.normal) > 0.0f) {
-                          job.ray_origin =
-                              vertex.position + vertex.normal * 1.0e-3f;
-                          path_tracing_queue.enqueue(job);
+                          if (job._depth < max_depth + 1) {
+                            job.ray_origin =
+                                vertex.position + vertex.normal * 1.0e-3f;
+                            job._depth += 1;
+                            path_tracing_queue.enqueue(job);
+                          }
                         } else if (albedo.a < 0.5f) {
-                          job.ray_origin =
-                              vertex.position - vertex.normal * 1.0e-3f;
-                          path_tracing_queue.enqueue(job);
+                          if (job._depth < max_depth + 1) {
+                            job.ray_origin =
+                                vertex.position - vertex.normal * 1.0e-3f;
+                            job._depth += 1;
+                            path_tracing_queue.enqueue(job);
+                          }
                         } else {
                           vec4 normal_map = vec4(0.5f, 0.5f, 1.0f, 0.0f);
                           if (mat.normal_id >= 0) {
@@ -533,18 +552,22 @@ struct PT_Manager {
                           float metalness = arm.b;
                           float roughness = arm.g;
                           roughness = std::max(roughness, 1.0e-5f);
-                          normal_map = normal_map * 2.0f - vec4(1.0f);
                           vec3 normal =
-                              glm::normalize(normal_map.y * vertex.tangent +
-                                             normal_map.x * vertex.binormal +
+                              glm::normalize((2.0f * normal_map.x - 1.0f) * vertex.tangent +
+                                             (2.0f * normal_map.y - 1.0f) * vertex.binormal +
                                              normal_map.z * vertex.normal);
-                          vec3 refl = glm::reflect(job.ray_dir, normal);
+//                          path_tracing_image.add_value(
+//                            job.pixel_x, job.pixel_y,
+//                            vec4(normal * 0.5f + vec3(0.5f), 1.0f)
+////                            vec4(vertex.texcoord, 0.0, 1.0f)
+//                            );
+//                            continue;
 
                           // PBR Definitions
                           vec3 N = normal;
                           vec3 V = -job.ray_dir;
                           float NoV = saturate(dot(N, V));
-                          u32 secondary_N = 1;//2 / (1 << job.depth);
+                          u32 secondary_N = 1; // 2 / (1 << job.depth);
                           kto(secondary_N) {
                             vec2 xi = vec2(frand.rand_unit_float(),
                                            frand.rand_unit_float());
@@ -558,11 +581,13 @@ struct PT_Manager {
                             // Roll a dice and choose between specular and
                             // diffuse sample based on the fresnel value
                             if //(true) {
-                            (frand.rand_unit_float() > 0.5f) {
-                            //(F + metalness > frand.rand_unit_float()) {
+                                (frand.rand_unit_float() > 0.5f) {
+                              //(F + metalness > frand.rand_unit_float()) {
                               // Sample GGX half normal and get the PDF
-                              float inv_pdf;
-                              vec3 L = getHemisphereGGXSample(
+                              float inv_pdf = 1.0f;
+                              vec3 L =
+                              //glm::reflect(-V, vertex.normal);
+                              getHemisphereGGXSample(
                                   xi, N, V, roughness, inv_pdf);
                               float NoL = saturate(dot(N, L));
                               // Means that the reflected ray is under surface
@@ -574,15 +599,30 @@ struct PT_Manager {
                                     vertex.position + vertex.normal * 1.0e-3f;
                                 new_job.weight *= 1.0f / secondary_N;
                                 new_job.depth += 1;
+                                new_job._depth += 1;
                                 vec3 brdf = ggx(N, V, L, roughness, F0);
                                 new_job.color =
                                     4.0f * inv_pdf * (brdf * job.color) * NoL;
                                 // #Debug
+                                // #Debug
                                 if (path_tracing_camera._grab_path) {
-                                  path_tracing_camera._debug_path.push_back(
-                                      job.ray_origin);
-                                  path_tracing_camera._debug_path.push_back(
-                                      new_job.ray_origin);
+                                  path_tracing_camera.push_debug_line(
+                                      new_job.ray_origin,
+                                      new_job.ray_origin + normal * 1.0f);
+                                  path_tracing_camera.push_debug_line(
+                                      new_job.ray_origin,
+                                      new_job.ray_origin +
+                                          vertex.normal * 1.0f);
+                                  path_tracing_camera.push_debug_line(
+                                      new_job.ray_origin,
+                                      new_job.ray_origin +
+                                          vertex.binormal * 1.0f);
+                                  path_tracing_camera.push_debug_line(
+                                      new_job.ray_origin,
+                                      new_job.ray_origin +
+                                          vertex.tangent * 1.0f);
+                                  path_tracing_camera.push_debug_line(
+                                      job.ray_origin, new_job.ray_origin);
                                 }
                                 path_tracing_queue.enqueue(new_job);
                               } else {
@@ -617,15 +657,27 @@ struct PT_Manager {
                                   vertex.position + vertex.normal * 1.0e-3f;
                               new_job.weight *= 1.0f / secondary_N;
                               new_job.depth += 1;
+                              new_job._depth += 1;
                               new_job.color = 2.0f * vec3(albedo) *
                                               (1.0f - DIELECTRIC_SPECULAR) *
                                               (1.0f - metalness) * job.color;
                               // #Debug
                               if (path_tracing_camera._grab_path) {
-                                path_tracing_camera._debug_path.push_back(
-                                    job.ray_origin);
-                                path_tracing_camera._debug_path.push_back(
-                                    new_job.ray_origin);
+                                path_tracing_camera.push_debug_line(
+                                    new_job.ray_origin,
+                                    new_job.ray_origin + normal * 1.0f);
+                                path_tracing_camera.push_debug_line(
+                                    new_job.ray_origin,
+                                    new_job.ray_origin + vertex.normal * 1.0f);
+                                path_tracing_camera.push_debug_line(
+                                    new_job.ray_origin,
+                                    new_job.ray_origin +
+                                        vertex.binormal * 1.0f);
+                                path_tracing_camera.push_debug_line(
+                                    new_job.ray_origin,
+                                    new_job.ray_origin + vertex.tangent * 1.0f);
+                                path_tracing_camera.push_debug_line(
+                                    job.ray_origin, new_job.ray_origin);
                               }
                               path_tracing_queue.enqueue(new_job);
                             }
@@ -635,9 +687,8 @@ struct PT_Manager {
                     } else {
                       // #Debug
                       if (path_tracing_camera._grab_path) {
-                        path_tracing_camera._debug_path.push_back(
-                            job.ray_origin);
-                        path_tracing_camera._debug_path.push_back(
+                        path_tracing_camera.push_debug_line(
+                            job.ray_origin,
                             job.ray_origin + job.ray_dir * 1000.0f);
                       }
                       if (job.depth == 0) {

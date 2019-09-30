@@ -57,38 +57,11 @@ return textureLod(textures[id],
 ), float(max_lod) * (roughness)).xyz;
 }
 
-//vec3 sample_diffuse_cubemap(vec3 r, float roughness) {
-//float theta = acos(r.z);
-//float phi = angle_normalized(r.x, r.y);
-//return vec3(theta/3.141592);
-////return texture(textures[nonuniformEXT(push_constant.cubemap_id + 1)],
-////  vec2(
-////  phi,
-////  theta/PI
-////)).xyz;
-//}
-
-//vec3 apply_light(vec3 n, vec3 l, vec3 v,
-//                 float metalness,
-//                 float roughness,
-//                 vec3 albedo) {
-//  float lambert = clamp(dot(l, n), 0.0, 1.0);
-//  vec3 r = reflect(v, n);
-
-//  vec3 spec_env = sample_cubemap(r, roughness);
-//  vec3 diffuse_env = sample_diffuse_cubemap(n, 0.1);
-
-//  float phong = pow(clamp(dot(r, l), 0.0, 1.0), (roughness + 1.0) * 256.0);
-//  vec3 spec_col = mix(albedo, vec3(1.0, 1.0, 1.0),
-//  clamp(1.0 - metalness, 0.0, 1.0));
-//  return
-//  //albedo * lambert +
-//  albedo * diffuse_env
-//  //+ spec_col * phong + spec_col * spec_env
-//  ;
-//}
-
 #define DIELECTRIC_SPECULAR 0.04
+
+// References:
+// https://learnopengl.com/PBR/IBL/Specular-IBL
+//
 
 vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness){
     float val = 1.0 - cosTheta;

@@ -42,13 +42,6 @@ float saturate(float x) {
     return clamp(x, 0.0, 1.0);
 }
 
-float D_GGX(float NoH, float linearRoughness) {
-    float a = NoH * linearRoughness;
-    float k = linearRoughness / (1.0 - NoH * NoH + a * a);
-    return k * k * (1.0 / PI);
-}
-
-
 //------------------------------------------------------------------------------------------
 // Hammersley Sampling
 //------------------------------------------------------------------------------------------
@@ -91,72 +84,76 @@ vec3 SampleHemisphere_Cosinus(float i, float numSamples)
     return vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
 }
 
-// IBL convolution Based upon https://bruop.github.io/ibl/
-// Mostly copy paste though, sometimes modified
-
-// From the filament docs. Geometric Shadowing function
-// https://google.github.io/filament/Filament.html#toc4.4.2
-float G_Smith(float NoV, float NoL, float roughness)
-{
-  float k = (roughness * roughness) / 2.0;
-  float GGXL = NoL / (NoL * (1.0 - k) + k);
-  float GGXV = NoV / (NoV * (1.0 - k) + k);
-  return GGXL * GGXV;
-}
-
 // Based on Karis 2014
-vec3 importanceSampleGGX(vec2 Xi, float linearRoughness, vec3 N)
+// Also https://bruop.github.io/ibl/
+// Also https://www.shadertoy.com/view/3lB3DR
+vec3 sample_GGX(vec2 Xi, float roughness, vec3 N, vec3 V, out float inv_pdf)
 {
-    float a = linearRoughness * linearRoughness;
-    // Sample in spherical coordinates
-    float Phi = 2.0 * PI * Xi.x;
-    float CosTheta = sqrt((1.0 - Xi.y) / (1.0 + (a*a - 1.0) * Xi.y));
-    float SinTheta = sqrt(1.0 - CosTheta * CosTheta);
-    // Construct tangent space vector
-    vec3 H;
-    H.x = SinTheta * cos(Phi);
-    H.y = SinTheta * sin(Phi);
-    H.z = CosTheta;
+    float a = roughness * roughness;
+    float a2 = a * a;
 
-    // Tangent to world space
-    vec3 UpVector = abs(N.z) < 0.999 ? vec3(0.,0.,1.0) : vec3(1.0,0.,0.);
-    vec3 TangentX = normalize(cross(UpVector, N));
-    vec3 TangentY = cross(N, TangentX);
-    return TangentX * H.x + TangentY * H.y + N * H.z;
+    // Sample in spherical coordinates
+    // A trick with acos(cos(theta)) == theta is used to simplify the equation
+    float phi = 2.0 * PI * Xi.x;
+    float epsilon = clamp(Xi.y, 0.001f, 1.0f);
+    float cos_theta_2 = (1.0 - epsilon) / ((a2 - 1.0) * epsilon + 1.0);
+    float cos_theta = sqrt(cos_theta_2);
+    float sin_theta = sqrt(1.0 - cos_theta_2);
+
+    vec3 t = normalize(cross(N.yzx, N));
+    vec3 b = cross(N, t);
+    vec3 H = t * sin_theta * cos(phi) +
+           b * sin_theta * sin(phi) +
+           N * cos_theta;
+    
+    // Calculate the pdf
+    float den = (a2 - 1.0) * cos_theta_2 + 1.0;
+    float D = a2 / (PI * den * den);
+    float pdf = D * cos_theta / (4.0f * dot(H, V));
+    inv_pdf = 1.0 / (PI * (pdf + 1.0e-6f));
+    
+    return H;
 }
 
-vec3 prefilterEnvMap(float roughness, vec3 R)
+vec3 convolve_env(float roughness, vec3 R)
 {
   vec3 N = R;
   vec3 V = R;
-  vec3 prefilteredColor = vec3(0.0);
+  vec3 color_acc = vec3(0.0);
   const uint numSamples = 64u;
-  float totalWeight = 0.0;
-  float imgSize = float(textureSize(in_image, 0).x);
+  float weight_acc = 0.0;
+  // Here it's important to use height as it's ~2x smaller that
+  // the width on spheremaps. Otherwise it makes everything too smooth
+  float img_size = float(textureSize(in_image, 0).y);
 
   for (uint i = 0u; i < numSamples; i++) {
     vec2 Xi = Hammersley(i, numSamples);
-    vec3 H = importanceSampleGGX(Xi, roughness, N);
+    float inv_pdf;
+    vec3 H = sample_GGX(Xi, roughness, N, V, inv_pdf);
     vec3 L = 2.0 * dot(V, H) * H - V;
     float NoL = saturate(dot(N, L));
     float NoH = saturate(dot(N, H));
 
     if (NoL > 0.0) {
       // Based off https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch20.html
-      // Typically you'd have the following:
-      // float pdf = D_GGX(NoH, roughness) * NoH / (4.0 * VoH);
-      // but since V = N => VoH == NoH
-      float pdf = D_GGX(NoH, roughness) / 4.0 + 0.001;
+ 
       // Solid angle of current sample -- bigger for less likely samples
-      float omegaS = 1.0 / (float(numSamples) * pdf);
-      // Solid angle  of pixel
-      float omegaP = 4.0 * PI / (6.0 * imgSize  * imgSize);
-      float mipLevel = max(0.25 * log2(omegaS / omegaP), 0.0);
-      prefilteredColor += sample_cubemap(L, mipLevel).rgb * NoL;
-      totalWeight += NoL;
+      float omegaS = inv_pdf / float(numSamples);
+      // ~ Solid angle of the current pixel
+      // Not true for cubemaps
+      // 2x not true for spheremaps but somehow correlated
+      float omegaP = 4.0 * PI / (6.0 * img_size * img_size);
+      // k = omegaS/omegaP == the amount of pixels needed for averaging
+      // l = sqrt(k) == the linear dimension of the mip map
+      // log2(l) == the mip level of need i.e. how much we must
+      // divide the image by 2 to get the needed level of averaging  
+      // log(sqrt(a)) == 0.5 * log(a)
+      float mip_level = max(0.5 * log2(omegaS / omegaP), 0.0);
+      color_acc += sample_cubemap(L, mip_level).rgb * NoL;
+      weight_acc += NoL;
     }
   }
-  return prefilteredColor / totalWeight;
+  return color_acc / weight_acc;
 }
 
 vec3 convolve_diffuse(vec2 uv) {
@@ -189,22 +186,12 @@ vec3 convolve_specular(vec2 uv, float roughness) {
     sin(theta) * sin(phi)
   );
 
-  return prefilterEnvMap(roughness, r);
+  return convolve_env(roughness, r);
 }
 
-// From the filament docs. Geometric Shadowing function
-// https://google.github.io/filament/Filament.html#toc4.4.2
-float V_SmithGGXCorrelated(float NoV, float NoL, float roughness) {
-    float a2 = pow(roughness, 4.0);
-    float GGXV = NoL * sqrt(NoV * NoV * (1.0 - a2) + a2);
-    float GGXL = NoV * sqrt(NoL * NoL * (1.0 - a2) + a2);
-    return 0.5 / (GGXV + GGXL);
-}
-
-// Karis 2014
-vec2 integrateBRDF(float roughness, float NoV)
+vec2 convolve_BRDF_LUT(float roughness, float NoV)
 {
-  vec3 V;
+    vec3 V;
     V.x = sqrt(1.0 - NoV * NoV); // sin
     V.y = 0.0;
     V.z = NoV; // cos
@@ -214,30 +201,40 @@ vec2 integrateBRDF(float roughness, float NoV)
 
     float A = 0.0;
     float B = 0.0;
-    const uint numSamples = 1024;
+    const uint N_samples = 1024;
 
-    for (uint i = 0u; i < numSamples; i++) {
-        vec2 Xi = Hammersley(i, numSamples);
+    for (uint i = 0u; i < N_samples; i++) {
+        vec2 Xi = Hammersley(i, N_samples);
         // Sample microfacet direction
-        vec3 H = importanceSampleGGX(Xi, roughness, N);
+	float inv_pdf;
+        vec3 H = sample_GGX(Xi, roughness, N, V, inv_pdf);
 
         // Get the light direction
-        vec3 L = 2.0 * dot(V, H) * H - V;
+        vec3 L = reflect(-V, H);
 
         float NoL = saturate(dot(N, L));
         float NoH = saturate(dot(N, H));
+        float NoV = saturate(dot(N, V));
         float VoH = saturate(dot(V, H));
+        float LoH = saturate(dot(L, H));
 
         if (NoL > 0.0) {
-            // Terms besides V are from the GGX PDF we're dividing by
-            float V_pdf = V_SmithGGXCorrelated(NoV, NoL, roughness) * VoH * NoL / NoH;
-            float Fc = pow(1.0 - VoH, 5.0);
-            A += (1.0 - Fc) * V_pdf;
-            B += Fc * V_pdf;
+	    float C = VoH / (NoH * NoV);
+	    float alpha = roughness * roughness;
+	    // float alpha2 = alpha * alpha;
+	    float F0 = 0.04;
+	    // Schlick
+	    float beta = pow(1.0 - LoH, 5.0);
+	    // Smith joint masking-shadowing
+	    float K = 0.5 * alpha;
+	    float G = (NoL * NoV) / ((NoL * (1.0 - K) + K) * (NoV * (1.0 - K) + K));
+	    // float G = GeometrySmith(N, V, L, roughness);
+            A += (1.0 - beta) * G * C;
+            B += beta * G * C;
         }
     }
 
-    return 4.0 * vec2(A, B) / float(numSamples);
+    return vec2(A, B) / float(N_samples);
 }
 
 void main() {
@@ -257,7 +254,7 @@ void main() {
     vec2 uv = (vec2(xy) + vec2(0.5, 0.5)) / vec2(dim);
     float mu = uv.x;
     float a = uv.y;
-    vec2 res = integrateBRDF(a, mu);
+    vec2 res = convolve_BRDF_LUT(a, mu);
 
     imageStore(out_image[1], xy,
                vec4(res, 0.0, 1.0));

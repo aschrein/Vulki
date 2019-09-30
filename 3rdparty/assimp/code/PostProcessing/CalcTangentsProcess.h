@@ -100,6 +100,13 @@ protected:
     bool ProcessMesh( aiMesh* pMesh, unsigned int meshIndex);
 
     // -------------------------------------------------------------------
+    /** Tries to fix tangents and binormals.
+    * @param pMesh The mesh to process.
+    * @param meshIndex Index of the mesh
+    */
+    void FixTangents( aiMesh* pMesh, unsigned int meshIndex);
+
+    // -------------------------------------------------------------------
     /** Executes the post processing step on the given imported data.
     * @param pScene The imported data to work at.
     */

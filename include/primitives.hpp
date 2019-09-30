@@ -104,19 +104,26 @@ struct Image_Raw {
     }
   };
   vec4 sample(vec2 uv) {
-    uvec2 size = uvec2(width, height);
+    ivec2 size = ivec2(width, height);
     vec2 suv = uv * vec2(float(size.x - 1u), float(size.y - 1u));
-    uvec2 coord[] = {
-        uvec2(u32(suv.x), u32(suv.y)),
-        uvec2(u32(suv.x), u32(suv.y + 1.0f)),
-        uvec2(u32(suv.x + 1.0f), u32(suv.y)),
-        uvec2(u32(suv.x + 1.0f), u32(suv.y + 1.0f)),
+    ivec2 coord[] = {
+        ivec2(i32(suv.x), i32(suv.y)),
+        ivec2(i32(suv.x), i32(suv.y + 1.0f)),
+        ivec2(i32(suv.x + 1.0f), i32(suv.y)),
+        ivec2(i32(suv.x + 1.0f), i32(suv.y + 1.0f)),
     };
     ito(4) {
-      if (coord[i].x >= size.x)
-        coord[i].x = size.x - 1;
-      if (coord[i].y >= size.y)
-        coord[i].y = size.y - 1;
+      // Repeat
+      jto(2) {
+        while (coord[i][j] >= size[j])
+          coord[i][j] -= size[j];
+        while (coord[i][j] < 0)
+          coord[i][j] += size[j];
+      }
+//      if (coord[i].x >= size.x)
+//        coord[i].x = size.x - 1;
+//      if (coord[i].y >= size.y)
+//        coord[i].y = size.y - 1;
     }
     vec2 fract = vec2(suv.x - std::floor(suv.x), suv.y - std::floor(suv.y));
     float weights[] = {
@@ -126,7 +133,7 @@ struct Image_Raw {
         (fract.x) * (fract.y),
     };
     vec4 result = vec4(0.0f, 0.0f, 0.0f, 0.0f);
-    ito(4) result += load(coord[i]) * weights[i];
+    ito(4) result += load(uvec2(coord[i].x, coord[i].y)) * weights[i];
     return result;
   };
 };
@@ -196,6 +203,18 @@ static mat4 cofactor(mat4 const &in) {
   return out;
 }
 
+static constexpr float FLOAT_EPS = 1.0e-6f;
+
+static vec3 safe_normalize(vec3 const &v) {
+  ASSERT_PANIC(!std::isnan(v.x) && !std::isnan(v.y) && !std::isnan(v.z));
+  float mod = glm::length(v);
+  if (mod > FLOAT_EPS) {
+    return v / mod;
+  } else {
+    return v;
+  }
+}
+
 struct GLRF_Vertex_Static {
   vec3 position;
   vec3 normal;
@@ -206,9 +225,9 @@ struct GLRF_Vertex_Static {
     GLRF_Vertex_Static out;
     mat4 cmat = cofactor(transform);
     out.position = vec3(transform * vec4(position, 1.0f));
-    out.normal = vec3(cmat * vec4(normal, 0.0f));
-    out.tangent = vec3(cmat * vec4(tangent, 0.0f));
-    out.binormal = vec3(cmat * vec4(binormal, 0.0f));
+    out.normal = safe_normalize(vec3(cmat * vec4(normal, 0.0f)));
+    out.tangent = safe_normalize(vec3(cmat * vec4(tangent, 0.0f)));
+    out.binormal = safe_normalize(vec3(cmat * vec4(binormal, 0.0f)));
     out.texcoord = texcoord;
     return out;
   }

@@ -141,6 +141,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     if (ImGui::Button("Reset Path tracer")) {
       pt_manager.path_tracing_queue.reset();
     }
+    ImGui::InputInt("Samples per pixel", (int*)&pt_manager.samples_per_pixel);
+    ImGui::InputInt("Max path depth", (int*)&pt_manager.max_depth);
     ImGui::Checkbox("Camera jitter", &gizmo_layer.jitter_on);
     ImGui::Checkbox("Gizmo layer", &display_gizmo_layer);
     ImGui::Checkbox("Enable Raster AO", &enable_ao);
@@ -640,9 +642,9 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
               }
             }
             if (pt_manager.path_tracing_camera._debug_path.size() > 1) {
-              ito(pt_manager.path_tracing_camera._debug_path.size() - 1) {
-                auto p0 = pt_manager.path_tracing_camera._debug_path[i];
-                auto p1 = pt_manager.path_tracing_camera._debug_path[i + 1];
+              ito(pt_manager.path_tracing_camera._debug_path.size()/2) {
+                auto p0 = pt_manager.path_tracing_camera._debug_path[i*2];
+                auto p1 = pt_manager.path_tracing_camera._debug_path[i*2 + 1];
                 gizmo_layer.push_line(p0, p1, vec3(1.0f, 1.0f, 0.0f));
               }
             }

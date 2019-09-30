@@ -226,17 +226,19 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
       vertex.position.x = mesh->mVertices[i].x * vk;
       vertex.position.y = mesh->mVertices[i].y * vk;
       vertex.position.z = mesh->mVertices[i].z * vk;
-      if (mesh->mTangents) {
+      if (mesh->HasTangentsAndBitangents()) {
         vertex.tangent.x = mesh->mTangents[i].x;
         vertex.tangent.y = mesh->mTangents[i].y;
         vertex.tangent.z = mesh->mTangents[i].z;
+
       } else {
         vertex.tangent = vec3(0.0f);
       }
-      if (mesh->mBitangents) {
+      if (mesh->HasTangentsAndBitangents()) {
         vertex.binormal.x = mesh->mBitangents[i].x;
         vertex.binormal.y = mesh->mBitangents[i].y;
         vertex.binormal.z = mesh->mBitangents[i].z;
+
       } else {
         vertex.binormal = vec3(0.0f);
       }
@@ -244,6 +246,24 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
       vertex.normal.x = mesh->mNormals[i].x;
       vertex.normal.y = mesh->mNormals[i].y;
       vertex.normal.z = mesh->mNormals[i].z;
+
+      // An attempt to fix the tangent space
+      if (std::isnan(vertex.binormal.x) || std::isnan(vertex.binormal.y) ||
+          std::isnan(vertex.binormal.z)) {
+        vertex.binormal =
+            glm::normalize(glm::cross(vertex.normal, vertex.tangent));
+      }
+      if (std::isnan(vertex.tangent.x) || std::isnan(vertex.tangent.y) ||
+          std::isnan(vertex.tangent.z)) {
+        vertex.tangent =
+            glm::normalize(glm::cross(vertex.normal, vertex.binormal));
+      }
+      ASSERT_PANIC(!std::isnan(vertex.binormal.x) &&
+                   !std::isnan(vertex.binormal.y) &&
+                   !std::isnan(vertex.binormal.z));
+      ASSERT_PANIC(!std::isnan(vertex.tangent.x) &&
+                   !std::isnan(vertex.tangent.y) &&
+                   !std::isnan(vertex.tangent.z));
 
       if (mesh->HasTextureCoords(0)) {
         vertex.texcoord.x = mesh->mTextureCoords[0][i].x;
@@ -355,8 +375,12 @@ PBR_Model load_gltf_pbr(std::string const &filename) {
       filename.c_str(),
       aiProcess_Triangulate |
           // @TODO: Find out why transforms are not handled correcly otherwise
-          aiProcess_PreTransformVertices | aiProcess_OptimizeMeshes |
-          aiProcess_CalcTangentSpace | aiProcess_FlipUVs);
+          aiProcess_GenSmoothNormals |
+          aiProcess_PreTransformVertices |
+          aiProcess_OptimizeMeshes |
+          aiProcess_CalcTangentSpace
+          | aiProcess_FlipUVs
+          );
   if (!scene) {
     std::cerr << "[FILE] Errors: " << importer.GetErrorString() << "\n";
     ASSERT_PANIC(false);

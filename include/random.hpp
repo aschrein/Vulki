@@ -14,6 +14,8 @@ static float saturate(float x) { return glm::clamp(x, 0.0f, 1.0f); }
 
 static float sqr(float x) { return x * x; }
 
+
+
 static float Beckmann(float m, float t) {
   float M = m * m;
   float T = t * t;
@@ -64,18 +66,18 @@ static vec3 getHemisphereGGXSample(vec2 xi, vec3 n, vec3 v, float roughness,
   vec3 t = normalize(cross(vec3(n.y, n.z, n.x), n));
   vec3 b = cross(n, t);
 
-  vec3 microNormal =
+  vec3 H =
       (t * std::cos(phi) + b * std::sin(phi)) * sinTheta + n * cosTheta;
 
-  vec3 l = reflect(-v, microNormal);
+  vec3 l = reflect(-v, H);
 
   // Sample weight
-  float den = (alpha2 - 1.0f) * cosTheta2 + 1.0f;
-  float D = alpha2 / (PI * den * den);
+  // float den = (alpha2 - 1.0f) * cosTheta2 + 1.0f;
+  // float D = alpha2 / (PI * den * den);
   float pdf =
       // This term is eliminated later
       //  D *
-      cosTheta / (4.0f * dot(microNormal, v));
+      cosTheta / (4.0f * dot(H, v));
   weight = (0.5f / PI) / (pdf + 1.0e-6f);
 
   if (dot(l, n) < 0.0f)
@@ -104,7 +106,7 @@ static vec3 ggx(vec3 n, vec3 v, vec3 l, float roughness, vec3 F0) {
   vec3 F = F0 + (vec3(1.0f) - F0) * std::pow(1.0f - dotLH, 5.0f);
 
   // Smith joint masking-shadowing function
-  float k = 0.5f * alpha;
+  float k = 0.5f * (alpha);
   float G = 1.0f / ((dotNL * (1.0f - k) + k) * (dotNV * (1.0f - k) + k));
 
   return
