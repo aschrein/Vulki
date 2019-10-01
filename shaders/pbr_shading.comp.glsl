@@ -50,11 +50,14 @@ float theta = acos(r.y);
 float phi = angle_normalized(r.x, r.z);
 //nonuniformEXT(push_constant.cubemap_id)
 int max_lod = textureQueryLevels(textures[id]);
+float lod = float(max_lod) * (roughness);
+float img_size = float(textureSize(textures[id], int(lod)).y);
+float v = clamp(theta/PI, 0.6/img_size, 1.0 - 0.6/img_size);
 return textureLod(textures[id],
   vec2(
   phi,
-  theta/PI
-), float(max_lod) * (roughness)).xyz;
+  v
+), lod).xyz;
 }
 
 #define DIELECTRIC_SPECULAR 0.04
@@ -64,8 +67,7 @@ return textureLod(textures[id],
 //
 
 vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness){
-    float val = 1.0 - cosTheta;
-    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * (val*val*val*val*val); //Faster than pow
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - cosTheta, 5.0);
 }
 
 void main() {
@@ -96,13 +98,12 @@ void main() {
     vec3 refl = normalize(reflect(ray_dir, normal));
     vec3 L = refl;
     vec3 V = -ray_dir;
-    vec3 H = normalize(refl - ray_dir);
-    float VoH = clamp(dot(V, H), 0.0, 1.0);
     float NoV = clamp(dot(normal, V), 0.0, 1.0);
-//    vec3 diffuse_color = albedo * (1.0 - DIELECTRIC_SPECULAR) * (1.0 - metalness);
     vec3 F0 = mix(vec3(DIELECTRIC_SPECULAR), albedo, metalness);
 
-    vec3  kS = fresnelSchlickRoughness(NoV, F0, roughness);
+    vec3  kS =
+    F0 + (vec3(1.0f) - F0) * pow(1.0f - NoV, 5.0f);
+//    fresnelSchlickRoughness(NoV, F0, roughness);
     vec3  kD = 1.0 - kS;
     kD *= (1.0 - DIELECTRIC_SPECULAR) * (1.0 - metalness);
 

@@ -66,16 +66,19 @@ static vec3 getHemisphereGGXSample(vec2 xi, vec3 n, vec3 v, float roughness,
 
   vec3 H = (t * std::cos(phi) + b * std::sin(phi)) * sinTheta + n * cosTheta;
 
-  vec3 l = reflect(-v, H);
+  vec3 l = normalize(reflect(-v, H));
 
   // Sample weight
+  // This term is eliminated later
   // float den = (alpha2 - 1.0f) * cosTheta2 + 1.0f;
   // float D = alpha2 / (PI * den * den);
+  float NoH = cosTheta;
+  float VoH = dot(H, v);
+  float NoV = dot(n, v);
   float pdf =
-      // This term is eliminated later
       //  D *
-      cosTheta / (4.0f * dot(H, v));
-  weight = (0.5f / PI) / (pdf + 1.0e-6f);
+      (NoH * NoV) / VoH;
+  weight = 1.0f / (pdf + 1.0e-6f);
 
   if (dot(l, n) < 0.0f)
     weight = 0.0f;
@@ -88,28 +91,33 @@ static vec3 ggx(vec3 n, vec3 v, vec3 l, float roughness, vec3 F0) {
   float alpha = roughness * roughness;
   float alpha2 = alpha * alpha;
 
-  float dotNL = clamp(dot(n, l), 0.0f, 1.0f);
-  float dotNV = clamp(dot(n, v), 0.0f, 1.0f);
+  float NoL = clamp(dot(n, l), 0.0f, 1.0f);
+  float NoV = clamp(dot(n, v), 0.0f, 1.0f);
 
   vec3 h = normalize(v + l);
-  float dotNH = clamp(dot(n, h), 0.0f, 1.0f);
-  float dotLH = clamp(dot(l, h), 0.0f, 1.0f);
+  float NoH = clamp(dot(n, h), 0.0f, 1.0f);
+  float LoH = clamp(dot(l, h), 0.0f, 1.0f);
 
   // GGX microfacet distribution function
-  float den = (alpha2 - 1.0f) * dotNH * dotNH + 1.0f;
-  float D = alpha2 / (PI * den * den);
+  // Canceled out
+  //  float den = (alpha2 - 1.0f) * NoH * NoH + 1.0f;
+  //  float D = alpha2 / (PI * den * den);
 
   // Fresnel with Schlick approximation
-  vec3 F = F0 + (vec3(1.0f) - F0) * std::pow(1.0f - dotLH, 5.0f);
+  // LoH or NoL? LoN is used for raster
+  vec3 F = F0 + (vec3(1.0f) - F0) * std::pow(1.0f - NoV, 5.0f);
 
   // Smith joint masking-shadowing function
+  // Or 0.125f * (alpha2 + 1.0f);
   float k = 0.5f * (alpha);
-  float G = 1.0f / ((dotNL * (1.0f - k) + k) * (dotNV * (1.0f - k) + k));
+  float G = (NoL * NoV) / ((NoL * (1.0f - k) + k) * (NoV * (1.0f - k) + k));
 
   return
       // This term is eliminated
       //  D *
-      F * G;
+      F
+      * G
+      ;
 }
 
 static float FresnelSchlickRoughness(float cosTheta, float F0,

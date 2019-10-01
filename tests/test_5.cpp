@@ -56,8 +56,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   std::vector<std::string> model_filenames;
   std::vector<std::string> env_filenames;
 
-  scene.load_env("spheremaps/whale_skeleton.hdr");
-
+  scene.load_env("spheremaps/lythwood_field.hdr");
+  scene.load_model("models/one_angery_dragon_boi/scene.gltf");
   iterate_folder("models/", model_filenames, ".gltf");
   iterate_folder("spheremaps/", env_filenames, ".hdr");
 
@@ -70,7 +70,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   float drag_val = 0.0;
 
   // #IMGUI
-  bool display_gizmo_layer = true;
+  bool display_gizmo_layer = false;
   bool enable_ao = false;
   bool display_ug = false;
   bool denoise = false;

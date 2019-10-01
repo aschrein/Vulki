@@ -206,7 +206,7 @@ vec2 convolve_BRDF_LUT(float roughness, float NoV)
     for (uint i = 0u; i < N_samples; i++) {
         vec2 Xi = Hammersley(i, N_samples);
         // Sample microfacet direction
-	float inv_pdf;
+        float inv_pdf;
         vec3 H = sample_GGX(Xi, roughness, N, V, inv_pdf);
 
         // Get the light direction
@@ -219,18 +219,21 @@ vec2 convolve_BRDF_LUT(float roughness, float NoV)
         float LoH = saturate(dot(L, H));
 
         if (NoL > 0.0) {
-	    float C = VoH / (NoH * NoV);
-	    float alpha = roughness * roughness;
-	    // float alpha2 = alpha * alpha;
-	    float F0 = 0.04;
-	    // Schlick
-	    float beta = pow(1.0 - LoH, 5.0);
-	    // Smith joint masking-shadowing
-	    float K = 0.5 * alpha;
-	    float G = (NoL * NoV) / ((NoL * (1.0 - K) + K) * (NoV * (1.0 - K) + K));
-	    // float G = GeometrySmith(N, V, L, roughness);
-            A += (1.0 - beta) * G * C;
-            B += beta * G * C;
+          // See http://xlgames-inc.github.io/posts/improvedibl/
+          // VoH -> NoL
+          // ...
+          float pdf = (NoH * NoV) / VoH;
+          float alpha = roughness * roughness;
+          // float alpha2 = alpha * alpha;
+          float F0 = 0.04;
+          // Schlick
+          float beta = pow(1.0 - LoH, 5.0);
+          // Smith joint masking-shadowing
+          float K = 0.5 * alpha;
+          float G = (NoL * NoV) / ((NoL * (1.0 - K) + K) * (NoV * (1.0 - K) + K));
+          // float G = GeometrySmith(N, V, L, roughness);
+                A += (1.0 - beta) * G / pdf;
+                B += beta * G / pdf;
         }
     }
 

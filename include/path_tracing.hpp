@@ -188,8 +188,8 @@ struct JobPayload {
 using WorkPayload = std::vector<JobPayload>;
 
 struct PT_Manager {
-  u32 samples_per_pixel = 256;
-  u32 max_depth = 2;
+  u32 samples_per_pixel = 16;
+  u32 max_depth = 1;
   bool trace_ispc = true;
   u32 jobs_per_item = 32 * 100;
   bool use_jobs = true;
@@ -285,6 +285,8 @@ struct PT_Manager {
       height = _height;
       // Pitch less flat array
       data.clear();
+      normals.clear();
+      albedo.clear();
       data.resize(width * height);
       normals.resize(width * height);
       albedo.resize(width * height);
@@ -648,26 +650,28 @@ struct PT_Manager {
                           u32 secondary_N = 1; // 2 / (1 << job.depth);
                           kto(secondary_N) {
                             vec2 xi = frand.random_halton();
-                            //                            vec2(frand.rand_unit_float(),
-                            //                                           frand.rand_unit_float());
                             // Value used to choose between specular/diffuse
                             // sample
-                            float F = FresnelSchlickRoughness(
-                                NoV, DIELECTRIC_SPECULAR, roughness);
+                            float Ks =
+                                clamp(metalness + FresnelSchlickRoughness(
+                                                      NoV, DIELECTRIC_SPECULAR,
+                                                      roughness),
+                                      0.0f, 1.0f);
+                            float Kd = 1.0f - Ks;
                             // Reflectance at 0 theta
                             vec3 F0 = glm::mix(vec3(DIELECTRIC_SPECULAR),
                                                vec3(albedo), vec3(metalness));
                             // Roll a dice and choose between specular and
                             // diffuse sample based on the fresnel value
-                            if //(true) {
-                                (frand.rand_unit_float() > 0.5f) {
-                              //(F + metalness > frand.rand_unit_float()) {
+                            if
+                                //                            (true) {
+                                //                                (frand.rand_unit_float()
+                                //                                > 0.5f) {
+                                (Ks > frand.rand_unit_float()) {
                               // Sample GGX half normal and get the PDF
                               float inv_pdf = 1.0f;
-                              vec3 L =
-                                  // glm::reflect(-V, vertex.normal);
-                                  getHemisphereGGXSample(xi, N, V, roughness,
-                                                         inv_pdf);
+                              vec3 L = getHemisphereGGXSample(
+                                  xi, N, V, roughness, inv_pdf);
                               float NoL = saturate(dot(N, L));
                               // Means that the reflected ray is under surface
                               // Should we multiscatter/absorb/reroll?
@@ -680,9 +684,12 @@ struct PT_Manager {
                                 new_job.depth += 1;
                                 new_job._depth += 1;
                                 vec3 brdf = ggx(N, V, L, roughness, F0);
+                                //                                path_tracing_image.add_value(
+                                //                                    job.pixel_x,
+                                //                                    job.pixel_y,
+                                //                                    vec4(brdf, 1.0f));
                                 new_job.color =
-                                    4.0f * inv_pdf * (brdf * job.color) * NoL;
-                                // #Debug
+                                    (1.0f / Ks) * inv_pdf * (brdf * job.color);
                                 // #Debug
                                 if (path_tracing_camera._grab_path) {
                                   path_tracing_camera.push_debug_line(
@@ -706,16 +713,7 @@ struct PT_Manager {
                                 path_tracing_queue.enqueue(new_job);
                               } else {
                                 // @TODO: Decide what to do here
-                                //                                // Terminate
-                                //                                path_tracing_image.add_value(
-                                //                                    job.pixel_x,
-                                //                                    job.pixel_y,
-                                //                                    vec4(0.0f,
-                                //                                    0.0f,
-                                //                                    0.0f,
-                                //                                    job.weight));
                               }
-                              //}
                             } else {
                               // Lambertian diffuse
                               vec3 up = abs(normal.y) < 0.999
@@ -737,7 +735,7 @@ struct PT_Manager {
                               new_job.weight *= 1.0f / secondary_N;
                               new_job.depth += 1;
                               new_job._depth += 1;
-                              new_job.color = 2.0f * vec3(albedo) *
+                              new_job.color = (1.0f / Kd) * vec3(albedo) *
                                               (1.0f - DIELECTRIC_SPECULAR) *
                                               (1.0f - metalness) * job.color;
                               // #Debug
