@@ -17,6 +17,8 @@
 #include <glm/glm.hpp>
 using namespace glm;
 
+#include <oidn/include/OpenImageDenoise/oidn.hpp>
+
 struct Scene_Node {
   u32 id;
   u32 pbr_node_id;
@@ -108,8 +110,9 @@ struct Scene {
             std::min(ug_size.x, std::min(ug_size.y, ug_size.z));
         float longest_dim = std::max(ug_size.x, std::max(ug_size.y, ug_size.z));
         float ug_cell_size =
-            std::max((longest_dim / 100) + 0.01f,
-                     std::min(avg_triangle_radius * 6.0f, longest_dim / 2));
+            std::max((longest_dim / 32) + 0.01f,
+                     std::min(12.0f * avg_triangle_radius * avg_triangle_radius,
+                              longest_dim / 2));
         snode.ug = UG(model_min, model_max, ug_cell_size);
         snode.octree.root.reset(new Oct_Node(model_min, model_max, 0));
         {
@@ -269,6 +272,11 @@ struct PT_Manager {
   }
   struct Path_Tracing_Image {
     std::vector<vec4> data;
+    std::vector<vec4> normals;
+    std::vector<vec4> albedo;
+    std::vector<vec4> denoised_data;
+    // A flag to track dirtiness
+    bool updated = false;
     u32 width = 0u, height = 0u;
     std::mutex mutex;
     void init(u32 _width, u32 _height) {
@@ -278,12 +286,82 @@ struct PT_Manager {
       // Pitch less flat array
       data.clear();
       data.resize(width * height);
+      normals.resize(width * height);
+      albedo.resize(width * height);
+      updated = true;
     }
     void add_value(u32 x, u32 y, vec4 val) {
       std::scoped_lock<std::mutex> sl(mutex);
+      updated = true;
       data[x + y * width] += val;
     }
+    void add_normal(u32 x, u32 y, vec3 val) {
+      std::scoped_lock<std::mutex> sl(mutex);
+      updated = true;
+      normals[x + y * width] += vec4(val, 1.0f);
+    }
+    void add_albedo(u32 x, u32 y, vec3 val) {
+      std::scoped_lock<std::mutex> sl(mutex);
+      updated = true;
+      albedo[x + y * width] += vec4(val, 1.0f);
+    }
     vec4 get_value(u32 x, u32 y) { return data[x + y * width]; }
+    static void errorCallback(void *userPtr, oidn::Error error,
+                              const char *message) {
+      throw std::runtime_error(message);
+    }
+    void denoise() {
+      if (!updated)
+        return;
+      updated = false;
+      std::vector<vec3> tmp;
+      std::vector<vec3> tmp_normals;
+      std::vector<vec3> tmp_albedo;
+      std::vector<vec3> tmp_denoised(data.size());
+      for (auto const &pixel : data) {
+        if (pixel.a < 1.0e-6f) {
+          tmp.push_back(vec3(0.0f));
+        } else {
+          tmp.push_back(vec3(pixel) / pixel.a);
+        }
+      }
+      for (auto const &pixel : normals) {
+        if (pixel.a < 1.0e-6f) {
+          tmp_normals.push_back(vec3(0.0f));
+        } else {
+          tmp_normals.push_back(vec3(pixel) / pixel.a);
+        }
+      }
+      for (auto const &pixel : albedo) {
+        if (pixel.a < 1.0e-6f) {
+          tmp_albedo.push_back(vec3(0.0f));
+        } else {
+          tmp_albedo.push_back(vec3(pixel) / pixel.a);
+        }
+      }
+      using namespace oidn;
+      oidn::DeviceRef device = oidn::newDevice();
+      const char *errorMessage;
+      if (device.getError(errorMessage) != oidn::Error::None)
+        throw std::runtime_error(errorMessage);
+      device.setErrorFunction(errorCallback);
+      device.commit();
+      oidn::FilterRef filter = device.newFilter("RT");
+      filter.setImage("color", &tmp[0], oidn::Format::Float3, width, height);
+      filter.setImage("normal", &tmp_normals[0], oidn::Format::Float3, width,
+                      height);
+      filter.setImage("albedo", &tmp_albedo[0], oidn::Format::Float3, width,
+                      height);
+      filter.setImage("output", &tmp_denoised[0], oidn::Format::Float3, width,
+                      height);
+      filter.set("hdr", true);
+      filter.commit();
+      filter.execute();
+      denoised_data.clear();
+      for (auto const &pixel : tmp_denoised) {
+        denoised_data.push_back(vec4(pixel, 1.0f));
+      }
+    }
   } path_tracing_image;
 
   struct Path_Tracing_Job {
@@ -340,7 +418,7 @@ struct PT_Manager {
     path_tracing_queue.enqueue(job);
     path_tracing_camera._grab_path = true;
     path_tracing_camera._debug_path.clear();
-//    path_tracing_camera._debug_path.push_back(job.ray_origin);
+    //    path_tracing_camera._debug_path.push_back(job.ray_origin);
     while (path_tracing_queue.has_job())
       path_tracing_iteration(scene);
     path_tracing_camera._grab_path = false;
@@ -552,25 +630,26 @@ struct PT_Manager {
                           float metalness = arm.b;
                           float roughness = arm.g;
                           roughness = std::max(roughness, 1.0e-5f);
-                          vec3 normal =
-                              glm::normalize((2.0f * normal_map.x - 1.0f) * vertex.tangent +
-                                             (2.0f * normal_map.y - 1.0f) * vertex.binormal +
-                                             normal_map.z * vertex.normal);
-//                          path_tracing_image.add_value(
-//                            job.pixel_x, job.pixel_y,
-//                            vec4(normal * 0.5f + vec3(0.5f), 1.0f)
-////                            vec4(vertex.texcoord, 0.0, 1.0f)
-//                            );
-//                            continue;
-
+                          vec3 normal = glm::normalize(
+                              (2.0f * normal_map.x - 1.0f) * vertex.tangent +
+                              (2.0f * normal_map.y - 1.0f) * vertex.binormal +
+                              normal_map.z * vertex.normal);
+                          // For image denoising
+                          if (job.depth == 0) {
+                            path_tracing_image.add_normal(job.pixel_x,
+                                                          job.pixel_y, normal);
+                            path_tracing_image.add_albedo(
+                                job.pixel_x, job.pixel_y, vec3(albedo));
+                          }
                           // PBR Definitions
                           vec3 N = normal;
                           vec3 V = -job.ray_dir;
                           float NoV = saturate(dot(N, V));
                           u32 secondary_N = 1; // 2 / (1 << job.depth);
                           kto(secondary_N) {
-                            vec2 xi = vec2(frand.rand_unit_float(),
-                                           frand.rand_unit_float());
+                            vec2 xi = frand.random_halton();
+                            //                            vec2(frand.rand_unit_float(),
+                            //                                           frand.rand_unit_float());
                             // Value used to choose between specular/diffuse
                             // sample
                             float F = FresnelSchlickRoughness(
@@ -586,9 +665,9 @@ struct PT_Manager {
                               // Sample GGX half normal and get the PDF
                               float inv_pdf = 1.0f;
                               vec3 L =
-                              //glm::reflect(-V, vertex.normal);
-                              getHemisphereGGXSample(
-                                  xi, N, V, roughness, inv_pdf);
+                                  // glm::reflect(-V, vertex.normal);
+                                  getHemisphereGGXSample(xi, N, V, roughness,
+                                                         inv_pdf);
                               float NoL = saturate(dot(N, L));
                               // Means that the reflected ray is under surface
                               // Should we multiscatter/absorb/reroll?

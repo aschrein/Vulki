@@ -14,8 +14,6 @@ static float saturate(float x) { return glm::clamp(x, 0.0f, 1.0f); }
 
 static float sqr(float x) { return x * x; }
 
-
-
 static float Beckmann(float m, float t) {
   float M = m * m;
   float T = t * t;
@@ -66,8 +64,7 @@ static vec3 getHemisphereGGXSample(vec2 xi, vec3 n, vec3 v, float roughness,
   vec3 t = normalize(cross(vec3(n.y, n.z, n.x), n));
   vec3 b = cross(n, t);
 
-  vec3 H =
-      (t * std::cos(phi) + b * std::sin(phi)) * sinTheta + n * cosTheta;
+  vec3 H = (t * std::cos(phi) + b * std::sin(phi)) * sinTheta + n * cosTheta;
 
   vec3 l = reflect(-v, H);
 
@@ -127,6 +124,16 @@ static vec3 SampleHemisphere_Cosinus(vec2 xi) {
   float sinTheta = std::sqrt(1.0 - cosTheta * cosTheta);
 
   return vec3(std::cos(phi) * sinTheta, std::sin(phi) * sinTheta, cosTheta);
+}
+
+static float halton(int i, int base) {
+  float x = 1.0f / base, v = 0.0f;
+  while (i > 0) {
+    v += x * (i % base);
+    i = floor(i / base);
+    x /= base;
+  }
+  return v;
 }
 
 class Random_Factory {
@@ -192,16 +199,14 @@ public:
     return vec4(glm::normalize(N + rand_unit_sphere()), 1.0f);
   }
 
+  vec2 random_halton() {
+    f32 u = halton(halton_id + 1, 2);
+    f32 v = halton(halton_id + 1, 3);
+    halton_id++;
+    return vec2(u, v);
+  }
+
 private:
   pcg m_pcg;
+  u32 halton_id = 0;
 };
-
-static float halton(int i, int base) {
-  float x = 1.0f / base, v = 0.0f;
-  while (i > 0) {
-    v += x * (i % base);
-    i = floor(i / base);
-    x /= base;
-  }
-  return v;
-}

@@ -73,6 +73,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   bool display_gizmo_layer = true;
   bool enable_ao = false;
   bool display_ug = false;
+  bool denoise = false;
   gu.set_on_gui([&] {
     gizmo_layer.on_imgui_begin();
     if (gizmo_layer.mouse_click[0]) {
@@ -145,6 +146,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     ImGui::InputInt("Max path depth", (int*)&pt_manager.max_depth);
     ImGui::Checkbox("Camera jitter", &gizmo_layer.jitter_on);
     ImGui::Checkbox("Gizmo layer", &display_gizmo_layer);
+    ImGui::Checkbox("Denoise", &denoise);
     ImGui::Checkbox("Enable Raster AO", &enable_ao);
     ImGui::Checkbox("Display UG", &display_ug);
     ImGui::Checkbox("Use ISPC", &pt_manager.trace_ispc);
@@ -368,12 +370,19 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                       .levels = 1,
                       .layers = 1}}},
           [&] {
+            void *data = nullptr;
+            if (denoise) {
+              pt_manager.path_tracing_image.denoise();
+              data = &pt_manager.path_tracing_image.denoised_data[0];
+            } else {
+              data = &pt_manager.path_tracing_image.data[0];
+            }
             u32 buf_id = gu.create_buffer(
                 render_graph::Buffer{
                     .usage_bits = vk::BufferUsageFlagBits::eStorageBuffer,
                     .size = u32(pt_manager.path_tracing_image.data.size() *
                                 sizeof(pt_manager.path_tracing_image.data[0]))},
-                &pt_manager.path_tracing_image.data[0]);
+                data);
 
             gu.bind_resource("Bins", buf_id);
             gu.bind_resource("out_image", "path_traced_scene");
