@@ -330,7 +330,7 @@ bool ispc_iterate(Packed_UG * uniform ug,
   // Transform ray origin/direction into inverse model space
   vec4 _ray_origin = mat4_mul_vec4(ug->invtransform, make_vec4(ray_origin.x, ray_origin.y, ray_origin.z, 1.0f));
   ray_origin = make_vec3(_ray_origin.x, _ray_origin.y, _ray_origin.z);
-  vec4 _ray_dir = mat4_mul_vec4(ug->invtransform, make_vec4(ray_dir.x, ray_dir.y, ray_dir.z, 1.0f));
+  vec4 _ray_dir = mat4_mul_vec4(ug->invtransform, make_vec4(ray_dir.x, ray_dir.y, ray_dir.z, 0.0f));
   ray_dir = make_vec3(_ray_dir.x, _ray_dir.y, _ray_dir.z);
   // For triangle-ray intersection we need a normalized ray direction
   // Then we just scale t *= inv_length which makes it global world scale

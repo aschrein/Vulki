@@ -191,9 +191,9 @@ struct Gizmo_Drag_State {
 };
 
 struct Camera {
-  float phi = 0.0;
-  float theta = M_PI / 4.0f;
-  float distance = 100.0f;
+  float phi = M_PI / 2.0f;
+  float theta = M_PI / 2.0f;
+  float distance = 60.0f;
   float mx = 0.0f, my = 0.0f;
   vec3 look_at = vec3(0.0f, 0.0f, 0.0f);
   float aspect = 1.0;

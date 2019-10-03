@@ -48,10 +48,7 @@ struct Scene {
       if (pbr_model.nodes.size() <= node_id)
         return;
       auto &node = pbr_model.nodes[node_id];
-      for (auto i : node.meshes) {
-        auto &mesh = pbr_model.meshes[i];
-        node.update_cache(transform);
-      }
+      node.update_cache(transform);
       for (auto child_id : node.children) {
         enter_node(child_id, node.transform_cache);
       }
@@ -59,6 +56,7 @@ struct Scene {
     enter_node(0, mat4(1.0f));
     for (auto &snode : scene_nodes) {
       snode.transform = pbr_model.nodes[snode.pbr_node_id].transform_cache;
+      snode.invtransform = glm::inverse(snode.transform);
     }
   }
   void load_env(std::string const &filename) {
@@ -110,9 +108,8 @@ struct Scene {
             std::min(ug_size.x, std::min(ug_size.y, ug_size.z));
         float longest_dim = std::max(ug_size.x, std::max(ug_size.y, ug_size.z));
         float ug_cell_size =
-            std::max((longest_dim / 32) + 0.01f,
-                     std::min(12.0f * avg_triangle_radius * avg_triangle_radius,
-                              longest_dim / 2));
+            std::max((longest_dim / 128) + 0.01f,
+                     std::min(2.0f * avg_triangle_radius, longest_dim / 2));
         snode.ug = UG(model_min, model_max, ug_cell_size);
         snode.octree.root.reset(new Oct_Node(model_min, model_max, 0));
         {
@@ -188,12 +185,12 @@ struct JobPayload {
 using WorkPayload = std::vector<JobPayload>;
 
 struct PT_Manager {
-  u32 samples_per_pixel = 16;
-  u32 max_depth = 1;
+  u32 samples_per_pixel = 64;
+  u32 max_depth = 2;
   bool trace_ispc = true;
-  u32 jobs_per_item = 32 * 100;
+  u32 jobs_per_item = 8 * 32 * 1000;
   bool use_jobs = true;
-  u32 max_jobs_per_iter = 32 * 10000;
+  u32 max_jobs_per_iter = 16 * 16 * 32 * 1000;
 
   marl::Scheduler scheduler;
   Random_Factory frand;
@@ -236,7 +233,7 @@ struct PT_Manager {
     bool col_found = false;
     Collision min_col{.t = 1.0e10f};
     for (auto &node : scene.scene_nodes) {
-      vec4 new_ray_dir = node.invtransform * vec4(ray_dir, 1.0f);
+      vec4 new_ray_dir = node.invtransform * vec4(ray_dir, 0.0f);
       vec4 new_ray_origin = node.invtransform * vec4(ray_origin, 1.0f);
       node.ug.iterate(new_ray_dir, new_ray_origin,
                       [&](std::vector<u32> const &items, float t_max) {
@@ -293,17 +290,17 @@ struct PT_Manager {
       updated = true;
     }
     void add_value(u32 x, u32 y, vec4 val) {
-      std::scoped_lock<std::mutex> sl(mutex);
+      // std::scoped_lock<std::mutex> sl(mutex);
       updated = true;
       data[x + y * width] += val;
     }
     void add_normal(u32 x, u32 y, vec3 val) {
-      std::scoped_lock<std::mutex> sl(mutex);
+      // std::scoped_lock<std::mutex> sl(mutex);
       updated = true;
       normals[x + y * width] += vec4(val, 1.0f);
     }
     void add_albedo(u32 x, u32 y, vec3 val) {
-      std::scoped_lock<std::mutex> sl(mutex);
+      // std::scoped_lock<std::mutex> sl(mutex);
       updated = true;
       albedo[x + y * width] += vec4(val, 1.0f);
     }
@@ -377,22 +374,47 @@ struct PT_Manager {
         _depth;
   };
 
+  // Poor man's queue
+  // Not thread safe in all scenarios but kind of works in mine
+  // @Cleanup
   struct Path_Tracing_Queue {
-    std::deque<Path_Tracing_Job> job_queue;
+    std::vector<Path_Tracing_Job> job_queue;
+    std::atomic<u32> head = 0;
     std::mutex mutex;
+    Path_Tracing_Queue() { job_queue.resize(512 * 512 * 128); }
     Path_Tracing_Job dequeue() {
-      auto back = job_queue.back();
-      job_queue.pop_back();
+      ASSERT_PANIC(head);
+      u32 old_head = head.fetch_sub(1);
+      auto back = job_queue[old_head - 1];
+
       return back;
     }
+    // called in a single thread
+    void dequeue(std::vector<Path_Tracing_Job> &out, u32 &count) {
+      if (head < count) {
+        count = head;
+      }
+      u32 old_head = head.fetch_sub(count);
+      memcpy(&out[0], &job_queue[head], count * sizeof(out[0]));
+    }
     void enqueue(Path_Tracing_Job job) {
-      std::scoped_lock<std::mutex> sl(mutex);
+      //      std::scoped_lock<std::mutex> sl(mutex);
       ASSERT_PANIC(!std::isnan(job.ray_dir.x) && !std::isnan(job.ray_dir.y) &&
                    !std::isnan(job.ray_dir.z));
-      job_queue.push_front(job);
+      u32 old_head = head.fetch_add(1);
+      job_queue[old_head] = job;
+      ASSERT_PANIC(head < job_queue.size());
     }
-    bool has_job() { return !job_queue.empty(); }
-    void reset() { job_queue.clear(); }
+    void enqueue(std::vector<Path_Tracing_Job> const &jobs) {
+      u32 old_head = head.fetch_add(u32(jobs.size()));
+      ASSERT_PANIC(head < job_queue.size());
+      //      for (auto &job : jobs) {
+      //        ASSERT_PANIC(length(job.ray_dir) > 0.0f);
+      //      }
+      memcpy(&job_queue[old_head], &jobs[0], jobs.size() * sizeof(jobs[0]));
+    }
+    bool has_job() { return head != 0u; }
+    void reset() { head = 0u; }
   } path_tracing_queue;
   void eval_debug_ray(Scene &scene) {
     u32 width = path_tracing_image.width;
@@ -441,26 +463,59 @@ struct PT_Manager {
   void add_primary_rays() {
     u32 width = path_tracing_image.width;
     u32 height = path_tracing_image.height;
-    ito(height) {
-      jto(width) {
-        kto(samples_per_pixel) {
-          f32 jitter_u = halton(k + path_tracing_camera.halton_counter + 1, 2);
-          f32 jitter_v = halton(k + path_tracing_camera.halton_counter + 1, 3);
-          f32 u = (f32(j) + jitter_u) / width * 2.0f - 1.0f;
-          f32 v = -(f32(i) + jitter_v) / height * 2.0f + 1.0f;
-          Path_Tracing_Job job;
-          job.ray_dir = path_tracing_camera.gen_ray(u, v);
-          job.ray_origin = path_tracing_camera.pos;
-          job.pixel_x = j;
-          job.pixel_y = i;
-          job.weight = 1.0f;
-          job.color = vec3(1.0f, 1.0f, 1.0f);
-          job.depth = 0;
-          job._depth = 0;
-          path_tracing_queue.enqueue(job);
-        }
-      }
+    ASSERT_PANIC(samples_per_pixel <= 128);
+    vec2 halton_cache[128];
+    ito(samples_per_pixel) {
+      f32 jitter_u = halton(i + path_tracing_camera.halton_counter + 1, 2);
+      f32 jitter_v = halton(i + path_tracing_camera.halton_counter + 1, 3);
+      halton_cache[i] = vec2(jitter_u, jitter_v);
     }
+    WorkPayload work_payload;
+    const u32 rows_per_item = 64;
+    u32 items = (height + rows_per_item - 1) / rows_per_item;
+    work_payload.reserve(items);
+    ito(items) {
+      work_payload.push_back(JobPayload{
+          .func =
+              [this, width, height, halton_cache](JobDesc desc) {
+                for (u32 i = desc.offset; i < desc.offset + desc.size; i++) {
+                  std::vector<Path_Tracing_Job> jobs(width * samples_per_pixel);
+                  u32 counter = 0;
+                  jto(width) {
+                    kto(samples_per_pixel) {
+                      vec2 jitter = halton_cache[k];
+                      f32 u = (f32(j) + jitter.x) / width * 2.0f - 1.0f;
+                      f32 v = -(f32(i) + jitter.y) / height * 2.0f + 1.0f;
+                      Path_Tracing_Job job;
+                      job.ray_dir = path_tracing_camera.gen_ray(u, v);
+                      job.ray_origin = path_tracing_camera.pos;
+                      job.pixel_x = j;
+                      job.pixel_y = i;
+                      job.weight = 1.0f;
+                      job.color = vec3(1.0f, 1.0f, 1.0f);
+                      job.depth = 0;
+                      job._depth = 0;
+                      jobs[counter++] = job;
+                    }
+                  }
+                  ASSERT_PANIC(counter == jobs.size());
+                  path_tracing_queue.enqueue(jobs);
+                }
+              },
+          .desc = JobDesc{.offset = i * rows_per_item,
+                          .size = std::min(u32(height) - i * rows_per_item,
+                                           rows_per_item)}});
+    }
+    marl::WaitGroup wg(work_payload.size());
+    for (u32 i = 0; i < work_payload.size(); i++) {
+      marl::schedule([=] {
+        defer(wg.done());
+
+        auto work = work_payload[i];
+        work.func(work.desc);
+      });
+    }
+    wg.wait();
     path_tracing_camera.halton_counter += samples_per_pixel;
   };
   void reset_path_tracing_state(Camera const &camera, u32 width, u32 height) {
@@ -470,6 +525,11 @@ struct PT_Manager {
     path_tracing_camera.aspect = f32(width) / height;
     add_primary_rays();
   };
+
+  std::vector<Path_Tracing_Job> ray_jobs;
+  std::vector<vec3> ray_dirs;
+  std::vector<vec3> ray_origins;
+  std::vector<Collision> ray_collisions;
 
   void path_tracing_iteration(Scene &scene) {
     auto light_value = [&](vec3 ray_dir, vec3 color) {
@@ -487,31 +547,31 @@ struct PT_Manager {
                                      (phi / M_PI / 2.0f) + 0.5f, theta / M_PI));
     };
     if (trace_ispc) {
-      u32 jobs_sofar = 0;
-      std::vector<Path_Tracing_Job> ray_jobs;
-      std::vector<vec3> ray_dirs;
-      std::vector<vec3> ray_origins;
-      std::vector<Collision> ray_collisions;
-      while (path_tracing_queue.has_job()) {
-        jobs_sofar++;
-        if (jobs_sofar == max_jobs_per_iter)
-          break;
-        auto job = path_tracing_queue.dequeue();
-        ray_jobs.push_back(job);
-        ray_dirs.push_back(job.ray_dir);
-        ray_origins.push_back(job.ray_origin);
-        ray_collisions.push_back(Collision{.t = FLT_MAX, .u = 777.0f});
+      u32 jobs_sofar = max_jobs_per_iter;
+      if (ray_jobs.size() < max_jobs_per_iter) {
+        ray_jobs.resize(max_jobs_per_iter);
+        ray_dirs.resize(max_jobs_per_iter);
+        ray_origins.resize(max_jobs_per_iter);
+        ray_collisions.resize(max_jobs_per_iter);
       }
+      path_tracing_queue.dequeue(ray_jobs, jobs_sofar);
+      ito(jobs_sofar) {
+        ray_dirs[i] = ray_jobs[i].ray_dir;
+        ray_origins[i] = ray_jobs[i].ray_origin;
+        ray_collisions[i].t = FLT_MAX;
+      }
+
       // @PathTracing
       if (jobs_sofar > 0) {
         if (use_jobs) {
 
           WorkPayload work_payload;
-          ito((ray_jobs.size() + jobs_per_item - 1) / jobs_per_item) {
+          work_payload.reserve((jobs_sofar + jobs_per_item - 1) /
+                               jobs_per_item);
+          ito((jobs_sofar + jobs_per_item - 1) / jobs_per_item) {
             work_payload.push_back(JobPayload{
                 .func =
-                    [&scene, &ray_origins, &ray_dirs,
-                     &ray_collisions](JobDesc desc) {
+                    [&scene, this](JobDesc desc) {
                       for (auto &node : scene.scene_nodes) {
                         ISPC_Packed_UG ispc_packed_ug;
                         ispc_packed_ug.ids = &node.packed_ug.ids[0];
@@ -535,7 +595,7 @@ struct PT_Manager {
                     },
                 .desc = JobDesc{
                     .offset = i * jobs_per_item,
-                    .size = std::min(u32(ray_jobs.size()) - i * jobs_per_item,
+                    .size = std::min(u32(jobs_sofar) - i * jobs_per_item,
                                      jobs_per_item)}});
           }
           marl::WaitGroup wg(work_payload.size());
@@ -562,7 +622,7 @@ struct PT_Manager {
             memcpy(ispc_packed_ug.bin_count, &node.packed_ug.bin_count, 12);
             ispc_packed_ug.bin_size = node.packed_ug.bin_size;
             ispc_packed_ug.mesh_id = node.id;
-            uint _tmp = ray_jobs.size();
+            uint _tmp = jobs_sofar;
             ispc_trace(&ispc_packed_ug, (void *)&node.positions_flat[0],
                        (uint *)&node.indices[0], &ray_dirs[0], &ray_origins[0],
                        &ray_collisions[0], &_tmp);
@@ -570,10 +630,9 @@ struct PT_Manager {
         }
         {
           WorkPayload work_payload;
-          ito((ray_jobs.size() + jobs_per_item - 1) / jobs_per_item) {
+          ito((jobs_sofar + jobs_per_item - 1) / jobs_per_item) {
             work_payload.push_back(JobPayload{
-                .func = {[this, &scene, &ray_jobs, &ray_collisions,
-                          light_value](JobDesc desc) {
+                .func = {[this, &scene, light_value](JobDesc desc) {
                   for (u32 i = desc.offset; i < desc.offset + desc.size; i++) {
                     auto job = ray_jobs[i];
                     auto min_col = ray_collisions[i];
@@ -782,7 +841,7 @@ struct PT_Manager {
                 }},
                 .desc = JobDesc{
                     .offset = i * jobs_per_item,
-                    .size = std::min(u32(ray_jobs.size()) - i * jobs_per_item,
+                    .size = std::min(u32(jobs_sofar) - i * jobs_per_item,
                                      jobs_per_item)}});
           }
           marl::WaitGroup wg(work_payload.size());
@@ -807,7 +866,7 @@ struct PT_Manager {
         bool col_found = false;
         Collision min_col{.t = 1.0e10f};
         for (auto &node : scene.scene_nodes) {
-          vec4 new_ray_dir = node.invtransform * vec4(job.ray_dir, 1.0f);
+          vec4 new_ray_dir = node.invtransform * vec4(job.ray_dir, 0.0f);
           vec4 new_ray_origin = node.invtransform * vec4(job.ray_origin, 1.0f);
           node.ug.iterate(new_ray_dir, new_ray_origin,
                           [&](std::vector<u32> const &items, float t_max) {
@@ -835,65 +894,12 @@ struct PT_Manager {
                           });
         }
         if (col_found) {
-          // path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-          //                              vec4(1.0f, 1.0f, 1.0f, 1.0f));
-          if (job.depth == 1) {
-            // Terminate
-            path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-                                         vec4(0.0f, 0.0f, 0.0f, job.weight));
-          } else {
-            auto &node = scene.scene_nodes[min_col.mesh_id - 1];
-            auto face = node.indices[min_col.face_id];
-            vec2 uv = vec2(min_col.u, min_col.v);
-            auto vertex =
-                scene.get_interpolated_vertex(node, min_col.face_id, uv);
+          path_tracing_image.add_value(job.pixel_x, job.pixel_y,
+                                       vec4(1.0f, 1.0f, 1.0f, 1.0f));
 
-            auto &mat = scene.pbr_model.materials[node.material_id];
-            vec4 albedo =
-                scene.pbr_model.images[mat.albedo_id].sample(vertex.texcoord);
-            if (albedo.a < 0.5f) {
-              job.ray_origin = vertex.position - vertex.normal * 1.0e-3f;
-              path_tracing_queue.enqueue(job);
-            } else {
-              vec4 normal_map =
-                  scene.pbr_model.images[mat.normal_id].sample(vertex.texcoord);
-              path_tracing_image.add_value(job.pixel_x, job.pixel_y, albedo);
-            }
-            //            vec3 tangent =
-            //                glm::normalize(glm::cross(job.ray_dir,
-            //                min_col.normal));
-            //            vec3 binormal = glm::cross(tangent, min_col.normal);
-            //            u32 secondary_N = 16;
-            //            // if (min_col.material_id >= 0) {
-            //            //   auto const &mat =
-            //            test_model.materials[min_col.material_id];
-            //            //   path_tracing_image.add_value(
-            //            //       job.pixel_x, job.pixel_y,
-            //            //       job.weight * light_value(job.ray_dir,
-            //            vec3(mat.emission[0],
-            //            // mat.emission[1],
-            //            // mat.emission[2])));
-            //            // }
-            //            ito(secondary_N) {
-            //              vec3 rand = frand.rand_unit_sphere();
-            //              auto new_job = job;
-
-            //              new_job.ray_dir =
-            //                  glm::normalize(min_col.normal * (1.0f + rand.z)
-            //                  +
-            //                                 tangent * rand.x + binormal *
-            //                                 rand.y);
-            //              new_job.ray_origin = min_col.position;
-            //              new_job.weight *= 1.0f / secondary_N;
-            //              new_job.color = new_job.color;
-            //              new_job.depth += 1;
-            //              path_tracing_queue.enqueue(new_job);
-            //            }
-          }
         } else {
           path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-                                       job.weight *
-                                           light_value(job.ray_dir, job.color));
+                                       vec4(0.0f, 0.0f, 0.0f, 1.0f));
         }
       }
     }

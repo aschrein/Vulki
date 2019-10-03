@@ -43,6 +43,22 @@ void iterate_folder(std::string const &folder, std::vector<std::string> &models,
     }
 }
 
+struct CPU_timestamp {
+  std::chrono::high_resolution_clock::time_point frame_begin_timestamp;
+  CPU_timestamp() {
+    frame_begin_timestamp = std::chrono::high_resolution_clock::now();
+  }
+  f32 end() {
+    auto frame_end_timestamp = std::chrono::high_resolution_clock::now();
+    auto frame_cpu_delta_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            frame_end_timestamp - frame_begin_timestamp)
+            .count();
+    // Return ms
+    return f32(frame_cpu_delta_ns / 1000000);
+  }
+};
+
 TEST(graphics, vulkan_graphics_test_render_graph) try {
   Gizmo_Layer gizmo_layer{};
   PT_Manager pt_manager;
@@ -57,9 +73,20 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   std::vector<std::string> env_filenames;
 
   scene.load_env("spheremaps/lythwood_field.hdr");
-  scene.load_model("models/arc_pulse_core/scene.gltf");
+  scene.load_model("models/demon_in_thought_3d_print/scene.gltf");
   iterate_folder("models/", model_filenames, ".gltf");
   iterate_folder("spheremaps/", env_filenames, ".hdr");
+  gizmo_layer.camera.update();
+  // Benchmark
+//  {
+//    CPU_timestamp __timestamp;
+//    pt_manager.reset_path_tracing_state(gizmo_layer.camera, 512, 512);
+//    while (pt_manager.path_tracing_queue.has_job())
+//      pt_manager.path_tracing_iteration(scene);
+//    std::cout << "Time ms:" << __timestamp.end() << "\n";
+//  }
+//  exit(0);
+  //
 
   struct Path_Tracing_Plane_Push {
     mat4 viewprojmodel;
@@ -142,8 +169,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     if (ImGui::Button("Reset Path tracer")) {
       pt_manager.path_tracing_queue.reset();
     }
-    ImGui::InputInt("Samples per pixel", (int*)&pt_manager.samples_per_pixel);
-    ImGui::InputInt("Max path depth", (int*)&pt_manager.max_depth);
+    ImGui::InputInt("Samples per pixel", (int *)&pt_manager.samples_per_pixel);
+    ImGui::InputInt("Max path depth", (int *)&pt_manager.max_depth);
     ImGui::Checkbox("Camera jitter", &gizmo_layer.jitter_on);
     ImGui::Checkbox("Gizmo layer", &display_gizmo_layer);
     ImGui::Checkbox("Denoise", &denoise);
@@ -652,9 +679,9 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
               }
             }
             if (pt_manager.path_tracing_camera._debug_path.size() > 1) {
-              ito(pt_manager.path_tracing_camera._debug_path.size()/2) {
-                auto p0 = pt_manager.path_tracing_camera._debug_path[i*2];
-                auto p1 = pt_manager.path_tracing_camera._debug_path[i*2 + 1];
+              ito(pt_manager.path_tracing_camera._debug_path.size() / 2) {
+                auto p0 = pt_manager.path_tracing_camera._debug_path[i * 2];
+                auto p1 = pt_manager.path_tracing_camera._debug_path[i * 2 + 1];
                 gizmo_layer.push_line(p0, p1, vec3(1.0f, 1.0f, 0.0f));
               }
             }

@@ -161,20 +161,21 @@ PBR_Model load_obj_pbr(char const *filename) {
   return pbr_out;
 }
 
-void calculate_dim(const aiScene *scene, aiNode *node, vec3 &max_dims) {
+void calculate_dim(const aiScene *scene, aiNode *node, vec3 &min, vec3 &max) {
   for (unsigned int i = 0; i < node->mNumMeshes; i++) {
     aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
     for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
-      kto(3) max_dims[k] = std::max(max_dims[k], mesh->mVertices[i][k]);
+      kto(3) max[k] = std::max(max[k], mesh->mVertices[i][k]);
+      kto(3) min[k] = std::min(min[k], mesh->mVertices[i][k]);
     }
   }
   for (unsigned int i = 0; i < node->mNumChildren; i++) {
-    calculate_dim(scene, node->mChildren[i], max_dims);
+    calculate_dim(scene, node->mChildren[i], min, max);
   }
 }
 
 void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
-                   std::string const &dir, u32 parent_id = 0) {
+                   std::string const &dir, u32 parent_id, float vk) {
   Transform_Node tnode{};
   mat4 transform;
   ito(4) {
@@ -200,13 +201,6 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
   //  tnode.offset = offset;
   //  tnode.rotation = rotation;
   //    tnode.transform = transform;
-  // @Cleanup
-  // Size normalization hack
-  float vk = 1.0f;
-  vec3 max_dims = vec3(0.0f);
-  calculate_dim(scene, scene->mRootNode, max_dims);
-  float max_dim = std::max(max_dims.x, std::max(max_dims.y, max_dims.z));
-  vk = 50.0f / max_dim;
 
   for (unsigned int i = 0; i < node->mNumMeshes; i++) {
     aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
@@ -361,7 +355,7 @@ void traverse_node(PBR_Model &out, aiNode *node, const aiScene *scene,
   out.nodes[parent_id].children.push_back(u32(out.nodes.size() - 1));
   for (unsigned int i = 0; i < node->mNumChildren; i++) {
     traverse_node(out, node->mChildren[i], scene, dir,
-                  u32(out.nodes.size() - 1));
+                  u32(out.nodes.size() - 1), vk);
   }
 }
 
@@ -375,17 +369,26 @@ PBR_Model load_gltf_pbr(std::string const &filename) {
       filename.c_str(),
       aiProcess_Triangulate |
           // @TODO: Find out why transforms are not handled correcly otherwise
-          aiProcess_GenSmoothNormals |
-          aiProcess_PreTransformVertices |
-          aiProcess_OptimizeMeshes |
-          aiProcess_CalcTangentSpace
-          | aiProcess_FlipUVs
-          );
+          aiProcess_GenSmoothNormals | aiProcess_PreTransformVertices |
+          aiProcess_OptimizeMeshes | aiProcess_CalcTangentSpace |
+          aiProcess_FlipUVs);
   if (!scene) {
     std::cerr << "[FILE] Errors: " << importer.GetErrorString() << "\n";
     ASSERT_PANIC(false);
   }
-  traverse_node(out, scene->mRootNode, scene, dir.string());
+  vec3 max = vec3(0.0f);
+  vec3 min = vec3(0.0f);
+  calculate_dim(scene, scene->mRootNode, min, max);
+  vec3 max_dims = max - min;
+  // @Cleanup
+  // Size normalization hack
+  float vk = 1.0f;
+  float max_dim = std::max(max_dims.x, std::max(max_dims.y, max_dims.z));
+  vk = 50.0f / max_dim;
+  vec3 avg = (max + min) / 2.0f;
+  traverse_node(out, scene->mRootNode, scene, dir.string(), 0, vk);
+
+  out.nodes[0].offset = -avg * vk;
   return out;
 }
 
