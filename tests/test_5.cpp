@@ -57,7 +57,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   std::vector<std::string> env_filenames;
 
   scene.load_env("spheremaps/lythwood_field.hdr");
-  scene.load_model("models/one_angery_dragon_boi/scene.gltf");
+  scene.load_model("models/arc_pulse_core/scene.gltf");
   iterate_folder("models/", model_filenames, ".gltf");
   iterate_folder("spheremaps/", env_filenames, ".hdr");
 
@@ -80,7 +80,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
       pt_manager.eval_debug_ray(scene);
     }
     static bool show_demo = true;
-    ImGui::Begin("dummy window");
+    ImGui::Begin("Rasterizer");
     ImGui::PopStyleVar(3);
     gizmo_layer.on_imgui_viewport();
     //       gu.ImGui_Emit_Stats();
@@ -132,7 +132,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     ImGui::Begin("Simulation parameters");
 
     ImGui::End();
-    ImGui::Begin("Rendering configuration");
+    ImGui::Begin("Raytracer");
     if (ImGui::Button("Render with path tracer")) {
       pt_manager.reset_path_tracing_state(gizmo_layer.camera, 512, 512);
     }
@@ -282,6 +282,28 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
         },
         [&, spheremap_mip_levels] {
           if (reload_env || reload_model) {
+            if (reload_model) {
+              for (auto &model : models) {
+                gu.release_resource(model.index_buffer);
+                gu.release_resource(model.vertex_buffer);
+              }
+              models.clear();
+              materials.clear();
+              for (auto &tex : textures) {
+                gu.release_resource(tex);
+              }
+              textures.clear();
+              ito(scene.pbr_model.meshes.size()) {
+                auto &model = scene.pbr_model.meshes[i];
+                materials.push_back(scene.pbr_model.materials[i]);
+                models.push_back(Raw_Mesh_Opaque_Wrapper::create(gu, model));
+              }
+              ito(scene.pbr_model.images.size()) {
+                auto &img = scene.pbr_model.images[i];
+                textures.push_back(gu.create_texture2D(img, true));
+              }
+              reload_model = false;
+            }
             if (reload_env) {
               if (spheremap_id)
                 gu.release_resource(spheremap_id);
@@ -328,28 +350,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                 height = std::max(1u, height / 2);
               }
             }
-            if (reload_model) {
-              for (auto &model : models) {
-                gu.release_resource(model.index_buffer);
-                gu.release_resource(model.vertex_buffer);
-              }
-              models.clear();
-              materials.clear();
-              for (auto &tex : textures) {
-                gu.release_resource(tex);
-              }
-              textures.clear();
-              ito(scene.pbr_model.meshes.size()) {
-                auto &model = scene.pbr_model.meshes[i];
-                materials.push_back(scene.pbr_model.materials[i]);
-                models.push_back(Raw_Mesh_Opaque_Wrapper::create(gu, model));
-              }
-              ito(scene.pbr_model.images.size()) {
-                auto &img = scene.pbr_model.images[i];
-                textures.push_back(gu.create_texture2D(img, true));
-              }
-              reload_model = false;
-            }
+
           } else {
             return;
           }
@@ -491,7 +492,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.push_constants(&pc, sizeof(pc));
           u32 width = u32(wsize.x);
           u32 height = u32(wsize.y);
-          gu.CS_set_shader("mip_build.comp.glsl");
+          gu.CS_set_shader("zpyramid_build.comp.glsl");
           gu.bind_image("in_image", "depth_linear", 0,
                         render_graph::Image_View{});
           ito(bb_miplevels) {
@@ -503,7 +504,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                 render_graph::Image_View{.base_level = i, .levels = 1});
           }
           ito(bb_miplevels) {
-            sh_mip_build_comp::push_constants pc{};
+            sh_zpyramid_build_comp::push_constants pc{};
             if (i == 0) {
               pc.copy = 1;
             } else {

@@ -18,14 +18,20 @@ cmake --build . --target all
 ```
 
 ## Features
-* PBR framework
+* PBR rasterization framework
   * Mipmap generation
   * GLTF import
     * Assimp/TinyGLTF
+  * IBL
+    * Irradiance integration
+    * Specular integration
+* PBR pathtracing framework
+  * Importance sampling
 * Vulkan framework skeleton
   * Simple mid level api
   * Single threaded single command buffer submission
-* Shader reload with inotify/dir_update
+* Asset pipeline
+  * Shader reload with inotify/dir_update
 * Gizmos
   * Translation
 * ISPC/Naive path tracing
@@ -35,16 +41,15 @@ cmake --build . --target all
 
 ## TODO
 * PBR rasterization framework
-  * IBL
-	* Irradiance integration
-	* Specular integration
   * Lightprobes
+  * AO, SSR
+  * Light sources
+    * Point/Quad/Sphere/Directed/tube light
 * PBR pathtracing framework
   * SAH BVH
-  * Importance sampling
+  * Light sources
+    * Point/Quad/Sphere/Directed/tube light
 * Asset pipeline
-  * Proper serialization framework
-  * Zip/Unzip
   * Shader reload with inotify/dir_update
     * Increase granularity
     * Don't crash if compilation fails
@@ -52,11 +57,8 @@ cmake --build . --target all
   * Multi-threaded multi-command buffer submission
 * Gizmos
   * Rotation
-* Try different raymarching optimizations
-  * Marching simplices
-  * Distance field compression
-* Secondary rays
-  * AO, GI
+* Sculpting
+  * Sparse surface splats
 
 ## References
 Models downloaded from Morgan McGuire's [Computer Graphics Archive](https://casual-effects.com/data)

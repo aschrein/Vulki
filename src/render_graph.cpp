@@ -198,7 +198,23 @@ struct Descriptor_Frame {
     }
     return imgui_table.find(name)->second;
   }
-
+  void allocate_descset(Pipeline_Wrapper &pwrap) {
+    u32 pipe_id = pwrap.id;
+    std::vector<vk::UniqueDescriptorSet> desc_sets;
+    auto raw_set_layouts = pwrap.get_raw_descset_layouts();
+    ASSERT_PANIC(raw_set_layouts.size());
+    desc_sets = device_wrapper->device->allocateDescriptorSetsUnique(
+        vk::DescriptorSetAllocateInfo()
+            .setPSetLayouts(&raw_set_layouts[0])
+            .setDescriptorPool(descset_pool.get())
+            .setDescriptorSetCount(raw_set_layouts.size()));
+    descset_groups.emplace_back(std::move(desc_sets));
+    // Erase previous entry
+    descset_table.erase(pipe_id);
+    descset_table.insert({pipe_id, descset_groups.size()});
+    // Something must go wrong to hit this
+    ASSERT_PANIC(descset_table.size() < 128);
+  }
   std::vector<vk::DescriptorSet>
   get_or_create_descsets(Pipeline_Wrapper &pwrap) {
     if (!descset_pool) {
@@ -239,6 +255,29 @@ struct Descriptor_Frame {
       raw_desc_sets.push_back(uds.get());
       raw_desc_sets_offsets.push_back(0);
     }
+    // HACK
+    // @Cleanup:
+    // Here we check that if a descset is dirty we allocate a new one
+    // But we don't keep any references to the old one so the only way
+    // To invalidate it is to reset the whole pool
+    bool dirty = false;
+    for (auto set : raw_desc_sets) {
+      if (dirty_set.find((u64)(VkDescriptorSet)set) != dirty_set.end()) {
+        dirty = true;
+      }
+    }
+    if (dirty) {
+      allocate_descset(pwrap);
+      std::vector<vk::DescriptorSet> raw_desc_sets;
+      std::vector<uint32_t> raw_desc_sets_offsets;
+      u32 group_id = descset_table.find(pipe_id)->second;
+      for (auto &uds : descset_groups[group_id - 1]) {
+        raw_desc_sets.push_back(uds.get());
+        raw_desc_sets_offsets.push_back(0);
+      }
+      return raw_desc_sets;
+    }
+    // EOF HACK
     return raw_desc_sets;
   }
   Descriptor_Frame() {
@@ -250,19 +289,6 @@ struct Descriptor_Frame {
     imgui_table.set_deleted_key("deleted");
   }
   void end_frame() { dirty_set.clear(); }
-  void allocate_descset(Pipeline_Wrapper &pwrap) {
-    u32 pipe_id = pwrap.id;
-    std::vector<vk::UniqueDescriptorSet> desc_sets;
-    auto raw_set_layouts = pwrap.get_raw_descset_layouts();
-    ASSERT_PANIC(raw_set_layouts.size());
-    desc_sets = device_wrapper->device->allocateDescriptorSetsUnique(
-        vk::DescriptorSetAllocateInfo()
-            .setPSetLayouts(&raw_set_layouts[0])
-            .setDescriptorPool(descset_pool.get())
-            .setDescriptorSetCount(raw_set_layouts.size()));
-    descset_groups.emplace_back(std::move(desc_sets));
-    descset_table.insert({pipe_id, descset_groups.size()});
-  }
   void bind_pipeline(vk::CommandBuffer &cmd, Pipeline_Wrapper &pwrap) {
     cmd.bindPipeline(pwrap.bind_point, pwrap.pipeline.get());
     if (pwrap.collect_sets().size() == 0)
@@ -286,10 +312,7 @@ struct Descriptor_Frame {
         slot.layout.descriptorType == vk::DescriptorType::eStorageBuffer ||
         slot.layout.descriptorType == vk::DescriptorType::eUniformBuffer);
     auto raw_descsets = get_or_create_descsets(pwrap);
-    for (auto set : raw_descsets) {
-      ASSERT_PANIC(dirty_set.find((u64)(VkDescriptorSet)set) ==
-                   dirty_set.end());
-    }
+
     device_wrapper->device->updateDescriptorSets(
         {vk::WriteDescriptorSet()
              .setDstSet(raw_descsets[slot.set])
@@ -795,16 +818,44 @@ struct Graphics_Utils_State {
     };
   }
   u32 create_texture2D(Image_Raw const &image_raw, bool build_mip = true) {
-    u32 mip_levels;
+    u32 mip_levels = get_mip_levels(image_raw.width, image_raw.height);
+    if (!build_mip)
+      mip_levels = 1u;
     std::vector<uvec2> mip_sizes;
     std::vector<u32> mip_offsets;
     Alloc_State *alloc_state = device_wrapper.alloc_state.get();
-    std::vector<u8> with_mips =
-        build_mips(image_raw.data, image_raw.width, image_raw.height,
-                   image_raw.format, mip_levels, mip_offsets, mip_sizes);
-    // @TODO: Fix the hack
-    if (!build_mip)
-      mip_levels = 1u;
+    //    std::vector<u8> with_mips =
+    //        build_mips(image_raw.data, image_raw.width, image_raw.height,
+    //                   image_raw.format, mip_levels, mip_offsets, mip_sizes);
+    ito(mip_levels)
+        mip_sizes.push_back(uvec2(std::max(1u, image_raw.width >> i),
+                                  std::max(1u, image_raw.height >> i)));
+    u32 total_bytes = 0u;
+    // @TODO: Add more formats
+    // Bytes per pixel
+    u32 bpc = 4u;
+    u32 divisor = 4u;
+    u32 components = 1u;
+    switch (image_raw.format) {
+    case vk::Format::eR8G8B8A8Unorm:
+    case vk::Format::eR8G8B8A8Srgb:
+      bpc = 4u;
+      divisor = 4u;
+      components = 4u;
+      break;
+    case vk::Format::eR32G32B32Sfloat:
+      bpc = 12u;
+      divisor = 3u;
+      components = 3u;
+      break;
+    default:
+      ASSERT_PANIC(false && "unsupported format");
+    }
+    ito(mip_levels) {
+      mip_offsets.push_back(total_bytes);
+      total_bytes += mip_sizes[i].x * mip_sizes[i].y * bpc;
+    }
+
     auto image_id = images.push(device_wrapper.alloc_state->allocate_image(
         vk::ImageCreateInfo()
             .setArrayLayers(1)
@@ -822,17 +873,16 @@ struct Graphics_Utils_State {
                       vk::ImageUsageFlagBits::eTransferDst),
         VMA_MEMORY_USAGE_GPU_ONLY));
     auto &img = images[image_id];
-    auto buf_id = buffers.push(alloc_state->allocate_buffer(
-        vk::BufferCreateInfo()
-            .setSize(with_mips.size())
-            .setUsage(vk::BufferUsageFlagBits::eTransferSrc),
-        VMA_MEMORY_USAGE_CPU_TO_GPU));
-    auto &buf = buffers[buf_id];
-    // Transient buffer so schedule the removal right away
-    buffers.remove(buf_id);
+    auto res_id = create_buffer(
+        Buffer{.usage_bits = vk::BufferUsageFlagBits::eStorageBuffer |
+                             vk::BufferUsageFlagBits::eTransferSrc,
+               .size = total_bytes},
+        nullptr);
+    auto &buf = buffers[resources[res_id].ref];
+    // Copy the top mip level
     {
       void *data = buf.map();
-      memcpy(data, &with_mips[0], with_mips.size());
+      memcpy(data, &image_raw.data[0], image_raw.data.size());
       buf.unmap();
     }
     {
@@ -840,9 +890,56 @@ struct Graphics_Utils_State {
       auto &pass = passes[cur_gfx_state.pass];
       // @Cleanup
       _end_pass(cmd, pass);
+      if (mip_levels > 1) {
+        // @TODO: Restore state
+        // For now let the texture creation be at the beginning of a pass
+        ASSERT_PANIC(!bound_pipe);
+        ASSERT_PANIC(!cur_cs && !push_const_size);
+              bind_resource("Mip_Chain_U8", res_id, 0);
+        CS_set_shader("mip_build.comp.glsl");
+        bind_resource("Mip_Chain_F32", res_id, 0);
+        ito(mip_levels - 1) {
+          sh_mip_build_comp::pc pc{};
+          pc.src_width = mip_sizes[i].x;
+          pc.src_height = mip_sizes[i].y;
+          pc.src_offset = mip_offsets[i] / bpc;
+          pc.dst_width = mip_sizes[i + 1].x;
+          pc.dst_height = mip_sizes[i + 1].y;
+          pc.dst_offset = mip_offsets[i + 1] / bpc;
+          pc.components = components;
+          const uint R8G8B8A8_SRGB = 0;
+          const uint R8G8B8A8_UNORM = 1;
+          const uint R32G32B32_FLOAT = 2;
+          switch (image_raw.format) {
+          case vk::Format::eR8G8B8A8Unorm:
+            pc.format = R8G8B8A8_UNORM;
+            break;
+          case vk::Format::eR8G8B8A8Srgb:
+            pc.format = R8G8B8A8_SRGB;
+            break;
+          case vk::Format::eR32G32B32Sfloat:
+            pc.format = R32G32B32_FLOAT;
+            break;
+          default:
+            ASSERT_PANIC(false && "unsupported format");
+          }
+          buf.barrier(cmd, device_wrapper.graphics_queue_family_id,
+                      vk::AccessFlagBits::eShaderWrite |
+                          vk::AccessFlagBits::eShaderRead);
+          push_constants(&pc, sizeof(pc));
+          dispatch((mip_sizes[i + 1].x + 15) / 16,
+                   (mip_sizes[i + 1].y + 15) / 16, 1);
+        }
+        cur_cs = 0u;
+        bound_pipe = 0u;
+      }
+
+      buf.barrier(cmd, device_wrapper.graphics_queue_family_id,
+                  vk::AccessFlagBits::eMemoryRead);
       img.barrier(cmd, device_wrapper.graphics_queue_family_id,
                   vk::ImageLayout::eTransferDstOptimal,
                   vk::AccessFlagBits::eColorAttachmentWrite);
+
       ito(mip_levels) cmd.copyBufferToImage(
           buf.buffer, img.image, vk::ImageLayout::eTransferDstOptimal,
           vk::ArrayProxy<const vk::BufferImageCopy>{
@@ -853,12 +950,26 @@ struct Graphics_Utils_State {
                   .setImageOffset(vk::Offset3D(0u, 0u, 0u))
                   .setImageExtent(
                       vk::Extent3D(mip_sizes[i].x, mip_sizes[i].y, 1u))});
+
+      //      cmd.copyBufferToImage(
+      //          buf.buffer, img.image, vk::ImageLayout::eTransferDstOptimal,
+      //          vk::ArrayProxy<const vk::BufferImageCopy>{
+      //              vk::BufferImageCopy()
+      //                  .setBufferOffset(0)
+      //                  .setImageSubresource(vk::ImageSubresourceLayers(
+      //                      vk::ImageAspectFlagBits::eColor, 0u, 0u, 1u))
+      //                  .setImageOffset(vk::Offset3D(0u, 0u, 0u))
+      //                  .setImageExtent(
+      //                      vk::Extent3D(image_raw.width, image_raw.height,
+      //                      1u))});
       img.barrier(cmd, device_wrapper.graphics_queue_family_id,
                   vk::ImageLayout::eShaderReadOnlyOptimal,
                   vk::AccessFlagBits::eShaderRead);
       // @Cleanup
       _begin_pass(cmd, pass);
     }
+    // Transient buffer so schedule the removal right away
+    resources.remove(res_id);
     return resources.push({.type = Resource_Type::TEXTURE, .ref = image_id});
   }
   u32 create_uav_image(u32 width, u32 height, vk::Format format, u32 levels,

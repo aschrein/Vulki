@@ -20,6 +20,23 @@ struct VmaBuffer : public Slot {
   vk::Buffer buffer;
   VmaAllocation allocation;
   vk::BufferCreateInfo create_info;
+  vk::AccessFlags access_flags;
+  void barrier(vk::CommandBuffer &cmd, u32 queue_family_id,
+               vk::AccessFlags new_access_flags) {
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
+                        vk::PipelineStageFlagBits::eAllCommands,
+                        vk::DependencyFlagBits::eByRegion, {},
+                        {vk::BufferMemoryBarrier()
+                             .setSize(create_info.size)
+                             .setBuffer(buffer)
+                             .setOffset(0)
+                             .setSrcAccessMask(access_flags)
+                             .setDstAccessMask(new_access_flags)
+                             .setDstQueueFamilyIndex(queue_family_id)
+                             .setSrcQueueFamilyIndex(queue_family_id)},
+                        {});
+    access_flags = new_access_flags;
+  }
   void *map() {
     void *data = nullptr;
     vmaMapMemory(allocator, allocation, &data);

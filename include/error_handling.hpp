@@ -86,7 +86,7 @@ public:
 
 #define CONCAT_INTERNAL(x, y) x##y
 #define CONCAT(x, y) CONCAT_INTERNAL(x, y)
-#define defer const auto &CONCAT(defer__, __LINE__) = ExitScopeHelp() + [&]()
+#define vulki_defer const auto &CONCAT(defer__, __LINE__) = ExitScopeHelp() + [&]()
 
 template <typename T> struct Onetime {
   Onetime(T lambda) { lambda(); }
