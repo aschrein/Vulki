@@ -26,6 +26,7 @@ layout(set = 1, binding = 0, std140) uniform UBO {
   vec4 offset;
   float taa_weight;
   uint mask;
+  uint point_lights_count;
 } g_ubo;
 
 const uint DISPLAY_GIZMO = 1;
@@ -33,6 +34,15 @@ const uint DISPLAY_AO = 2;
 
 layout(set = 1, binding = 1) buffer LightTable { uint data[]; }
 g_light_table;
+
+struct Point_Light {
+  vec4 position;
+  vec4 power;
+};
+
+// Really it's an array of Point_Light
+layout(set = 1, binding = 2) buffer PointLightList { vec4 data[]; }
+g_point_light_list;
 
 #define PI 3.141592
 
@@ -61,6 +71,35 @@ return textureLod(textures[id],
 }
 
 #define DIELECTRIC_SPECULAR 0.04
+
+vec3 eval_ggx(vec3 n, vec3 v, vec3 l, float roughness, vec3 F0) {
+  float alpha = roughness * roughness;
+  float alpha2 = alpha * alpha;
+
+  float NoL = clamp(dot(n, l), 0.0f, 1.0f);
+  float NoV = clamp(dot(n, v), 0.0f, 1.0f);
+
+  vec3 h = normalize(v + l);
+  float NoH = clamp(dot(n, h), 0.0f, 1.0f);
+  float LoH = clamp(dot(l, h), 0.0f, 1.0f);
+
+  // GGX microfacet distribution function
+  float den = (alpha2 - 1.0f) * NoH * NoH + 1.0f;
+  float D = alpha2 / (PI * den * den);
+
+  // Fresnel with Schlick approximation
+  // LoH or NoL? LoN is used for raster
+  vec3 F = F0 + (vec3(1.0f) - F0) * pow(1.0f - NoV, 5.0f);
+
+  // Smith joint masking-shadowing function
+  // Or 0.125f * (alpha2 + 1.0f);
+  float k = 0.5f * (alpha);
+  float G = (NoL * NoV) / ((NoL * (1.0f - k) + k) * (NoV * (1.0f - k) + k));
+
+  return
+      // This term is eliminated
+      D * F * G;
+}
 
 // References:
 // https://learnopengl.com/PBR/IBL/Specular-IBL
@@ -98,27 +137,50 @@ void main() {
     vec3 refl = normalize(reflect(ray_dir, normal));
     vec3 L = refl;
     vec3 V = -ray_dir;
-    float NoV = clamp(dot(normal, V), 0.0, 1.0);
+    vec3 N = normal;
+    float NoV = clamp(dot(N, V), 0.0, 1.0);
     vec3 F0 = mix(vec3(DIELECTRIC_SPECULAR), albedo, metalness);
-
     vec3  kS =
     F0 + (vec3(1.0f) - F0) * pow(1.0f - NoV, 5.0f);
 //    fresnelSchlickRoughness(NoV, F0, roughness);
     vec3  kD = 1.0 - kS;
     kD *= (1.0 - DIELECTRIC_SPECULAR) * (1.0 - metalness);
 
+
+    // Eval IBL
     vec2 lut = texture(textures[IBL_LUT], vec2(NoV - 0.01, roughness)).xy;
     vec3 radiance = sample_cubemap(refl, roughness, IBL_RADIANCE);
     vec3 irradiance = sample_cubemap(normal, 0.0, IBL_IRRADIANCE);
     vec3 FssEss = kS * lut.x + lut.y;
-
-
 
     vec3 color = ao * (
     FssEss * radiance
     +
     kD * albedo * irradiance
     );
+
+    // EOF IBL
+
+    // Eval lights
+    if (g_ubo.point_lights_count > 0) {
+      for (uint point_light_id = 0u;
+                point_light_id < g_ubo.point_lights_count;
+                point_light_id++) {
+        vec3 lposition = g_point_light_list.data[point_light_id * 2].xyz;
+        vec3 power = g_point_light_list.data[point_light_id * 2 + 1].xyz;
+        float dist = 1.0e-7 + length(pos - lposition);
+        vec3 L = normalize(lposition - pos);
+        float NoL = clamp(dot(N, L), 0.0, 1.0);
+        if (NoL > 0.0f) {
+          vec3 brdf = eval_ggx(N, V, L, roughness, F0);
+          // Diffuse
+          color += NoL * albedo * power / (dist * dist);
+          // Specular
+          color += brdf * power / (dist * dist);
+        }
+      }
+    }
+
     if (depth > 10000.0)
        color = vec3(0.5);
 //      color = sample_cubemap(ray_dir, 0.0, IBL_RADIANCE);

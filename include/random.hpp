@@ -47,9 +47,8 @@ static float V_SmithGGXCorrelated(float NoV, float NoL, float roughness) {
   return 0.5 / (GGXV + GGXL);
 }
 
-// https://www.shadertoy.com/view/3lB3DR
-static vec3 getHemisphereGGXSample(vec2 xi, vec3 n, vec3 v, float roughness,
-                                   float &weight) {
+static vec3 sample_ggx(vec2 xi, vec3 n, vec3 v, vec3 F0, float roughness,
+                       vec3 &brdf) {
   float alpha = roughness * roughness;
   float alpha2 = alpha * alpha;
 
@@ -75,19 +74,22 @@ static vec3 getHemisphereGGXSample(vec2 xi, vec3 n, vec3 v, float roughness,
   float NoH = cosTheta;
   float VoH = dot(H, v);
   float NoV = dot(n, v);
+  float NoL = clamp(dot(n, l), 0.0f, 1.0f);
+  vec3 F = F0 + (vec3(1.0f) - F0) * std::pow(1.0f - NoV, 5.0f);
+  float k = 0.5f * (alpha);
+  float G = (NoL * NoV) / ((NoL * (1.0f - k) + k) * (NoV * (1.0f - k) + k));
   float pdf =
       //  D *
       (NoH * NoV) / VoH;
-  weight = 1.0f / (pdf + 1.0e-6f);
+  brdf = F * G / (pdf + 1.0e-6f);
 
   if (dot(l, n) < 0.0f)
-    weight = 0.0f;
+    brdf = vec3(0.0f);
 
   return l;
 }
 
-// BRDF math
-static vec3 ggx(vec3 n, vec3 v, vec3 l, float roughness, vec3 F0) {
+static vec3 eval_ggx(vec3 n, vec3 v, vec3 l, float roughness, vec3 F0) {
   float alpha = roughness * roughness;
   float alpha2 = alpha * alpha;
 
@@ -99,9 +101,8 @@ static vec3 ggx(vec3 n, vec3 v, vec3 l, float roughness, vec3 F0) {
   float LoH = clamp(dot(l, h), 0.0f, 1.0f);
 
   // GGX microfacet distribution function
-  // Canceled out
-  //  float den = (alpha2 - 1.0f) * NoH * NoH + 1.0f;
-  //  float D = alpha2 / (PI * den * den);
+  float den = (alpha2 - 1.0f) * NoH * NoH + 1.0f;
+  float D = alpha2 / (PI * den * den);
 
   // Fresnel with Schlick approximation
   // LoH or NoL? LoN is used for raster
@@ -114,10 +115,7 @@ static vec3 ggx(vec3 n, vec3 v, vec3 l, float roughness, vec3 F0) {
 
   return
       // This term is eliminated
-      //  D *
-      F
-      * G
-      ;
+      D * F * G;
 }
 
 static float FresnelSchlickRoughness(float cosTheta, float F0,

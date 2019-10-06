@@ -72,20 +72,25 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   std::vector<std::string> model_filenames;
   std::vector<std::string> env_filenames;
 
-  scene.load_env("spheremaps/lythwood_field.hdr");
+  //  scene.load_env("spheremaps/lythwood_field.hdr");
+  scene.init_black_env();
   scene.load_model("models/demon_in_thought_3d_print/scene.gltf");
+  scene.push_light(
+      Light_Source{.type = Light_Type::POINT,
+                   .power = vec3(170.0f, 150.0f, 100.0f),
+                   .point_light = Point_Light{.position = vec3(0.0f)}});
   iterate_folder("models/", model_filenames, ".gltf");
   iterate_folder("spheremaps/", env_filenames, ".hdr");
   gizmo_layer.camera.update();
   // Benchmark
-//  {
-//    CPU_timestamp __timestamp;
-//    pt_manager.reset_path_tracing_state(gizmo_layer.camera, 512, 512);
-//    while (pt_manager.path_tracing_queue.has_job())
-//      pt_manager.path_tracing_iteration(scene);
-//    std::cout << "Time ms:" << __timestamp.end() << "\n";
-//  }
-//  exit(0);
+  //  {
+  //    CPU_timestamp __timestamp;
+  //    pt_manager.reset_path_tracing_state(gizmo_layer.camera, 512, 512);
+  //    while (pt_manager.path_tracing_queue.has_job())
+  //      pt_manager.path_tracing_iteration(scene);
+  //    std::cout << "Time ms:" << __timestamp.end() << "\n";
+  //  }
+  //  exit(0);
   //
 
   struct Path_Tracing_Plane_Push {
@@ -192,7 +197,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
 
       if (ImGui::Combo("Select model", &model_item_current,
                        &_model_filenames[0], _model_filenames.size())) {
-        scene.reset();
+        scene.reset_model();
         scene.load_model(_model_filenames[model_item_current]);
         reload_model = true;
       }
@@ -259,7 +264,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   };
 
   gu.run_loop([&] {
-    //    scene.pbr_model.nodes[0].offset = gizmo_layer.gizmo_drag_state.pos;
+    scene.get_ligth(0).point_light.position = gizmo_layer.gizmo_drag_state.pos;
     scene.update_transforms();
     pt_manager.update_debug_ray(scene, gizmo_layer.camera.pos,
                                 gizmo_layer.mouse_ray);
@@ -285,14 +290,14 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                 .name = "IBL.diffuse",
                 .type = render_graph::Type::Image,
                 .image_info =
-                    render_graph::Image{.format =
-                                            vk::Format::eR32G32B32A32Sfloat,
-                                        .use = render_graph::Use::UAV,
-                                        .width = scene.spheremap.width / 8,
-                                        .height = scene.spheremap.height / 8,
-                                        .depth = 1,
-                                        .levels = 1,
-                                        .layers = 1}},
+                    render_graph::Image{
+                        .format = vk::Format::eR32G32B32A32Sfloat,
+                        .use = render_graph::Use::UAV,
+                        .width = std::max(scene.spheremap.width / 8u, 2u),
+                        .height = std::max(scene.spheremap.height / 8u, 2u),
+                        .depth = 1,
+                        .levels = 1,
+                        .layers = 1}},
             render_graph::Resource{
                 .name = "IBL.LUT",
                 .type = render_graph::Type::Image,
@@ -461,7 +466,30 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                                     .layers = 1}}},
         [&] {
           static bool prev_cam_moved = false;
+          struct GPU_Point_Light {
+            vec4 position;
+            vec4 power;
+          };
+          std::vector<GPU_Point_Light> point_lights;
+          ito(scene.light_sources.size()) {
+            auto &light = scene.light_sources[i];
+            if (light.type == Light_Type::POINT) {
+              point_lights.push_back(
+                  {.position = vec4(light.point_light.position, 0.0f),
+                   .power = vec4(light.power, 0.0f)});
+            }
+          }
+          u32 point_lights_buffer_id = 0u;
+          if (point_lights.size()) {
+            point_lights_buffer_id = gu.create_buffer(
+                render_graph::Buffer{
+                    .usage_bits = vk::BufferUsageFlagBits::eStorageBuffer,
+                    .size = u32(point_lights.size() * sizeof(GPU_Point_Light))},
+                &point_lights[0]);
+            gu.bind_resource("PointLightList", point_lights_buffer_id);
+          }
           sh_pbr_shading_comp::UBO ubo{};
+          ubo.point_lights_count = point_lights.size();
           ubo.camera_up = gizmo_layer.camera.up;
           ubo.camera_pos = gizmo_layer.camera.pos;
           ubo.camera_right = gizmo_layer.camera.right;
@@ -491,13 +519,15 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.bind_resource("g_metal", "g_pass.metal");
           gu.bind_resource("g_gizmo", "g_pass.gizmo");
           gu.bind_resource("history", "~shading.HDR");
-          gu.bind_resource("g_depth", "depth_mips");
+          gu.bind_resource("g_depth", "depth_linear");
           gu.bind_resource("textures", "IBL.diffuse", 0);
           gu.bind_resource("textures", "IBL.specular", 1);
           gu.bind_resource("textures", "IBL.LUT", 2);
           gu.CS_set_shader("pbr_shading.comp.glsl");
           gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
           gu.release_resource(ubo_id);
+          if (point_lights_buffer_id)
+            gu.release_resource(point_lights_buffer_id);
         });
     u32 bb_miplevels = get_mip_levels(u32(wsize.x), u32(wsize.y));
     gu.create_compute_pass(

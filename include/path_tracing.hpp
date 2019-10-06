@@ -33,15 +33,71 @@ struct Scene_Node {
   Oct_Tree octree;
 };
 
+enum class Light_Type { POINT, DIRECTIONAL, CONE, SPHERE, PLANE };
+
+struct Point_Light {
+  vec3 position;
+};
+
+struct Direction_Light {
+  vec3 direction;
+};
+
+struct Cone_Light {
+  vec3 position;
+  vec3 dir;
+  float length;
+  float falloff_radius;
+};
+
+struct Sphere_Light {
+  vec3 position;
+  float radius;
+  float falloff_radius;
+};
+
+struct Plane_Light {
+  vec3 position;
+  vec3 dir;
+  vec2 dim;
+  float falloff_radius;
+};
+
+struct Light_Source {
+  Light_Type type;
+  vec3 power;
+  union {
+    Point_Light point_light;
+    Direction_Light dir_light;
+    Cone_Light cone_light;
+    Sphere_Light sphere_light;
+    Plane_Light plane_light;
+  };
+};
+
 struct Scene {
   RAW_MOVABLE(Scene);
   Image_Raw spheremap;
   PBR_Model pbr_model;
   std::vector<Scene_Node> scene_nodes;
-  void reset() {
+  std::vector<Light_Source> light_sources;
+  void reset_model() {
     pbr_model = PBR_Model{};
     scene_nodes.clear();
   }
+  void init_black_env() {
+    vec3 pixel(0.0f, 0.0f, 0.0f);
+    spheremap.data.resize(sizeof(vec3)*4);
+    memcpy(&spheremap.data[0], &pixel, sizeof(vec3));
+    memcpy(&spheremap.data[12], &pixel, sizeof(vec3));
+    memcpy(&spheremap.data[24], &pixel, sizeof(vec3));
+    memcpy(&spheremap.data[36], &pixel, sizeof(vec3));
+    spheremap.width = 2;
+    spheremap.height = 2;
+    spheremap.format = vk::Format::eR32G32B32Sfloat;
+  }
+  void push_light(Light_Source const &light) { light_sources.push_back(light); }
+  Light_Source &get_ligth(u32 index) { return light_sources[index]; }
   void update_transforms() {
     std::function<void(u32, mat4)> enter_node = [&](u32 node_id,
                                                     mat4 transform) {
@@ -365,10 +421,12 @@ struct PT_Manager {
 
   struct Path_Tracing_Job {
     vec3 ray_origin, ray_dir;
+    // Color weight applied to the sampled light
     vec3 color;
     u32 pixel_x, pixel_y;
     f32 weight;
-    u32 media_material_id;
+    // For visibility checks
+    u32 light_id;
     u32 depth,
         // Used to track down bugs
         _depth;
@@ -435,6 +493,7 @@ struct PT_Manager {
     job.pixel_x = pixels.x;
     job.pixel_y = pixels.y;
     job.weight = 1.0f;
+    job.light_id = 0;
     job.color = vec3(1.0f, 1.0f, 1.0f);
     job.depth = 0;
     job._depth = 0;
@@ -492,6 +551,7 @@ struct PT_Manager {
                       job.pixel_x = j;
                       job.pixel_y = i;
                       job.weight = 1.0f;
+                      job.light_id = 0;
                       job.color = vec3(1.0f, 1.0f, 1.0f);
                       job.depth = 0;
                       job._depth = 0;
@@ -527,25 +587,39 @@ struct PT_Manager {
   };
 
   std::vector<Path_Tracing_Job> ray_jobs;
+  std::vector<u32> point_lights;
   std::vector<vec3> ray_dirs;
   std::vector<vec3> ray_origins;
   std::vector<Collision> ray_collisions;
 
   void path_tracing_iteration(Scene &scene) {
-    auto light_value = [&](vec3 ray_dir, vec3 color) {
-      //      float brightness = (0.5f * (0.5f + 0.5f * ray_dir.z));
-      //      float r = (0.01f * std::pow(0.5f - 0.5f * ray_dir.z, 4.0f));
-      //      float g = (0.01f * std::pow(0.5f - 0.5f * ray_dir.x, 4.0f));
-      //      float b = (0.01f * std::pow(0.5f - 0.5f * ray_dir.y, 4.0f));
-      //      return vec4(color.x * (brightness + r), color.x * (g +
-      //      brightness),
-      //                  color.x * (brightness + b), 1.0f);
+    // This function executes in 3 steps
+    // 1: Generate ray tracing job chunks
+    // 2: Perform ray-scene test for each ray
+    // 3: Handle collision hit/miss events
+    // Each step executes in parallel with barriers between steps
+    auto env_value = [&](vec3 ray_dir, vec3 color) {
+      if (scene.spheremap.data.empty()) {
+        return vec4(0.0f, 0.0f, 0.0f, 1.0f);
+      }
       float theta = std::acos(ray_dir.y);
       vec2 xy = glm::normalize(vec2(ray_dir.z, -ray_dir.x));
       float phi = -std::atan2(xy.x, xy.y);
       return vec4(color, 1.0f) * scene.spheremap.sample(vec2(
                                      (phi / M_PI / 2.0f) + 0.5f, theta / M_PI));
     };
+    // Each light type is handled separately
+    // Generate the list of point lights
+    point_lights.clear();
+    ito(scene.light_sources.size()) {
+      auto &light = scene.light_sources[i];
+      if (light.type == Light_Type::POINT) {
+        point_lights.push_back(i + 1);
+      }
+    }
+    const u32 LIGHT_FLAG = 1u << 31u;
+    const u32 LIGHT_ID_MASK = (1u << 20u) - 1u;
+    const u32 LIGHT_TYPE_MASK = 1u << 31u;
     if (trace_ispc) {
       u32 jobs_sofar = max_jobs_per_iter;
       if (ray_jobs.size() < max_jobs_per_iter) {
@@ -554,6 +628,7 @@ struct PT_Manager {
         ray_origins.resize(max_jobs_per_iter);
         ray_collisions.resize(max_jobs_per_iter);
       }
+      // Grab ray job items off the queue
       path_tracing_queue.dequeue(ray_jobs, jobs_sofar);
       ito(jobs_sofar) {
         ray_dirs[i] = ray_jobs[i].ray_dir;
@@ -599,7 +674,6 @@ struct PT_Manager {
                                      jobs_per_item)}});
           }
           marl::WaitGroup wg(work_payload.size());
-          // #pragma omp parallel for
 
           for (u32 i = 0; i < work_payload.size(); i++) {
             marl::schedule([=] {
@@ -632,14 +706,27 @@ struct PT_Manager {
           WorkPayload work_payload;
           ito((jobs_sofar + jobs_per_item - 1) / jobs_per_item) {
             work_payload.push_back(JobPayload{
-                .func = {[this, &scene, light_value](JobDesc desc) {
+                .func = {[this, &scene, env_value](JobDesc desc) {
                   for (u32 i = desc.offset; i < desc.offset + desc.size; i++) {
                     auto job = ray_jobs[i];
                     auto min_col = ray_collisions[i];
-                    if (min_col.t < FLT_MAX) {
-
-                      // path_tracing_image.add_value(job.pixel_x, job.pixel_y,
-                      //                              vec4(1.0f, 1.0f, 1.0f, 1.0f));
+                    if (job.light_id != 0u) {
+                      auto &light = scene.light_sources[job.light_id - 1];
+                      if (light.type == Light_Type::POINT) {
+                        float dist = glm::length(job.ray_origin -
+                                                 light.point_light.position);
+                        if (min_col.t > dist * (1.0f - FLOAT_EPS)) {
+                          float falloff = 1.0f / (dist * dist);
+                          // Visibility check succeeded
+                          path_tracing_image.add_value(
+                              job.pixel_x, job.pixel_y,
+                              vec4(falloff * job.color * light.power, job.weight));
+                        }
+                      } else {
+                        ASSERT_PANIC(false && "Unsupported ligth type");
+                      }
+                      // Visibility check failed
+                    } else if (min_col.t < FLT_MAX) {
                       if (job.depth == max_depth) {
                         // Terminate
                         path_tracing_image.add_value(
@@ -728,9 +815,9 @@ struct PT_Manager {
                                 //                                > 0.5f) {
                                 (Ks > frand.rand_unit_float()) {
                               // Sample GGX half normal and get the PDF
-                              float inv_pdf = 1.0f;
-                              vec3 L = getHemisphereGGXSample(
-                                  xi, N, V, roughness, inv_pdf);
+                              vec3 brdf = vec3(0.0f);
+                              vec3 L =
+                                  sample_ggx(xi, N, V, F0, roughness, brdf);
                               float NoL = saturate(dot(N, L));
                               // Means that the reflected ray is under surface
                               // Should we multiscatter/absorb/reroll?
@@ -740,15 +827,11 @@ struct PT_Manager {
                                 new_job.ray_origin =
                                     vertex.position + vertex.normal * 1.0e-3f;
                                 new_job.weight *= 1.0f / secondary_N;
+                                new_job.light_id = 0;
                                 new_job.depth += 1;
                                 new_job._depth += 1;
-                                vec3 brdf = ggx(N, V, L, roughness, F0);
-                                //                                path_tracing_image.add_value(
-                                //                                    job.pixel_x,
-                                //                                    job.pixel_y,
-                                //                                    vec4(brdf, 1.0f));
                                 new_job.color =
-                                    (1.0f / Ks) * inv_pdf * (brdf * job.color);
+                                    (1.0f / Ks) * (brdf * job.color);
                                 // #Debug
                                 if (path_tracing_camera._grab_path) {
                                   path_tracing_camera.push_debug_line(
@@ -773,6 +856,34 @@ struct PT_Manager {
                               } else {
                                 // @TODO: Decide what to do here
                               }
+                              // Spawn specular light rays
+                              {
+                                for (auto &point_light_id : point_lights) {
+                                  auto &light =
+                                      scene.light_sources[point_light_id - 1];
+
+                                  auto new_job = job;
+
+                                  new_job.ray_origin =
+                                      vertex.position + vertex.normal * 1.0e-3f;
+                                  vec3 L = glm::normalize(
+                                      light.point_light.position -
+                                      new_job.ray_origin);
+                                  float NoL = saturate(glm::dot(L, N));
+                                  if (NoL > 0.0f) {
+                                    new_job.ray_dir = L;
+                                    vec3 brdf =
+                                        eval_ggx(N, V, L, roughness, F0);
+                                    new_job.weight = 0.0f;
+                                    new_job.light_id = point_light_id;
+                                    new_job.depth += 1;
+                                    new_job._depth += 1;
+                                    new_job.color =
+                                        (1.0f / Ks) * (brdf * job.color);
+                                    path_tracing_queue.enqueue(new_job);
+                                  }
+                                }
+                              }
                             } else {
                               // Lambertian diffuse
                               vec3 up = abs(normal.y) < 0.999
@@ -792,6 +903,7 @@ struct PT_Manager {
                               new_job.ray_origin =
                                   vertex.position + vertex.normal * 1.0e-3f;
                               new_job.weight *= 1.0f / secondary_N;
+                              new_job.light_id = 0;
                               new_job.depth += 1;
                               new_job._depth += 1;
                               new_job.color = (1.0f / Kd) * vec3(albedo) *
@@ -816,6 +928,35 @@ struct PT_Manager {
                                     job.ray_origin, new_job.ray_origin);
                               }
                               path_tracing_queue.enqueue(new_job);
+                              // Spawn diffuse light rays
+                              {
+                                for (auto &point_light_id : point_lights) {
+                                  auto &light =
+                                      scene.light_sources[point_light_id - 1];
+
+                                  auto new_job = job;
+
+                                  new_job.ray_origin =
+                                      vertex.position + vertex.normal * 1.0e-3f;
+                                  vec3 L = glm::normalize(
+                                      light.point_light.position -
+                                      new_job.ray_origin);
+                                  float NoL = saturate(glm::dot(L, N));
+                                  if (NoL > 0.0f) {
+                                    new_job.ray_dir = L;
+                                    new_job.weight = 0.0f;
+                                    new_job.light_id = point_light_id;
+                                    new_job.depth += 1;
+                                    new_job._depth += 1;
+                                    new_job.color =
+                                        (1.0f / Kd) *
+                                        (NoL * vec3(albedo) *
+                                         (1.0f - DIELECTRIC_SPECULAR) *
+                                         (1.0f - metalness) * job.color);
+                                    path_tracing_queue.enqueue(new_job);
+                                  }
+                                }
+                              }
                             }
                           }
                         }
@@ -834,7 +975,7 @@ struct PT_Manager {
                       } else {
                         path_tracing_image.add_value(
                             job.pixel_x, job.pixel_y,
-                            job.weight * light_value(job.ray_dir, job.color));
+                            job.weight * env_value(job.ray_dir, job.color));
                       }
                     }
                   }
@@ -855,7 +996,9 @@ struct PT_Manager {
           wg.wait();
         }
       }
-    } else {
+    } else
+    // Debug path that executes one job per iteration
+    {
       u32 max_jobs_per_iter = 1000;
       u32 jobs_sofar = 0;
       while (path_tracing_queue.has_job()) {

@@ -156,6 +156,8 @@ struct Alloc_State {
   VmaImage allocate_image(
       vk::ImageCreateInfo const &create_info, VmaMemoryUsage usage,
       vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor) {
+    ASSERT_PANIC(create_info.extent.width > 1u &&
+                 create_info.extent.height > 1u);
     VmaAllocationCreateInfo allocInfo = {};
     allocInfo.usage = usage;
     VkImage image;
