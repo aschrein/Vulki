@@ -848,6 +848,16 @@ struct Graphics_Utils_State {
       divisor = 3u;
       components = 3u;
       break;
+    case vk::Format::eR32G32B32A32Sfloat:
+      bpc = 16u;
+      divisor = 4u;
+      components = 4u;
+      break;
+    case vk::Format::eR32Sfloat:
+      bpc = 4u;
+      divisor = 1u;
+      components = 1u;
+      break;
     default:
       ASSERT_PANIC(false && "unsupported format");
     }
@@ -895,7 +905,7 @@ struct Graphics_Utils_State {
         // For now let the texture creation be at the beginning of a pass
         ASSERT_PANIC(!bound_pipe);
         ASSERT_PANIC(!cur_cs && !push_const_size);
-              bind_resource("Mip_Chain_U8", res_id, 0);
+        bind_resource("Mip_Chain_U8", res_id, 0);
         CS_set_shader("mip_build.comp.glsl");
         bind_resource("Mip_Chain_F32", res_id, 0);
         ito(mip_levels - 1) {
@@ -910,6 +920,8 @@ struct Graphics_Utils_State {
           const uint R8G8B8A8_SRGB = 0;
           const uint R8G8B8A8_UNORM = 1;
           const uint R32G32B32_FLOAT = 2;
+          const uint R32_FLOAT = 3;
+          const uint R32G32B32A32_FLOAT = 4;
           switch (image_raw.format) {
           case vk::Format::eR8G8B8A8Unorm:
             pc.format = R8G8B8A8_UNORM;
@@ -919,6 +931,12 @@ struct Graphics_Utils_State {
             break;
           case vk::Format::eR32G32B32Sfloat:
             pc.format = R32G32B32_FLOAT;
+            break;
+          case vk::Format::eR32G32B32A32Sfloat:
+            pc.format = R32G32B32A32_FLOAT;
+            break;
+          case vk::Format::eR32Sfloat:
+            pc.format = R32_FLOAT;
             break;
           default:
             ASSERT_PANIC(false && "unsupported format");

@@ -15,7 +15,6 @@ layout(set = 0, binding = 0, std140) uniform UBO {
   mat4 view;
   mat4 proj;
   vec3 camera_pos;
-  vec3 light_pos;
 } uniforms;
 
 layout(push_constant) uniform PC {
@@ -29,12 +28,12 @@ layout(push_constant) uniform PC {
 } push_constants;
 
 void main() {
-  vec4 wpos = uniforms.view * push_constants.transform * vec4(POSITION, 1.0);
-  out_position = POSITION;
+  vec4 wpos = push_constants.transform * vec4(POSITION, 1.0);
+  out_position = wpos.xyz;
   // @TODO: Use matrix of cofactors
   out_normal = normalize((push_constants.transform * vec4(NORMAL, 0.0)).xyz);
   out_tangent = normalize((push_constants.transform * vec4(TANGENT, 0.0)).xyz);
   out_binormal = normalize((push_constants.transform * vec4(BINORMAL, 0.0)).xyz);
   out_texcoord = TEXCOORD_0;
-  gl_Position = uniforms.proj * wpos;
+  gl_Position = uniforms.proj * uniforms.view * wpos;
 }

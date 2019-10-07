@@ -198,8 +198,8 @@ struct Camera {
   vec3 look_at = vec3(0.0f, 0.0f, 0.0f);
   float aspect = 1.0;
   float fov = M_PI / 2.0;
-  float znear = 1.0e-1f;
-  float zfar = 1.0e5f;
+  float znear = 1.0f;
+  float zfar = 10.0e5f;
   //
   vec3 pos;
   mat4 view;
@@ -217,7 +217,16 @@ struct Camera {
     look = normalize(look_at - pos);
     right = normalize(cross(look, vec3(0.0f, 1.0f, 0.0f)));
     up = normalize(cross(right, look));
-    proj = glm::perspective(fov, aspect, znear, zfar);
+    //    proj = glm::perspective(fov, aspect, znear, zfar);
+    proj = mat4(0.0f);
+    float tanHalfFovy = std::tan(fov * 0.5f);
+
+    proj[0][0] = 1.0f / (aspect * tanHalfFovy);
+    proj[1][1] = 1.0f / (tanHalfFovy);
+    proj[2][2] = zfar / (znear - zfar);
+    proj[2][3] = -1.0f;
+    proj[3][2] = -(zfar * znear) / (zfar - znear);
+
     proj[2][0] += jitter.x;
     proj[2][1] += jitter.x;
     view = glm::lookAt(pos, look_at, vec3(0.0f, 1.0f, 0.0f));
@@ -277,6 +286,82 @@ struct Gizmo_Layer {
         .data = Gizmo_Instance_Data_CPU{
             .transform = tranform * glm::scale(vec3(radius, radius, length)),
             .color = color}});
+  }
+  void push_line_arrow(vec3 start, vec3 end, vec3 up, vec3 color) {
+    vec3 dr = end - start;
+    vec3 dir = glm::normalize(dr);
+    float length = glm::length(dr);
+    float dx = length * 0.1f;
+    vec3 tangent = glm::normalize(glm::cross(dir, up));
+    vec3 binormal = -glm::cross(dir, tangent);
+    line_segments.push_back({start, color});
+    line_segments.push_back({end, color});
+    line_segments.push_back({end, color});
+    line_segments.push_back({end - dir * dx + tangent * dx, color});
+    line_segments.push_back({end, color});
+    line_segments.push_back({end - dir * dx - tangent * dx, color});
+  }
+  void push_line_plane(vec3 pos, vec3 up, vec3 right, vec3 color) {
+    static const int signs_x[5] = {-1, 1, 1, -1, -1};
+    static const int signs_y[5] = {-1, -1, 1, 1, -1};
+    vec3 dir = normalize(glm::cross(right, up));
+    ito(4) {
+      line_segments.push_back(
+          {pos + f32(signs_y[i]) * up + f32(signs_x[i]) * right, color});
+      line_segments.push_back(
+          {pos + f32(signs_y[i + 1]) * up + f32(signs_x[i + 1]) * right,
+           color});
+    }
+    push_line_arrow(pos, pos + dir * 10.0f, glm::normalize(up), color);
+  }
+  void push_cone(vec3 start, vec3 dir, float radius, vec3 color) {
+    vec3 up = dir.z > 0.99f ? vec3(0.0f, 1.0f, 0.0f) : vec3(0.0f, 0.0f, 1.0f);
+    vec3 tangent = glm::normalize(glm::cross(dir, up));
+    vec3 binormal = -glm::cross(dir, tangent);
+    mat4 tranform = mat4(tangent.x, tangent.y, tangent.z, 0.0f, binormal.x,
+                         binormal.y, binormal.z, 0.0f, dir.x, dir.y, dir.z,
+                         0.0f, start.x, start.y, start.z, 1.0f);
+    push_gizmo(
+        Gizmo_Draw_Cmd{.type = Gizmo_Geometry_Type::CONE,
+                       .data = Gizmo_Instance_Data_CPU{
+                           .transform = glm::translate(start) * tranform *
+                                        glm::scale(vec3(radius, radius, 1.0f)),
+                           .color = color}});
+  }
+  void push_line_sphere(vec3 pos, float radius, vec3 color) {
+    static const u32 N = 16;
+    static vec2 sincos_cache[N + 1] = {};
+    onetime {
+      ito(N) {
+        sincos_cache[i] = vec2(std::cos(f32(i) / (N - 1) * M_PI * 2.0f),
+                               std::sin(f32(i) / (N - 1) * M_PI * 2.0f));
+      }
+      sincos_cache[N] = sincos_cache[0];
+    };
+    ito(N) {
+      vec2 sincos1 = sincos_cache[i];
+      vec2 sincos2 = sincos_cache[i + 1];
+      line_segments.push_back(
+          {pos + radius * vec3(sincos1.x, sincos1.y, 0.0f), color});
+      line_segments.push_back(
+          {pos + radius * vec3(sincos2.x, sincos2.y, 0.0f), color});
+    }
+    ito(N) {
+      vec2 sincos1 = sincos_cache[i];
+      vec2 sincos2 = sincos_cache[i + 1];
+      line_segments.push_back(
+          {pos + radius * vec3(sincos1.x, 0.0f, sincos1.y), color});
+      line_segments.push_back(
+          {pos + radius * vec3(sincos2.x, 0.0f, sincos2.y), color});
+    }
+    ito(N) {
+      vec2 sincos1 = sincos_cache[i];
+      vec2 sincos2 = sincos_cache[i + 1];
+      line_segments.push_back(
+          {pos + radius * vec3(0.0f, sincos1.x, sincos1.y), color});
+      line_segments.push_back(
+          {pos + radius * vec3(0.0f, sincos2.x, sincos2.y), color});
+    }
   }
   void push_line(vec3 start, vec3 end, vec3 color) {
     line_segments.push_back({start, color});
@@ -367,7 +452,7 @@ struct Gizmo_Layer {
         // Draw spheres
         icosahedron_wrapper.draw(gu, cylinders.size(), spheres_instance_offset);
         // Draw Cones
-        cone_wrapper.draw(gu, cylinders.size(), spheres_instance_offset);
+        cone_wrapper.draw(gu, cones.size(), cones_instance_offset);
       }
       gu.release_resource(gizmo_instance_buffer);
     }
@@ -438,6 +523,8 @@ struct Gizmo_Layer {
       camera_jitter = vec2(0.0f, 0.0f);
     }
     cur_halton_id = (cur_halton_id + 1) % MAX_HALTON;
+    camera.fov =
+        M_PI / 8.0f + 5.0f * M_PI / 8.0f * std::exp(-camera.distance * 0.01f);
     camera.aspect =
         float(example_viewport.extent.width) / example_viewport.extent.height;
     camera.update(
@@ -460,8 +547,8 @@ struct Gizmo_Layer {
       my = -2.0f * (float(mpos.y - example_viewport.offset.y) - 0.5f) /
                (example_viewport.extent.height) +
            1.0f;
-      mouse_ray = normalize(camera.look + camera.right * mx * camera.aspect +
-                            camera.up * my);
+      mouse_ray = normalize(camera.look / std::tan(camera.fov * 0.5f) +
+                            camera.right * mx * camera.aspect + camera.up * my);
       gizmo_drag_state.on_mouse_move(camera.pos, camera.look, mouse_ray);
       // Normalize camera motion so that diagonal moves are not bigger
       float camera_speed = 4.0f * camera.distance;

@@ -16,6 +16,8 @@
 
 #include <filesystem>
 
+#include "ltc.hpp"
+
 std::vector<Raw_Mesh_Obj> load_obj_raw(char const *filename) {
   tinyobj::attrib_t attrib;
   std::vector<tinyobj::shape_t> shapes;
@@ -661,4 +663,36 @@ void save_image(std::string const &filename, Image_Raw const &image) {
   }
   stbi_write_png(filename.c_str(), image.width, image.height, STBI_rgb_alpha,
                  &data[0], image.width * 4);
+}
+
+LTC_Data load_ltc_data() {
+  LTC_Data out;
+  out.inv.width = LTC::size;
+  out.ampl.width = LTC::size;
+  out.inv.height = LTC::size;
+  out.ampl.height = LTC::size;
+  {
+    std::vector<vec4> data;
+    ito(LTC::size) {
+      jto(LTC::size) {
+//        auto mat = LTC::tabM[i * LTC::size + j];
+//        data.push_back({mat[0][0], mat[0][2], mat[1][1], mat[2][0]});
+        vec4 src = ((vec4*)LTC::packed_mat)[i * LTC::size + j];
+        data.push_back(src);
+      }
+    }
+    out.inv.data.resize(sizeof(data[0]) * data.size());
+    memcpy(&out.inv.data[0], &data[0], out.inv.data.size());
+    out.inv.format = vk::Format::eR32G32B32A32Sfloat;
+  }
+  {
+    std::vector<float> data;
+    ito(LTC::size) {
+      jto(LTC::size) { data.push_back(LTC::tabAmplitude[i * LTC::size + j]); }
+    }
+    out.ampl.data.resize(sizeof(data[0]) * data.size());
+    memcpy(&out.ampl.data[0], &data[0], out.ampl.data.size());
+    out.ampl.format = vk::Format::eR32Sfloat;
+  }
+  return out;
 }

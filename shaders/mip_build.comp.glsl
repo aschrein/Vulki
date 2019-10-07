@@ -19,6 +19,8 @@ layout(push_constant) uniform PC {
 const uint R8G8B8A8_SRGB = 0;
 const uint R8G8B8A8_UNORM = 1;
 const uint R32G32B32_FLOAT = 2;
+const uint R32_FLOAT = 3;
+const uint R32G32B32A32_FLOAT = 4;
 
 vec4 load(ivec2 coord) {
   if (coord.x >= pc.src_width)
@@ -46,6 +48,15 @@ vec4 load(ivec2 coord) {
     float v_1 = mip_chain_f32.data[(coord.x + coord.y * pc.src_width + pc.src_offset) * 3 + 1];
     float v_2 = mip_chain_f32.data[(coord.x + coord.y * pc.src_width + pc.src_offset) * 3 + 2];
     return vec4(v_0, v_1, v_2, 1.0f);
+  } else if (pc.format == R32G32B32A32_FLOAT) {
+    float v_0 = mip_chain_f32.data[(coord.x + coord.y * pc.src_width + pc.src_offset) * 4];
+    float v_1 = mip_chain_f32.data[(coord.x + coord.y * pc.src_width + pc.src_offset) * 4 + 1];
+    float v_2 = mip_chain_f32.data[(coord.x + coord.y * pc.src_width + pc.src_offset) * 4 + 2];
+    float v_3 = mip_chain_f32.data[(coord.x + coord.y * pc.src_width + pc.src_offset) * 4 + 3];
+    return vec4(v_0, v_1, v_2, v_3);
+  } else if (pc.format == R32_FLOAT) {
+    float v_0 = mip_chain_f32.data[(coord.x + coord.y * pc.src_width + pc.src_offset)];
+    return vec4(v_0, 0.0f, 0.0f, 0.0f);
   }
   return vec4(1.0, 0.0, 0.0, 1.0);
 }
@@ -74,6 +85,13 @@ void store(ivec2 coord, vec4 val) {
     mip_chain_f32.data[(coord.x + coord.y * pc.dst_width + pc.dst_offset) * 3] = val.x;
     mip_chain_f32.data[(coord.x + coord.y * pc.dst_width + pc.dst_offset) * 3 + 1] = val.y;
     mip_chain_f32.data[(coord.x + coord.y * pc.dst_width + pc.dst_offset) * 3 + 2] = val.z;
+  } else if (pc.format == R32G32B32A32_FLOAT) {
+    mip_chain_f32.data[(coord.x + coord.y * pc.dst_width + pc.dst_offset) * 4] = val.x;
+    mip_chain_f32.data[(coord.x + coord.y * pc.dst_width + pc.dst_offset) * 4 + 1] = val.y;
+    mip_chain_f32.data[(coord.x + coord.y * pc.dst_width + pc.dst_offset) * 4 + 2] = val.z;
+    mip_chain_f32.data[(coord.x + coord.y * pc.dst_width + pc.dst_offset) * 4 + 3] = val.w;
+  } else if (pc.format == R32_FLOAT) {
+    mip_chain_f32.data[(coord.x + coord.y * pc.dst_width + pc.dst_offset)] = val.x;
   }
 }
 

@@ -14,6 +14,8 @@ layout(set = 2, binding = 0) uniform sampler2D textures[128];
 #define IBL_LUT 2
 #define IBL_IRRADIANCE 0
 #define IBL_RADIANCE 1
+#define LTC_INVMAP 3
+#define LTC_AMP 4
 
 layout(set = 1, binding = 0, std140) uniform UBO {
   vec3 camera_pos;
@@ -27,6 +29,7 @@ layout(set = 1, binding = 0, std140) uniform UBO {
   float taa_weight;
   uint mask;
   uint point_lights_count;
+  uint plane_lights_count;
 } g_ubo;
 
 const uint DISPLAY_GIZMO = 1;
@@ -43,6 +46,17 @@ struct Point_Light {
 // Really it's an array of Point_Light
 layout(set = 1, binding = 2) buffer PointLightList { vec4 data[]; }
 g_point_light_list;
+
+struct Plane_Light {
+  vec4 position;
+  vec4 up;
+  vec4 right;
+  vec4 power;
+};
+
+// Really it's an array of Plane_Light
+layout(set = 1, binding = 3) buffer PlaneLightList { vec4 data[]; }
+g_plane_light_list;
 
 #define PI 3.141592
 
@@ -68,6 +82,190 @@ return textureLod(textures[id],
   phi,
   v
 ), lod).xyz;
+}
+
+
+// Linearly Transformed Cosines
+///////////////////////////////
+// Src: https://eheitzresearch.wordpress.com/415-2/
+
+float IntegrateEdge(vec3 v1, vec3 v2)
+{
+    float cosTheta = dot(v1, v2);
+    float theta = acos(cosTheta);
+    float res = cross(v1, v2).z * ((theta > 0.001) ? theta/sin(theta) : 1.0);
+
+    return res;
+}
+
+void ClipQuadToHorizon(inout vec3 L[5], out int n)
+{
+    // detect clipping config
+    int config = 0;
+    if (L[0].z > 0.0) config += 1;
+    if (L[1].z > 0.0) config += 2;
+    if (L[2].z > 0.0) config += 4;
+    if (L[3].z > 0.0) config += 8;
+
+    // clip
+    n = 0;
+
+    if (config == 0)
+    {
+        // clip all
+    }
+    else if (config == 1) // V1 clip V2 V3 V4
+    {
+        n = 3;
+        L[1] = -L[1].z * L[0] + L[0].z * L[1];
+        L[2] = -L[3].z * L[0] + L[0].z * L[3];
+    }
+    else if (config == 2) // V2 clip V1 V3 V4
+    {
+        n = 3;
+        L[0] = -L[0].z * L[1] + L[1].z * L[0];
+        L[2] = -L[2].z * L[1] + L[1].z * L[2];
+    }
+    else if (config == 3) // V1 V2 clip V3 V4
+    {
+        n = 4;
+        L[2] = -L[2].z * L[1] + L[1].z * L[2];
+        L[3] = -L[3].z * L[0] + L[0].z * L[3];
+    }
+    else if (config == 4) // V3 clip V1 V2 V4
+    {
+        n = 3;
+        L[0] = -L[3].z * L[2] + L[2].z * L[3];
+        L[1] = -L[1].z * L[2] + L[2].z * L[1];
+    }
+    else if (config == 5) // V1 V3 clip V2 V4) impossible
+    {
+        n = 0;
+    }
+    else if (config == 6) // V2 V3 clip V1 V4
+    {
+        n = 4;
+        L[0] = -L[0].z * L[1] + L[1].z * L[0];
+        L[3] = -L[3].z * L[2] + L[2].z * L[3];
+    }
+    else if (config == 7) // V1 V2 V3 clip V4
+    {
+        n = 5;
+        L[4] = -L[3].z * L[0] + L[0].z * L[3];
+        L[3] = -L[3].z * L[2] + L[2].z * L[3];
+    }
+    else if (config == 8) // V4 clip V1 V2 V3
+    {
+        n = 3;
+        L[0] = -L[0].z * L[3] + L[3].z * L[0];
+        L[1] = -L[2].z * L[3] + L[3].z * L[2];
+        L[2] =  L[3];
+    }
+    else if (config == 9) // V1 V4 clip V2 V3
+    {
+        n = 4;
+        L[1] = -L[1].z * L[0] + L[0].z * L[1];
+        L[2] = -L[2].z * L[3] + L[3].z * L[2];
+    }
+    else if (config == 10) // V2 V4 clip V1 V3) impossible
+    {
+        n = 0;
+    }
+    else if (config == 11) // V1 V2 V4 clip V3
+    {
+        n = 5;
+        L[4] = L[3];
+        L[3] = -L[2].z * L[3] + L[3].z * L[2];
+        L[2] = -L[2].z * L[1] + L[1].z * L[2];
+    }
+    else if (config == 12) // V3 V4 clip V1 V2
+    {
+        n = 4;
+        L[1] = -L[1].z * L[2] + L[2].z * L[1];
+        L[0] = -L[0].z * L[3] + L[3].z * L[0];
+    }
+    else if (config == 13) // V1 V3 V4 clip V2
+    {
+        n = 5;
+        L[4] = L[3];
+        L[3] = L[2];
+        L[2] = -L[1].z * L[2] + L[2].z * L[1];
+        L[1] = -L[1].z * L[0] + L[0].z * L[1];
+    }
+    else if (config == 14) // V2 V3 V4 clip V1
+    {
+        n = 5;
+        L[4] = -L[0].z * L[3] + L[3].z * L[0];
+        L[0] = -L[0].z * L[1] + L[1].z * L[0];
+    }
+    else if (config == 15) // V1 V2 V3 V4
+    {
+        n = 4;
+    }
+
+    if (n == 3)
+        L[3] = L[0];
+    if (n == 4)
+        L[4] = L[0];
+}
+// LTC helpers
+vec3 mul(mat3 m, vec3 v)
+{
+    return m * v;
+}
+
+mat3 mul(mat3 m1, mat3 m2)
+{
+    return m1 * m2;
+}
+
+vec3 LTC_Evaluate(
+    vec3 N, vec3 V, vec3 P, mat3 Minv, vec3 points[4], bool twoSided)
+{
+    // construct orthonormal basis around N
+    vec3 T1, T2;
+    T1 = normalize(V - N*dot(V, N));
+    T2 = cross(N, T1);
+
+    // rotate area light in (T1, T2, N) basis
+    Minv = mul(Minv, transpose(mat3(T1, T2, N)));
+
+    // polygon (allocate 5 vertices for clipping)
+    vec3 L[5];
+    L[0] = mul(Minv, points[0] - P);
+    L[1] = mul(Minv, points[1] - P);
+    L[2] = mul(Minv, points[2] - P);
+    L[3] = mul(Minv, points[3] - P);
+
+    int n;
+    ClipQuadToHorizon(L, n);
+
+    if (n == 0)
+        return vec3(0, 0, 0);
+
+    // project onto sphere
+    L[0] = normalize(L[0]);
+    L[1] = normalize(L[1]);
+    L[2] = normalize(L[2]);
+    L[3] = normalize(L[3]);
+    L[4] = normalize(L[4]);
+
+    // integrate
+    float sum = 0.0;
+
+    sum += IntegrateEdge(L[0], L[1]);
+    sum += IntegrateEdge(L[1], L[2]);
+    sum += IntegrateEdge(L[2], L[3]);
+    if (n >= 4)
+        sum += IntegrateEdge(L[3], L[4]);
+    if (n == 5)
+        sum += IntegrateEdge(L[4], L[0]);
+
+    sum = twoSided ? abs(sum) : max(0.0, sum);
+
+    vec3 Lo_i = vec3(sum, sum, sum);
+
+    return Lo_i;
 }
 
 #define DIELECTRIC_SPECULAR 0.04
@@ -122,18 +320,24 @@ void main() {
                            g_ubo.camera_right * xy.x);
 
     // Load G-Buffer
-    vec3 albedo = texelFetch(g_albedo, ivec2(gl_GlobalInvocationID.xy), 0).xyz;
-    vec3 normal = texelFetch(g_normal, ivec2(gl_GlobalInvocationID.xy), 0).xyz;
+    vec4 val_0 = texelFetch(g_normal, ivec2(gl_GlobalInvocationID.xy), 0);
+    vec3 normal = val_0.xyz;
     vec4 metal = texelFetch(g_metal, ivec2(gl_GlobalInvocationID.xy), 0);
-    float depth = texelFetch(g_depth, ivec2(gl_GlobalInvocationID.xy), 0).x;
+    float depth = val_0.w;
+    float debug_depth = texelFetch(g_depth, ivec2(gl_GlobalInvocationID.xy), 0).x;
+    vec3 pos = ray_dir * depth + ray_origin;
+    vec3 albedo =
+//    vec3(abs(fract(pos)));
+    texelFetch(g_albedo, ivec2(gl_GlobalInvocationID.xy), 0).xyz;
     float ao = metal.r;
     if ((g_ubo.mask & DISPLAY_AO) == 0) {
       ao = 1.0f;
     }
     float roughness = metal.g;
-    roughness = min(0.9, roughness);
+    roughness = min(0.99, roughness);
+    roughness = max(0.01, roughness);
     float metalness = metal.b;
-    vec3 pos = ray_dir * depth + ray_origin;
+
     vec3 refl = normalize(reflect(ray_dir, normal));
     vec3 L = refl;
     vec3 V = -ray_dir;
@@ -174,14 +378,54 @@ void main() {
         if (NoL > 0.0f) {
           vec3 brdf = eval_ggx(N, V, L, roughness, F0);
           // Diffuse
-          color += NoL * albedo * power / (dist * dist);
+          color += kD * NoL * albedo * power / (dist * dist);
           // Specular
-          color += brdf * power / (dist * dist);
+          color += kS * brdf * power / (dist * dist);
         }
       }
     }
 
-    if (depth > 10000.0)
+    if (g_ubo.plane_lights_count > 0) {
+      for (uint plane_light_id = 0u;
+                plane_light_id  < g_ubo.plane_lights_count;
+                plane_light_id ++) {
+        vec3 lposition = g_plane_light_list.data[plane_light_id * 4].xyz;
+        vec3 lup = g_plane_light_list.data[plane_light_id * 4 + 1].xyz;
+        vec3 lright = g_plane_light_list.data[plane_light_id * 4 + 2].xyz;
+        vec3 power = g_plane_light_list.data[plane_light_id * 4 + 3].xyz;
+        vec3 points[4];
+        points[0] = lposition + lup + lright;
+        points[1] = lposition + lup - lright;
+        points[2] = lposition - lup - lright;
+        points[3] = lposition - lup + lright;
+        const float LUT_SIZE  = 64.0;
+        const float LUT_SCALE = (LUT_SIZE - 1.0)/LUT_SIZE;
+        const float LUT_BIAS  = 0.5/LUT_SIZE;
+        float theta = acos(NoV);
+        vec2 uv = vec2(roughness, theta / (0.5 * PI));
+        uv = uv * LUT_SCALE + LUT_BIAS;
+
+        vec4 t =
+        //texelFetch(textures[LTC_INVMAP], ivec2(uv.xy), 0);
+        texture(textures[LTC_INVMAP], uv);
+        mat3 Minv = mat3(
+            vec3(  1,   0, t.y),
+            vec3(  0, t.z,   0),
+            vec3(t.w,   0, t.x)
+        );
+        bool twoSided = true;
+        vec3 spec = LTC_Evaluate(N, V, pos, Minv, points, twoSided);
+        spec *=
+        //texelFetch(textures[LTC_AMP], ivec2(uv.xy), 0).x;
+        texture(textures[LTC_AMP], uv).x;
+
+        vec3 diff = LTC_Evaluate(N, V, pos, mat3(1), points, twoSided);
+
+        color += power * (spec * kS + kD * diff * albedo) / (PI * 2.0);
+      }
+    }
+
+    if (debug_depth > 999.0)
        color = vec3(0.5);
 //      color = sample_cubemap(ray_dir, 0.0, IBL_RADIANCE);
     if ((g_ubo.mask & DISPLAY_GIZMO) != 0) {

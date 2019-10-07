@@ -27,7 +27,7 @@ if(NOT OpenMP_CXX_FOUND)
     message(FATAL_ERROR "Could not find OpenMP library!")
 endif()
 
-add_definitions(-D_CRT_SECURE_NO_WARNINGS -fpermissive)
+add_definitions(-D_CRT_SECURE_NO_WARNINGS -DGLM_FORCE_DEPTH_ZERO_TO_ONE -fpermissive)
 # -DVULKAN_HPP_NO_EXCEPTIONS -DSPIRV_CROSS_EXCEPTIONS_TO_ASSERTIONS -fno-exceptions
 # @TODO: Disable exceptions
 # Funky sparsehash uses exceptions so it's not trivial to switch it off
@@ -48,6 +48,7 @@ file(GLOB SOURCE "src/*.cpp" 3rdparty/imgui/imgui.cpp 3rdparty/imgui/imgui_widge
 # message(${SOURCE})
 # -O0 -g
 #-O3  --math-lib=fast --target=sse2-i32x8
+#-O3 --math-lib=fast
 add_custom_command(OUTPUT kernel.o
                    COMMAND ispc -g -O3 --math-lib=fast --pic  ${CMAKE_SOURCE_DIR}/"src/kernel.ispc" -o kernel.o
                    DEPENDS "src/kernel.ispc")

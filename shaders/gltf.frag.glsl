@@ -17,7 +17,6 @@ layout(set = 0, binding = 0, std140) uniform UBO {
   mat4 view;
   mat4 proj;
   vec3 camera_pos;
-  vec3 light_pos;
 } uniforms;
 
 layout(push_constant) uniform PC {
@@ -65,6 +64,6 @@ void main() {
     out_arm = vec4(1.0, push_constants.roughness_factor, push_constants.metal_factor, 1.0f);
   }
   g_albedo = out_albedo;
-  g_normal = out_normal;
+  g_normal = vec4(out_normal.xyz, length(in_position - uniforms.camera_pos));
   g_arm = out_arm;
 }

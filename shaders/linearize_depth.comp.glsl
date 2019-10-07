@@ -11,9 +11,11 @@ layout(push_constant) uniform PC {
 float linearize_depth(float d)
 {
     return
-    push_constants.znear *
-    push_constants.zfar /
-    (push_constants.zfar + d *
+    (push_constants.znear *
+    push_constants.zfar) /
+    (
+      (push_constants.zfar) +
+        d *
          (push_constants.znear - push_constants.zfar)
     );
 }
@@ -24,6 +26,6 @@ void main() {
     if (gl_GlobalInvocationID.x > dim.x || gl_GlobalInvocationID.y > dim.y)
       return;
     float depth = texelFetch(in_depth, ivec2(gl_GlobalInvocationID.xy), 0).x;
-    float linear_depth = linearize_depth(depth * 0.5 + 0.5);
+    float linear_depth = linearize_depth(depth);
     imageStore(out_image, ivec2(gl_GlobalInvocationID.xy), vec4(linear_depth));
 }
