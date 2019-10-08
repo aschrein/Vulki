@@ -378,9 +378,10 @@ void main() {
         if (NoL > 0.0f) {
           vec3 brdf = eval_ggx(N, V, L, roughness, F0);
           // Diffuse
-          color += kD * NoL * albedo * power / (dist * dist);
+          color += (1.0 - DIELECTRIC_SPECULAR) * (1.0 - metalness) *
+                    NoL * albedo * power / (dist * dist);
           // Specular
-          color += kS * brdf * power / (dist * dist);
+          color += brdf * power / (dist * dist);
         }
       }
     }

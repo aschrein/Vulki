@@ -142,6 +142,102 @@ static float halton(int i, int base) {
   return v;
 }
 
+// a, b and c could be denormalized
+static float get_solid_angle(vec3 a, vec3 b, vec3 c) {
+  float aa = dot(a, a);
+  float bb = dot(b, b);
+  float cc = dot(c, c);
+  float ab = dot(a, b);
+  float sab = aa * bb - ab * ab;
+  float bc = dot(b, c);
+  float sbc = bb * cc - bc * bc;
+  float ca = dot(c, a);
+  float sca = aa * cc - ca * ca;
+  float cos_C = (ca * bb - ab * bc);
+  float sin_C = sqrt(sab * sbc - cos_C * cos_C);
+  // tan(B/2) = ± √(1 − cos B)/(1 + cos B)
+  float cos_B = ab;
+  float k_B = std::sqrt(aa * bb);
+  float cos_A = bc;
+  float k_A = std::sqrt(cc * bb);
+  float k = (k_B - cos_B) * (k_A - cos_A);
+  return 2.0 *
+         glm::atan(sin_C,
+                   std::sqrt((sab * sbc * (k_A + cos_A) * (k_B + cos_B)) / k) +
+                       cos_C);
+}
+
+static float get_solid_angle_vanilla(vec3 a) {
+  return std::acos((std::cos(a.x) - std::cos(a.y) * std::cos(a.z)) /
+                   (std::sin(a.y) * std::sin(a.z))) -
+         std::asin((std::cos(a.y) - std::cos(a.x) * std::cos(a.z)) /
+                   (std::sin(a.x) * std::sin(a.z))) -
+         std::asin((std::cos(a.z) - std::cos(a.y) * std::cos(a.x)) /
+                   (std::sin(a.y) * std::sin(a.x)));
+}
+
+static float get_solid_angle_enhanced(vec3 a) {
+  float cos_C = (std::cos(a.z) - std::cos(a.y) * std::cos(a.x)) /
+                      (std::sin(a.y) * std::sin(a.x));
+  float C = std::acos(cos_C);
+  float EPS = 1.0e-6f;
+  float alpha_half = std::max(std::min(a.x / 2.0f, PI/2.0f - EPS), -PI/2.0f + EPS);
+  float beta_half = std::max(std::min(a.y / 2.0f, PI/2.0f - EPS), -PI/2.0f + EPS);
+  float k = std::tan(alpha_half) * std::tan(beta_half);
+  return 2.0 * glm::atan(k * std::sin(C), 1.0f + k * std::cos(C));
+}
+
+struct angle_3 {
+  float alpha, beta, gamma;
+  void print() {
+    std::cout << "{alpha:" << alpha << ", beta:" << beta << ", gamma:" << gamma
+              << "}\n";
+  }
+};
+
+static float get_solid_angle(angle_3 a) {
+  return std::acos((std::cos(a.alpha) - std::cos(a.beta) * std::cos(a.gamma)) /
+                   (std::sin(a.beta) * std::sin(a.gamma))) +
+         std::acos((std::cos(a.beta) - std::cos(a.alpha) * std::cos(a.gamma)) /
+                   (std::sin(a.alpha) * std::sin(a.gamma))) +
+         std::acos((std::cos(a.gamma) - std::cos(a.beta) * std::cos(a.alpha)) /
+                   (std::sin(a.beta) * std::sin(a.alpha))) - PI;
+}
+
+static float get_angle(vec3 a, vec3 b) {
+  float ma = dot(a, a);
+  float mb = dot(b, b);
+  return std::acos(dot(a, b) / std::sqrt(ma * mb));
+}
+
+static angle_3 get_angle(vec3 a, vec3 b, vec3 c) {
+  return angle_3{.alpha = get_angle(a, b),
+                 .beta = get_angle(b, c),
+                 .gamma = get_angle(c, a)};
+}
+// signed solid angle of triangle with c==pole==vec3(0.0f, 0.0f, 1.0f)
+// a and b must be normalized
+// numerically unstable when one of the angles -> PI
+static float get_solid_angle(vec3 a, vec3 b) {
+  float ab = dot(a, b);
+  float sab = 1.0f - ab * ab;
+  float bc = b.z;
+  float sbc = 1.0f - bc * bc;
+  float ca = a.z;
+  float sca = 1.0f - ca * ca;
+  float cos_C = (ca - ab * bc);
+  float sin_C = std::sqrt(std::max(sab * sbc - cos_C * cos_C, 0.0f));
+  // tan(B/2) = ± √(1 − cos B)/(1 + cos B)
+  float cos_B = ab;
+  float cos_A = bc;
+  float k = (1.0f - cos_B) * (1.0f - cos_A);
+  return (glm::cross(a, b).z >= 0.0f ? 1.0f : -1.0f) * 2.0f *
+         glm::atan(sin_C, std::sqrt(std::max(
+                              (sab * sbc * (1.0f + cos_A) * (1.0f + cos_B)) / k,
+                              0.0f)) +
+                              cos_C);
+}
+
 // Linearly Transformed Cosines
 ///////////////////////////////
 // Src: https://eheitzresearch.wordpress.com/415-2/
@@ -149,7 +245,8 @@ namespace LTC {
 static float IntegrateEdge(vec3 v1, vec3 v2) {
   float cosTheta = glm::dot(v1, v2);
   float theta = std::acos(cosTheta);
-  float res = glm::cross(v1, v2).z * ((theta > 0.001) ? theta / std::sin(theta) : 1.0);
+  float res =
+      glm::cross(v1, v2).z * ((theta > 0.001) ? theta / std::sin(theta) : 1.0);
 
   return res;
 }
@@ -261,7 +358,6 @@ static vec3 mul(mat3 m, vec3 v) { return m * v; }
 
 static mat3 mul(mat3 m1, mat3 m2) { return m1 * m2; }
 
-
 static float plane_solid_angle(vec3 N, vec3 V, vec3 P, vec3 points[4]) {
   // construct orthonormal basis around N
   vec3 T1, T2;
@@ -281,21 +377,21 @@ static float plane_solid_angle(vec3 N, vec3 V, vec3 P, vec3 points[4]) {
   if (n == 0)
     return 0.0f;
   // project onto sphere
-    L[0] = normalize(L[0]);
-    L[1] = normalize(L[1]);
-    L[2] = normalize(L[2]);
-    L[3] = normalize(L[3]);
-    L[4] = normalize(L[4]);
+  L[0] = normalize(L[0]);
+  L[1] = normalize(L[1]);
+  L[2] = normalize(L[2]);
+  L[3] = normalize(L[3]);
+  L[4] = normalize(L[4]);
   // integrate
   float sum = 0.0;
 
-  sum += IntegrateEdge(L[0], L[1]);
-  sum += IntegrateEdge(L[1], L[2]);
-  sum += IntegrateEdge(L[2], L[3]);
+  sum += get_solid_angle(L[0], L[1]);
+  sum += get_solid_angle(L[1], L[2]);
+  sum += get_solid_angle(L[2], L[3]);
   if (n >= 4)
-    sum += IntegrateEdge(L[3], L[4]);
+    sum += get_solid_angle(L[3], L[4]);
   if (n == 5)
-    sum += IntegrateEdge(L[4], L[0]);
+    sum += get_solid_angle(L[4], L[0]);
   return abs(sum);
 }
 

@@ -74,7 +74,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
 
   //  scene.load_env("spheremaps/lythwood_field.hdr");
   scene.init_black_env();
-  scene.load_model("models/demon_in_thought_3d_print/scene.gltf");
+//  scene.load_model("models/demon_in_thought_3d_print/scene.gltf");
+  scene.load_model("models/MetalRoughSpheres/MetalRoughSpheres.gltf");
   scene.push_light(Light_Source{
       .type = Light_Type::PLANE,
       .power = vec3(5.0f, 7.5f, 8.7f),
@@ -83,7 +84,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                                  .right = vec3(0.0f, 0.0f, 10.0f)}});
   scene.push_light(Light_Source{
       .type = Light_Type::POINT,
-      .power = vec3(1700.0f, 1500.0f, 1000.0f),
+      .power = 5.0f * vec3(1700.0f, 1500.0f, 1000.0f),
       .point_light = Point_Light{.position = vec3(0.0f, 100.0f, 0.0f)}});
   iterate_folder("models/", model_filenames, ".gltf");
   iterate_folder("spheremaps/", env_filenames, ".hdr");

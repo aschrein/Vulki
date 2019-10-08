@@ -218,6 +218,9 @@ vec3 cross(vec3 a, vec3 b) {
     a.x * b.y - a.y * b.x
     );
 }
+float length(vec3 a) {
+  return sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
+}
 vec3 normalize(vec3 a) {
   float invlength = 1.0f / sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
   return make_vec3(a.x * invlength, a.y * invlength, a.z * invlength);
@@ -448,5 +451,63 @@ export void ispc_trace(Packed_UG * uniform ug,
 {
   foreach(i = 0 ... ray_count[0]) {
     ispc_iterate(ug, vertices, faces, ray_dir[i], ray_origin[i], out_collision, i);
+  }
+}
+
+// Usedo for ray-plane test for light
+export void ispc_trace_plane(
+           // Light id
+           uint * uniform id,
+		       // light position, up, dir and right vectors
+		       vec3 * uniform p_pos,
+		       vec3 * uniform p_dir,
+		       vec3 * uniform p_up,
+		       vec3 * uniform p_right,
+		       // Normalized ray direction and world space ray origin
+		       vec3 * uniform ray_dirs, vec3 * uniform ray_origins,
+		       // An array of collisions to write to
+		       Collision * uniform out_collision,
+		       uniform uint * uniform ray_count)
+{
+  vec3 pos = p_pos[0];
+  vec3 dir = p_dir[0];
+  vec3 up = p_up[0];
+  vec3 right = p_right[0];
+  vec3 nup = normalize(up);
+  vec3 nright = normalize(right);
+  float lup = length(up);
+  float lright = length(right);
+  foreach(i = 0 ... ray_count[0]) {
+    vec3 ray_dir = ray_dirs[i];
+    vec3 ray_origin = ray_origins[i];
+    vec3 dr = sub(pos, ray_origin);
+    vec3 ndr = normalize(dr);
+    float d = dot(ray_dir, ndr);
+    // possible an intersection between the ray and an infinite plane
+    if (d > 0.0f) {
+      float NoV = dot(ray_dir, dir);
+      float NoD = dot(dr, dir);
+      float t = NoD / NoV;
+      if (t > 0.0f) {
+        Collision min_collision = out_collision[i];
+        // Check that the intersection point is closer than what we already have
+        if (t < min_collision.t) {
+          // Check that the point lies within the plane boundaries
+          vec3 i_pos = add(ray_origin, mul_k(ray_dir, t));
+          vec3 i_dr = sub(i_pos, pos);
+          float x = dot(i_dr, nright);
+          float y = dot(i_dr, nup);
+          if (abs(x) < lright && abs(y) < lup) {
+            // Success
+            min_collision.t = t;
+            min_collision.mesh_id = id[0];
+            min_collision.face_id = 0;
+            min_collision.u = x;
+            min_collision.v = y;
+            out_collision[i] = min_collision;
+          }
+        }
+      }
+    }
   }
 }

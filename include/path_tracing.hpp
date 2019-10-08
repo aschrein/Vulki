@@ -223,7 +223,15 @@ struct ISPC_Packed_UG {
 extern "C" void ispc_trace(ISPC_Packed_UG *ug, void *vertices, uint *faces,
                            vec3 *ray_dir, vec3 *ray_origin,
                            Collision *out_collision, uint *ray_count);
-
+extern "C" void ispc_trace_plane(
+    // Light id
+    uint *id,
+    // light position, up, dir and right vectors
+    vec3 *p_pos, vec3 *p_dir, vec3 *p_up, vec3 *p_right,
+    // Normalized ray direction and world space ray origin
+    vec3 *ray_dirs, vec3 *ray_origins,
+    // An array of collisions to write to
+    Collision *out_collision, uint *ray_count);
 struct JobDesc {
   uint offset, size;
 };
@@ -343,17 +351,17 @@ struct PT_Manager {
       updated = true;
     }
     void add_value(u32 x, u32 y, vec4 val) {
-      // std::scoped_lock<std::mutex> sl(mutex);
+      std::scoped_lock<std::mutex> sl(mutex);
       updated = true;
       data[x + y * width] += val;
     }
     void add_normal(u32 x, u32 y, vec3 val) {
-      // std::scoped_lock<std::mutex> sl(mutex);
+      std::scoped_lock<std::mutex> sl(mutex);
       updated = true;
       normals[x + y * width] += vec4(val, 1.0f);
     }
     void add_albedo(u32 x, u32 y, vec3 val) {
-      // std::scoped_lock<std::mutex> sl(mutex);
+      std::scoped_lock<std::mutex> sl(mutex);
       updated = true;
       albedo[x + y * width] += vec4(val, 1.0f);
     }
@@ -619,8 +627,6 @@ struct PT_Manager {
     }
 
     const u32 LIGHT_FLAG = 1u << 31u;
-    const u32 LIGHT_ID_MASK = (1u << 20u) - 1u;
-    const u32 LIGHT_TYPE_MASK = 1u << 31u;
     if (trace_ispc) {
       u32 jobs_sofar = max_jobs_per_iter;
       if (ray_jobs.size() < max_jobs_per_iter) {
@@ -666,6 +672,18 @@ struct PT_Manager {
                             &ispc_packed_ug, (void *)&node.positions_flat[0],
                             (uint *)&node.indices[0], &ray_dirs[desc.offset],
                             &ray_origins[desc.offset],
+                            &ray_collisions[desc.offset], &_tmp);
+                      }
+                      for (auto &light_id : plane_lights) {
+                        uint fictional_id = light_id | LIGHT_FLAG;
+                        auto &light = scene.light_sources[light_id - 1];
+                        vec3 dir = glm::normalize(glm::cross(
+                            light.plane_light.up, light.plane_light.right));
+                        uint _tmp = desc.size;
+                        ispc_trace_plane(
+                            &fictional_id, &light.plane_light.position, &dir,
+                            &light.plane_light.up, &light.plane_light.right,
+                            &ray_dirs[desc.offset], &ray_origins[desc.offset],
                             &ray_collisions[desc.offset], &_tmp);
                       }
                     },
@@ -725,15 +743,17 @@ struct PT_Manager {
                                    job.weight));
                         }
                       } else if (light.type == Light_Type::PLANE) {
-                        if (min_col.t == FLT_MAX) {
-                          //                          float NoL = std::abs(
-                          //                              dot(normalize(cross(light.plane_light.up,
-                          //                                                  light.plane_light.right)),
-                          //                                            job.ray_dir));
+                        bool is_light = (min_col.mesh_id & LIGHT_FLAG) != 0u;
+                        auto col_light_id = min_col.mesh_id & (LIGHT_FLAG - 1u);
+                        if (is_light && col_light_id == job.light_id) {
                           // Visibility check succeeded
                           path_tracing_image.add_value(
                               job.pixel_x, job.pixel_y,
                               vec4(job.color * light.power, job.weight));
+                        } else {
+                          path_tracing_image.add_value(
+                              job.pixel_x, job.pixel_y,
+                              vec4(0.0f, 0.0f, 0.0f, job.weight));
                         }
                       } else {
                         ASSERT_PANIC(false && "Unsupported ligth type");
@@ -745,6 +765,23 @@ struct PT_Manager {
                         path_tracing_image.add_value(
                             job.pixel_x, job.pixel_y,
                             vec4(0.0f, 0.0f, 0.0f, job.weight));
+                      } else if ((min_col.mesh_id & LIGHT_FLAG) != 0u &&
+                                 job.light_id == 0u) {
+                        u32 light_id = min_col.mesh_id & (LIGHT_FLAG - 1u);
+                        auto &light = scene.light_sources[light_id - 1];
+                        // if (job.depth == 0) {
+                        // For primary rays we add the radiance
+                        path_tracing_image.add_value(
+                            job.pixel_x, job.pixel_y,
+                            vec4(light.power * job.color, 2.0f * job.weight));
+                        //                        } else {
+                        //                          // Terminate
+                        //                          path_tracing_image.add_value(
+                        //                              job.pixel_x,
+                        //                              job.pixel_y, vec4(0.0f,
+                        //                              0.0f, 0.0f,
+                        //                              job.weight));
+                        //                        }
                       } else {
                         auto &node = scene.scene_nodes[min_col.mesh_id - 1];
                         auto face = node.indices[min_col.face_id];
@@ -761,7 +798,7 @@ struct PT_Manager {
                         }
 
                         if (glm::dot(job.ray_dir, vertex.normal) > 0.0f) {
-                          if (job._depth < max_depth + 1) {
+                          if (job._depth < max_depth + 4) {
                             job.ray_origin =
                                 vertex.position + vertex.normal * 1.0e-3f;
                             job._depth += 1;
@@ -827,47 +864,52 @@ struct PT_Manager {
                                 //                                (frand.rand_unit_float()
                                 //                                > 0.5f) {
                                 (Ks > frand.rand_unit_float()) {
-                              // Sample GGX half normal and get the PDF
-                              vec3 brdf = vec3(0.0f);
-                              vec3 L =
-                                  sample_ggx(xi, N, V, F0, roughness, brdf);
-                              float NoL = saturate(dot(N, L));
-                              // Means that the reflected ray is under surface
-                              // Should we multiscatter/absorb/reroll?
-                              if (NoL > 0.0f) {
-                                auto new_job = job;
-                                new_job.ray_dir = L;
-                                new_job.ray_origin =
-                                    vertex.position + vertex.normal * 1.0e-3f;
-                                new_job.weight *= 1.0f / secondary_N;
-                                new_job.light_id = 0;
-                                new_job.depth += 1;
-                                new_job._depth += 1;
-                                new_job.color =
-                                    (1.0f / Ks) * (brdf * job.color);
-                                // #Debug
-                                if (path_tracing_camera._grab_path) {
-                                  path_tracing_camera.push_debug_line(
-                                      new_job.ray_origin,
-                                      new_job.ray_origin + normal * 1.0f);
-                                  path_tracing_camera.push_debug_line(
-                                      new_job.ray_origin,
-                                      new_job.ray_origin +
-                                          vertex.normal * 1.0f);
-                                  path_tracing_camera.push_debug_line(
-                                      new_job.ray_origin,
-                                      new_job.ray_origin +
-                                          vertex.binormal * 1.0f);
-                                  path_tracing_camera.push_debug_line(
-                                      new_job.ray_origin,
-                                      new_job.ray_origin +
-                                          vertex.tangent * 1.0f);
-                                  path_tracing_camera.push_debug_line(
-                                      job.ray_origin, new_job.ray_origin);
+                              // Spawn a GI ray
+                              {
+                                vec3 brdf = vec3(0.0f);
+                                vec3 L =
+                                    sample_ggx(xi, N, V, F0, roughness, brdf);
+                                float NoL = saturate(dot(N, L));
+                                // Means that the reflected ray is under surface
+                                // Should we multiscatter/absorb/reroll?
+                                if (NoL > 0.0f) {
+                                  auto new_job = job;
+                                  new_job.ray_dir = L;
+                                  new_job.ray_origin =
+                                      vertex.position + vertex.normal * 1.0e-3f;
+                                  new_job.weight *= 1.0f / secondary_N;
+                                  new_job.light_id = 0;
+                                  new_job.depth += 1;
+                                  new_job._depth += 1;
+                                  new_job.color =
+                                      (1.0f / Ks) * (brdf * job.color);
+                                  // #Debug
+                                  if (path_tracing_camera._grab_path) {
+                                    path_tracing_camera.push_debug_line(
+                                        new_job.ray_origin,
+                                        new_job.ray_origin + normal * 1.0f);
+                                    path_tracing_camera.push_debug_line(
+                                        new_job.ray_origin,
+                                        new_job.ray_origin +
+                                            vertex.normal * 1.0f);
+                                    path_tracing_camera.push_debug_line(
+                                        new_job.ray_origin,
+                                        new_job.ray_origin +
+                                            vertex.binormal * 1.0f);
+                                    path_tracing_camera.push_debug_line(
+                                        new_job.ray_origin,
+                                        new_job.ray_origin +
+                                            vertex.tangent * 1.0f);
+                                    path_tracing_camera.push_debug_line(
+                                        job.ray_origin, new_job.ray_origin);
+                                  }
+                                  path_tracing_queue.enqueue(new_job);
+                                } else {
+                                  path_tracing_image.add_value(
+                                      job.pixel_x, job.pixel_y,
+                                      vec4(0.0f, 0.0f, 0.0f, job.weight));
+                                  // @TODO: Decide what to do here
                                 }
-                                path_tracing_queue.enqueue(new_job);
-                              } else {
-                                // @TODO: Decide what to do here
                               }
                               // Spawn specular light rays
                               {
@@ -912,17 +954,27 @@ struct PT_Manager {
 
                                   new_job.ray_origin =
                                       vertex.position + vertex.normal * 1.0e-3f;
-                                  vec2 xi =
-                                      frand
-                                          .random_halton(); // vec2(frand.rand_unit_float(),
-                                  //                                                 frand.rand_unit_float());
-                                  xi = xi * 2.0f - vec2(1.0f);
-                                  vec3 L = glm::normalize(
-                                      (light.plane_light.position +
-                                       light.plane_light.up * xi.y +
-                                       light.plane_light.right * xi.x) -
-                                      new_job.ray_origin);
+
+                                  vec3 L, brdf;
+                                  if (true) { //(frand.rand_unit_float() <
+                                              // roughness) {
+                                    vec2 xi = vec2(frand.rand_unit_float(),
+                                                   frand.rand_unit_float());
+                                    xi = xi * 2.0f - vec2(1.0f);
+                                    L = glm::normalize(
+                                        (light.plane_light.position +
+                                         light.plane_light.up * xi.y +
+                                         light.plane_light.right * xi.x) -
+                                        new_job.ray_origin);
+                                    brdf = eval_ggx(N, V, L, roughness, F0);
+                                  } else {
+                                    vec2 xi = vec2(frand.rand_unit_float(),
+                                                   frand.rand_unit_float());
+                                    L = sample_ggx(xi, N, V, F0, roughness,
+                                                   brdf);
+                                  }
                                   float NoL = saturate(glm::dot(L, N));
+
                                   vec3 points[4] = {
                                       light.plane_light.position -
                                           light.plane_light.up -
@@ -941,8 +993,6 @@ struct PT_Manager {
                                       N, V, vertex.position, points);
                                   if (NoL > 0.0f && solid_angle > 0.0f) {
                                     new_job.ray_dir = L;
-                                    vec3 brdf =
-                                        eval_ggx(N, V, L, roughness, F0);
                                     new_job.weight = 0.0f;
                                     new_job.light_id = light_id;
                                     new_job.depth += 1;
@@ -964,48 +1014,54 @@ struct PT_Manager {
                               }
                             } else {
                               // Lambertian diffuse
-                              vec3 up = abs(normal.y) < 0.999
-                                            ? vec3(0.0, 1.0, 0.0)
-                                            : vec3(0.0, 0.0, 1.0);
-                              vec3 tangent =
-                                  glm::normalize(glm::cross(up, normal));
-                              vec3 binormal = glm::cross(tangent, normal);
-                              tangent = glm::cross(binormal, normal);
-                              auto new_job = job;
-                              // Cosine biased sampling
-                              vec3 rand = SampleHemisphere_Cosinus(xi);
 
-                              new_job.ray_dir = glm::normalize(
-                                  tangent * rand.x + binormal * rand.y +
-                                  normal * rand.z);
-                              new_job.ray_origin =
-                                  vertex.position + vertex.normal * 1.0e-3f;
-                              new_job.weight *= 1.0f / secondary_N;
-                              new_job.light_id = 0;
-                              new_job.depth += 1;
-                              new_job._depth += 1;
-                              new_job.color = (1.0f / Kd) * vec3(albedo) *
-                                              (1.0f - DIELECTRIC_SPECULAR) *
-                                              (1.0f - metalness) * job.color;
-                              // #Debug
-                              if (path_tracing_camera._grab_path) {
-                                path_tracing_camera.push_debug_line(
-                                    new_job.ray_origin,
-                                    new_job.ray_origin + normal * 1.0f);
-                                path_tracing_camera.push_debug_line(
-                                    new_job.ray_origin,
-                                    new_job.ray_origin + vertex.normal * 1.0f);
-                                path_tracing_camera.push_debug_line(
-                                    new_job.ray_origin,
-                                    new_job.ray_origin +
-                                        vertex.binormal * 1.0f);
-                                path_tracing_camera.push_debug_line(
-                                    new_job.ray_origin,
-                                    new_job.ray_origin + vertex.tangent * 1.0f);
-                                path_tracing_camera.push_debug_line(
-                                    job.ray_origin, new_job.ray_origin);
+                              // Spawn GI diffuse ray
+                              {
+                                vec3 up = abs(normal.y) < 0.999
+                                              ? vec3(0.0, 1.0, 0.0)
+                                              : vec3(0.0, 0.0, 1.0);
+                                vec3 tangent =
+                                    glm::normalize(glm::cross(up, normal));
+                                vec3 binormal = glm::cross(tangent, normal);
+                                tangent = glm::cross(binormal, normal);
+                                auto new_job = job;
+                                // Cosine biased sampling
+                                vec3 rand = SampleHemisphere_Cosinus(xi);
+
+                                new_job.ray_dir = glm::normalize(
+                                    tangent * rand.x + binormal * rand.y +
+                                    normal * rand.z);
+                                new_job.ray_origin =
+                                    vertex.position + vertex.normal * 1.0e-3f;
+                                new_job.weight *= 1.0f / secondary_N;
+                                new_job.light_id = 0;
+                                new_job.depth += 1;
+                                new_job._depth += 1;
+                                new_job.color = (1.0f / Kd) * vec3(albedo) *
+                                                (1.0f - DIELECTRIC_SPECULAR) *
+                                                (1.0f - metalness) * job.color;
+                                // #Debug
+                                if (path_tracing_camera._grab_path) {
+                                  path_tracing_camera.push_debug_line(
+                                      new_job.ray_origin,
+                                      new_job.ray_origin + normal * 1.0f);
+                                  path_tracing_camera.push_debug_line(
+                                      new_job.ray_origin,
+                                      new_job.ray_origin +
+                                          vertex.normal * 1.0f);
+                                  path_tracing_camera.push_debug_line(
+                                      new_job.ray_origin,
+                                      new_job.ray_origin +
+                                          vertex.binormal * 1.0f);
+                                  path_tracing_camera.push_debug_line(
+                                      new_job.ray_origin,
+                                      new_job.ray_origin +
+                                          vertex.tangent * 1.0f);
+                                  path_tracing_camera.push_debug_line(
+                                      job.ray_origin, new_job.ray_origin);
+                                }
+                                path_tracing_queue.enqueue(new_job);
                               }
-                              path_tracing_queue.enqueue(new_job);
                               // Spawn diffuse light rays
                               {
                                 for (auto &point_light_id : point_lights) {
@@ -1050,10 +1106,8 @@ struct PT_Manager {
 
                                 new_job.ray_origin =
                                     vertex.position + vertex.normal * 1.0e-3f;
-                                vec2 xi =
-                                    frand
-                                        .random_halton(); // vec2(frand.rand_unit_float(),
-                                //                                               frand.rand_unit_float());
+                                vec2 xi = vec2(frand.rand_unit_float(),
+                                               frand.rand_unit_float());
                                 xi = xi * 2.0f - vec2(1.0f);
                                 vec3 L = glm::normalize(
                                     (light.plane_light.position +
@@ -1088,13 +1142,13 @@ struct PT_Manager {
                                        (1.0f - metalness) * job.color);
                                   path_tracing_queue.enqueue(new_job);
                                   // #Debug
-                                    if (path_tracing_camera._grab_path) {
+                                  if (path_tracing_camera._grab_path) {
 
-                                      path_tracing_camera.push_debug_line(
+                                    path_tracing_camera.push_debug_line(
 
-                                          new_job.ray_origin,
-                                          new_job.ray_origin + L * 100.0f);
-                                    }
+                                        new_job.ray_origin,
+                                        new_job.ray_origin + L * 100.0f);
+                                  }
                                 }
                               }
                             }

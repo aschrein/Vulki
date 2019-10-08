@@ -123,6 +123,11 @@ target_include_directories(test_5 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui 
 target_link_libraries(test_5 ${Vulkan_LIBRARY} ${LIBS})
 target_link_libraries(test_5 PRIVATE shaderc_shared)
 
+add_executable(test_6 tests/test_6.cpp kernel.o ${SOURCE} ${3RD_SOURCE} ${CMAKE_BINARY_DIR}/shaders/shaders.h)
+target_include_directories(test_6 PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)
+target_link_libraries(test_6 ${Vulkan_LIBRARY} ${LIBS})
+target_link_libraries(test_6 PRIVATE shaderc_shared)
+
 ##########################
 
 
