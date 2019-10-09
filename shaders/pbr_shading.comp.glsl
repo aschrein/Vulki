@@ -30,6 +30,7 @@ layout(set = 1, binding = 0, std140) uniform UBO {
   uint mask;
   uint point_lights_count;
   uint plane_lights_count;
+  uint dir_lights_count;
 } g_ubo;
 
 const uint DISPLAY_GIZMO = 1;
@@ -57,6 +58,15 @@ struct Plane_Light {
 // Really it's an array of Plane_Light
 layout(set = 1, binding = 3) buffer PlaneLightList { vec4 data[]; }
 g_plane_light_list;
+
+struct Dir_Light {
+  vec4 dir;
+  vec4 power;
+};
+
+// Really it's an array of Dir_Light
+layout(set = 1, binding = 4) buffer DirLightList { vec4 data[]; }
+g_dir_light_list;
 
 #define PI 3.141592
 
@@ -382,6 +392,25 @@ void main() {
                     NoL * albedo * power / (dist * dist);
           // Specular
           color += brdf * power / (dist * dist);
+        }
+      }
+    }
+
+    if (g_ubo.dir_lights_count > 0) {
+      for (uint dir_light_id = 0u;
+                dir_light_id < g_ubo.dir_lights_count;
+                dir_light_id++) {
+        vec3 ldir = g_dir_light_list.data[dir_light_id * 2].xyz;
+        vec3 power = g_dir_light_list.data[dir_light_id * 2 + 1].xyz;
+        vec3 L = -ldir;
+        float NoL = clamp(dot(N, L), 0.0, 1.0);
+        if (NoL > 0.0f) {
+          vec3 brdf = eval_ggx(N, V, L, roughness, F0);
+          // Diffuse
+          color += (1.0 - DIELECTRIC_SPECULAR) * (1.0 - metalness) *
+                    NoL * albedo * power;
+          // Specular
+          color += brdf * power;
         }
       }
     }

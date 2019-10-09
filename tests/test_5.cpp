@@ -74,18 +74,24 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
 
   //  scene.load_env("spheremaps/lythwood_field.hdr");
   scene.init_black_env();
-//  scene.load_model("models/demon_in_thought_3d_print/scene.gltf");
-  scene.load_model("models/MetalRoughSpheres/MetalRoughSpheres.gltf");
+  //  scene.load_model("models/demon_in_thought_3d_print/scene.gltf");
+//  scene.load_model("models/MetalRoughSpheres/MetalRoughSpheres.gltf");
+  scene.load_model("models/cornel.gltf");
   scene.push_light(Light_Source{
       .type = Light_Type::PLANE,
-      .power = vec3(5.0f, 7.5f, 8.7f),
-      .plane_light = Plane_Light{.position = vec3(0.0f),
-                                 .up = vec3(0.0f, 15.0f, 0.0f),
+      .power = vec3(2.2f, 2.2f, 2.2f),
+      .plane_light = Plane_Light{.position = vec3(24.3f, 13.2f, 1.2f),
+                                 .up = vec3(0.0f, 10.0f, 0.0f),
                                  .right = vec3(0.0f, 0.0f, 10.0f)}});
   scene.push_light(Light_Source{
       .type = Light_Type::POINT,
-      .power = 5.0f * vec3(1700.0f, 1500.0f, 1000.0f),
-      .point_light = Point_Light{.position = vec3(0.0f, 100.0f, 0.0f)}});
+      .power = 5.0f * vec3(10.0f, 10.0f, 10.0f),
+      .point_light = Point_Light{.position = vec3(-1.4f, -12.1f, 11.6f)}});
+  scene.push_light(Light_Source{
+      .type = Light_Type::DIRECTIONAL,
+      .power = vec3(3.0f, 2.6f, 2.1f),
+      .dir_light = Direction_Light{
+          .direction = glm::normalize(vec3(-0.5f, -0.8f, -0.2f))}});
   iterate_folder("models/", model_filenames, ".gltf");
   iterate_folder("spheremaps/", env_filenames, ".hdr");
   gizmo_layer.camera.update();
@@ -192,6 +198,10 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     ImGui::Checkbox("Display Wire", &display_wire);
     ImGui::Checkbox("Use ISPC", &pt_manager.trace_ispc);
     ImGui::Checkbox("Use MT", &pt_manager.use_jobs);
+    if (ImGui::TreeNode("Scene nodes")) {
+      ito(scene.light_sources.size()) scene.light_sources[i].imgui_edit(i);
+      ImGui::TreePop();
+    }
     // Select in the list of named images available for display
     auto images = gu.get_img_list();
 
@@ -278,6 +288,10 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     vec4 position;
     vec4 power;
   };
+  struct GPU_Dir_Light {
+    vec4 dir;
+    vec4 power;
+  };
   struct GPU_Plane_Light {
     vec4 position;
     vec4 up;
@@ -286,9 +300,11 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   };
   std::vector<GPU_Point_Light> point_lights;
   std::vector<GPU_Plane_Light> plane_lights;
+  std::vector<GPU_Dir_Light> dir_lights;
   gu.run_loop([&] {
     point_lights.clear();
     plane_lights.clear();
+    dir_lights.clear();
     ito(scene.light_sources.size()) {
       auto &light = scene.light_sources[i];
       if (light.type == Light_Type::POINT) {
@@ -306,6 +322,9 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
         gizmo_layer.push_line_plane(light.plane_light.position,
                                     light.plane_light.up,
                                     light.plane_light.right, light.power);
+      } else if (light.type == Light_Type::DIRECTIONAL) {
+        dir_lights.push_back({.dir = vec4(light.dir_light.direction, 0.0f),
+                              .power = vec4(light.power, 0.0f)});
       }
     }
 
@@ -519,6 +538,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
 
           u32 point_lights_buffer_id = 0u;
           u32 plane_lights_buffer_id = 0u;
+          u32 dir_lights_buffer_id = 0u;
           if (point_lights.size()) {
             point_lights_buffer_id = gu.create_buffer(
                 render_graph::Buffer{
@@ -535,9 +555,18 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                 &plane_lights[0]);
             gu.bind_resource("PlaneLightList", plane_lights_buffer_id);
           }
+          if (dir_lights.size()) {
+            dir_lights_buffer_id = gu.create_buffer(
+                render_graph::Buffer{
+                    .usage_bits = vk::BufferUsageFlagBits::eStorageBuffer,
+                    .size = u32(dir_lights.size() * sizeof(dir_lights[0]))},
+                &dir_lights[0]);
+            gu.bind_resource("DirLightList", dir_lights_buffer_id);
+          }
           sh_pbr_shading_comp::UBO ubo{};
           ubo.point_lights_count = point_lights.size();
           ubo.plane_lights_count = plane_lights.size();
+          ubo.dir_lights_count = dir_lights.size();
           ubo.camera_up = gizmo_layer.camera.up;
           ubo.camera_pos = gizmo_layer.camera.pos;
           ubo.camera_right = gizmo_layer.camera.right;
@@ -581,6 +610,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
             gu.release_resource(point_lights_buffer_id);
           if (plane_lights_buffer_id)
             gu.release_resource(plane_lights_buffer_id);
+          if (dir_lights_buffer_id)
+            gu.release_resource(dir_lights_buffer_id);
         });
     u32 bb_miplevels = get_mip_levels(u32(wsize.x), u32(wsize.y));
     gu.create_compute_pass(
