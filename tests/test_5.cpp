@@ -75,18 +75,20 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   //  scene.load_env("spheremaps/lythwood_field.hdr");
   scene.init_black_env();
   //  scene.load_model("models/demon_in_thought_3d_print/scene.gltf");
-//  scene.load_model("models/MetalRoughSpheres/MetalRoughSpheres.gltf");
+  //  scene.load_model("models/MetalRoughSpheres/MetalRoughSpheres.gltf");
   scene.load_model("models/cornel.gltf");
   scene.push_light(Light_Source{
       .type = Light_Type::PLANE,
-      .power = vec3(2.2f, 2.2f, 2.2f),
+      .power = vec3(0.0f),//vec3(2.2f, 2.2f, 2.2f),
       .plane_light = Plane_Light{.position = vec3(24.3f, 13.2f, 1.2f),
                                  .up = vec3(0.0f, 10.0f, 0.0f),
                                  .right = vec3(0.0f, 0.0f, 10.0f)}});
   scene.push_light(Light_Source{
       .type = Light_Type::POINT,
-      .power = 5.0f * vec3(10.0f, 10.0f, 10.0f),
+      .power = vec3(0.0f),//5.0f * vec3(10.0f, 10.0f, 10.0f),
       .point_light = Point_Light{.position = vec3(-1.4f, -12.1f, 11.6f)}});
+  // @Cleanup
+  const u32 sun_id = 2;
   scene.push_light(Light_Source{
       .type = Light_Type::DIRECTIONAL,
       .power = vec3(3.0f, 2.6f, 2.1f),
@@ -284,6 +286,62 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
       traverse_node(child_id);
     }
   };
+  // Light propagation volume
+  struct LPV {
+    // AABB
+    vec3 volume_min, volume_max, volume_cell_size;
+    u32 volume_width, volume_height, volume_depth;
+    // Reflective shadow map
+    u32 rsm_size;
+    // Camera config
+    float nearz, farz;
+    float width, height;
+    // Sun
+    u32 dir_light_id;
+    mat4 sun_proj, sun_view;
+    // Scaled:
+    vec3 rsm_y;
+    vec3 rsm_x;
+    vec3 rsm_z;
+    vec3 rsm_pos;
+  } lpv = {};
+
+  {
+    lpv.volume_width = 32;
+    lpv.volume_height = 32;
+    lpv.volume_depth = 32;
+    lpv.dir_light_id = sun_id;
+    lpv.farz = 200.0f;
+    lpv.nearz = 0.0f;
+    lpv.width = 70.0f;
+    lpv.height = 70.0f;
+    lpv.volume_min = vec3(-32.0f);
+    lpv.volume_max = vec3(32.0f);
+    lpv.volume_cell_size = (lpv.volume_max - lpv.volume_min) / 32.0f;
+  }
+  auto update_lpv_state = [&] {
+    lpv.sun_proj = mat4(1.0f);
+    lpv.sun_proj[0][0] = 1.0f / lpv.width;
+    lpv.sun_proj[1][1] = 1.0f / lpv.height;
+    lpv.sun_proj[2][2] = 1.0f / lpv.farz;
+    auto &dir_light = scene.get_ligth(lpv.dir_light_id).dir_light;
+    vec3 light_pos = -100.f * dir_light.direction;
+    vec3 up = std::abs(dir_light.direction.y) > 0.99f ? vec3(0.0f, 0.0f, 1.0f)
+                                                      : vec3(0.0f, 1.0f, 0.0f);
+    vec3 light_right = -glm::normalize(glm::cross(dir_light.direction, up));
+    vec3 light_up = -glm::cross(light_right, dir_light.direction);
+    lpv.rsm_y = light_up * lpv.height;
+    lpv.rsm_x = light_right * lpv.width;
+    lpv.rsm_z = dir_light.direction * lpv.farz;
+    lpv.rsm_pos = light_pos;
+    lpv.sun_view = glm::transpose(
+        mat4(light_right.x, light_right.y, light_right.z,
+             -dot(light_pos, light_right), light_up.x, light_up.y, light_up.z,
+             -dot(light_pos, light_up), dir_light.direction.x,
+             dir_light.direction.y, dir_light.direction.z,
+             -dot(light_pos, dir_light.direction), 0.0f, 0.0f, 0.0f, 1.0f));
+  };
+  // @TODO: Derive structures from shader reflection
   struct GPU_Point_Light {
     vec4 position;
     vec4 power;
@@ -302,6 +360,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   std::vector<GPU_Plane_Light> plane_lights;
   std::vector<GPU_Dir_Light> dir_lights;
   gu.run_loop([&] {
+    update_lpv_state();
     point_lights.clear();
     plane_lights.clear();
     dir_lights.clear();
@@ -323,8 +382,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                                     light.plane_light.up,
                                     light.plane_light.right, light.power);
       } else if (light.type == Light_Type::DIRECTIONAL) {
-        dir_lights.push_back({.dir = vec4(light.dir_light.direction, 0.0f),
-                              .power = vec4(light.power, 0.0f)});
+        dir_lights.push_back({.dir = vec4(light.dir_light.direction, 1.0f),
+                              .power = vec4(light.power, 5.0f)});
       }
     }
 
@@ -336,6 +395,88 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     pt_manager.path_tracing_iteration(scene);
     u32 spheremap_mip_levels =
         get_mip_levels(scene.spheremap.width, scene.spheremap.height);
+    gu.create_compute_pass(
+        "LPV_pass", {"sun_rsm.radiant_flux", "sun_rsm.normal", "sun_rsm.depth"},
+        {
+            render_graph::Resource{
+                .name = "LPV.R",
+                .type = render_graph::Type::Image,
+                .image_info =
+                    render_graph::Image{.format =
+                                            vk::Format::eR16G16B16A16Sfloat,
+                                        .use = render_graph::Use::UAV,
+                                        .width = lpv.volume_width,
+                                        .height = lpv.volume_height,
+                                        .depth = lpv.volume_depth,
+                                        .levels = 1,
+                                        .layers = 1}},
+            render_graph::Resource{
+                .name = "LPV.G",
+                .type = render_graph::Type::Image,
+                .image_info =
+                    render_graph::Image{.format =
+                                            vk::Format::eR16G16B16A16Sfloat,
+                                        .use = render_graph::Use::UAV,
+                                        .width = lpv.volume_width,
+                                        .height = lpv.volume_height,
+                                        .depth = lpv.volume_depth,
+                                        .levels = 1,
+                                        .layers = 1}},
+            render_graph::Resource{
+                .name = "LPV.B",
+                .type = render_graph::Type::Image,
+                .image_info =
+                    render_graph::Image{.format =
+                                            vk::Format::eR16G16B16A16Sfloat,
+                                        .use = render_graph::Use::UAV,
+                                        .width = lpv.volume_width,
+                                        .height = lpv.volume_height,
+                                        .depth = lpv.volume_depth,
+                                        .levels = 1,
+                                        .layers = 1}},
+
+        },
+        [&] {
+          sh_lpv_comp::UBO ubo{};
+          ubo.lpv_min = lpv.volume_min;
+          ubo.lpv_max = lpv.volume_max;
+          ubo.lpv_cell_size = lpv.volume_cell_size;
+          ubo.lpv_size =
+              uvec3(lpv.volume_width, lpv.volume_height, lpv.volume_depth);
+          ubo.rsm_x = lpv.rsm_x;
+          ubo.rsm_y = lpv.rsm_y;
+          ubo.rsm_z = lpv.rsm_z;
+          ubo.rsm_pos = lpv.rsm_pos;
+          ubo.rsm_viewproj = lpv.sun_proj * lpv.sun_view;
+          u32 buf_id = gu.create_buffer(
+              render_graph::Buffer{.usage_bits =
+                                       vk::BufferUsageFlagBits::eUniformBuffer,
+                                   .size = u32(sizeof(ubo))},
+              &ubo);
+          gu.bind_resource("UBO", buf_id);
+          gu.bind_resource("LPV_R", "LPV.R");
+          gu.bind_resource("LPV_G", "LPV.G");
+          gu.bind_resource("LPV_B", "LPV.B");
+          gu.bind_resource("rsm_radiant_flux", "sun_rsm.radiant_flux");
+          gu.bind_resource("rsm_normal", "sun_rsm.normal");
+          gu.bind_resource("rsm_depth", "sun_rsm.depth");
+          gu.bind_resource("s_LPV_R", "LPV.R");
+          gu.bind_resource("s_LPV_G", "LPV.G");
+          gu.bind_resource("s_LPV_B", "LPV.B");
+
+          gu.CS_set_shader("lpv.comp.glsl");
+          // Injection
+          gu.dispatch((lpv.volume_width + 7) / 8, (lpv.volume_height + 7) / 8,
+                      (lpv.volume_depth + 7) / 8);
+
+          gu.CS_set_shader("lpv_prop.comp.glsl");
+          // Propagation
+
+          ito(32)
+            gu.dispatch((lpv.volume_width + 7) / 8, (lpv.volume_height + 7) / 8,
+                        (lpv.volume_depth + 7) / 8);
+          gu.release_resource(buf_id);
+        });
     gu.create_compute_pass(
         "init_pass", {},
         {
@@ -521,7 +662,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
         "shading",
         {"g_pass.albedo", "g_pass.normal", "g_pass.metal", "depth_mips",
          "~shading.HDR", "IBL.specular", "IBL.LUT", "IBL.diffuse",
-         "g_pass.gizmo"},
+         "g_pass.gizmo", "LPV.R", "LPV.G", "LPV.B"},
         {render_graph::Resource{
             .name = "shading.HDR",
             .type = render_graph::Type::Image,
@@ -563,6 +704,13 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                 &dir_lights[0]);
             gu.bind_resource("DirLightList", dir_lights_buffer_id);
           }
+          mat4 sun_viewproj = lpv.sun_proj * lpv.sun_view;
+          u32 matrixlist_buffer_id = gu.create_buffer(
+              render_graph::Buffer{.usage_bits =
+                                       vk::BufferUsageFlagBits::eStorageBuffer,
+                                   .size = u32(1 * sizeof(mat4))},
+              &sun_viewproj);
+          gu.bind_resource("MatrixList", matrixlist_buffer_id);
           sh_pbr_shading_comp::UBO ubo{};
           ubo.point_lights_count = point_lights.size();
           ubo.plane_lights_count = plane_lights.size();
@@ -584,6 +732,10 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           ubo.mask = 0;
           ubo.mask |= display_gizmo_layer ? DISPLAY_GIZMO : 0;
           ubo.mask |= enable_ao ? DISPLAY_AO : 0;
+          ubo.lpv_max = lpv.volume_max;
+          ubo.lpv_min = lpv.volume_min;
+          ubo.lpv_cell_size = lpv.volume_cell_size;
+
           u32 ubo_id = gu.create_buffer(
               render_graph::Buffer{.usage_bits =
                                        vk::BufferUsageFlagBits::eUniformBuffer,
@@ -603,6 +755,10 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.bind_resource("textures", "IBL.LUT", 2);
           gu.bind_resource("textures", ltc_invm_id, 3);
           gu.bind_resource("textures", ltc_amp_id, 4);
+          gu.bind_resource("textures", "sun_rsm.depth", 5);
+          gu.bind_resource("g_lpv_r", "LPV.R");
+          gu.bind_resource("g_lpv_g", "LPV.G");
+          gu.bind_resource("g_lpv_b", "LPV.B");
           gu.CS_set_shader("pbr_shading.comp.glsl");
           gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
           gu.release_resource(ubo_id);
@@ -677,7 +833,65 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.CS_set_shader("linearize_depth.comp.glsl");
           gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
         });
+    gu.create_render_pass(
+        "sun_rsm", {},
+        {
+            render_graph::Resource{
+                .name = "sun_rsm.radiant_flux",
+                .type = render_graph::Type::RT,
+                .rt_info =
+                    render_graph::RT{.format = vk::Format::eR32G32B32A32Sfloat,
+                                     .target =
+                                         render_graph::Render_Target::Color}},
 
+            render_graph::Resource{
+                .name = "sun_rsm.normal",
+                .type = render_graph::Type::RT,
+                .rt_info =
+                    render_graph::RT{.format = vk::Format::eR32G32B32A32Sfloat,
+                                     .target =
+                                         render_graph::Render_Target::Color}},
+            render_graph::Resource{
+                .name = "sun_rsm.depth",
+                .type = render_graph::Type::RT,
+                .rt_info =
+                    render_graph::RT{.format = vk::Format::eD32Sfloat,
+                                     .target =
+                                         render_graph::Render_Target::Depth}},
+
+        },
+        2048, 2048, [&] {
+          gu.clear_color({0.0f, 0.0f, 0.0f, 0.0f});
+          gu.clear_depth(1.0f);
+          gu.VS_set_shader("glrf.rsm.vert.glsl");
+          gu.PS_set_shader("rsm.frag.glsl");
+          auto &dir_light = scene.get_ligth(lpv.dir_light_id).dir_light;
+          sh_glrf_rsm_vert::UBO ubo{};
+          ubo.proj = lpv.sun_proj;
+          ubo.view = lpv.sun_view;
+
+          ubo.L = -dir_light.direction;
+          ubo.power = scene.get_ligth(lpv.dir_light_id).power;
+          u32 ubo_id = gu.create_buffer(
+              render_graph::Buffer{.usage_bits =
+                                       vk::BufferUsageFlagBits::eUniformBuffer,
+                                   .size = sizeof(ubo)},
+              &ubo);
+          gu.bind_resource("UBO", ubo_id);
+          gu.IA_set_topology(vk::PrimitiveTopology::eTriangleList);
+          gu.IA_set_cull_mode(vk::CullModeFlagBits::eNone,
+                              vk::FrontFace::eClockwise, vk::PolygonMode::eFill,
+                              1.0f);
+          gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual, true,
+                                        1.0f);
+          ito(textures.size()) {
+            auto &tex = textures[i];
+            gu.bind_resource("textures", tex, i);
+          }
+
+          traverse_node(0);
+          gu.release_resource(ubo_id);
+        });
     gu.create_render_pass(
         "g_pass", {},
         {
@@ -784,6 +998,11 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                   ug_lines.push_back(vec3(t.x, t.y, t.z));
                 }
               }
+              UG::push_cube(ug_lines, lpv.volume_min.x, lpv.volume_min.y,
+                            lpv.volume_min.z,
+                            lpv.volume_max.x - lpv.volume_min.x,
+                            lpv.volume_max.y - lpv.volume_min.y,
+                            lpv.volume_max.z - lpv.volume_min.z);
               ito(ug_lines.size() / 2) {
                 gizmo_layer.push_line(ug_lines[i * 2], ug_lines[i * 2 + 1],
                                       vec3(1.0f, 1.0f, 1.0f));

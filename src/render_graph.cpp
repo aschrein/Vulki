@@ -1701,7 +1701,7 @@ struct Graphics_Utils_State {
           img.barrier(cmd, device_wrapper.graphics_queue_family_id,
                       vk::ImageLayout::eGeneral,
                       vk::AccessFlagBits::eShaderRead |
-                          vk::AccessFlagBits::eShaderWrite);
+                          vk::AccessFlagBits::eShaderWrite, true);
         }
         dframe.update_sampled_image_descriptor(pipeline, item.first.first,
                                                _get_view(_view), sampler.get(),

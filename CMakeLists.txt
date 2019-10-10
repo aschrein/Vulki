@@ -27,6 +27,7 @@ if(NOT OpenMP_CXX_FOUND)
     message(FATAL_ERROR "Could not find OpenMP library!")
 endif()
 
+set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 add_definitions(-D_CRT_SECURE_NO_WARNINGS -DGLM_FORCE_DEPTH_ZERO_TO_ONE -fpermissive)
 # -DVULKAN_HPP_NO_EXCEPTIONS -DSPIRV_CROSS_EXCEPTIONS_TO_ASSERTIONS -fno-exceptions
 # @TODO: Disable exceptions
@@ -67,11 +68,6 @@ if(NOT EXISTS ${CMAKE_BINARY_DIR}/shaders)
         )
 endif()
 
-#add_custom_target(
-#    shaders_target ALL
-#    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/__header.h
-#    )
-
 file(GLOB SHADERS "${CMAKE_SOURCE_DIR}/shaders/*")
 message("[DEBUG] Shaders: " ${SHADERS})
 add_custom_command(
@@ -80,10 +76,7 @@ add_custom_command(
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         COMMAND rm -rf ${CMAKE_BINARY_DIR}/shaders && cp -r ${CMAKE_SOURCE_DIR}/shaders ${CMAKE_BINARY_DIR} && cd shaders && echo "" > shaders.h && ${CMAKE_BINARY_DIR}/shader_parser >> shaders.h
     )
-#add_custom_command(
-#    OUTPUT always_rebuild
-#    COMMAND cmake -E echo
-#    )
+
 
 #add_executable(GRAPHICS_EXPERIMENTS main.cpp kernel.o ${SOURCE} ${3RD_SOURCE})
 #target_include_directories(GRAPHICS_EXPERIMENTS PRIVATE ${Vulkan_INCLUDE_DIRS} 3rdparty/imgui ${CMAKE_BINARY_DIR}/shaders)

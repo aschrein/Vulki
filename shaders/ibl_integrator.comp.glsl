@@ -64,7 +64,7 @@ vec2 Hammersley(float i, float numSamples)
 
 vec3 SampleHemisphere_Uniform(float i, float numSamples)
 {
-  vec2 xi = Hammersley(i, numSamples);
+    vec2 xi = Hammersley(i, numSamples);
 
     float phi      = xi.y * 2.0 * PI;
     float cosTheta = 1.0 - xi.x;

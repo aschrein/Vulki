@@ -448,16 +448,16 @@ struct UG {
     put(pos, {radius, radius, radius}, index);
   }
   void put(vec3 const &pos, vec3 const &extent, uint index) {
-    float EPS = 1.0e-5f;
-    if (pos.x > this->max.x + extent.x * (1.0f + EPS) ||
-        pos.y > this->max.y + extent.y * (1.0f + EPS) ||
-        pos.z > this->max.z + extent.z * (1.0f + EPS) ||
-        pos.x < this->min.x - extent.x * (1.0f + EPS) ||
-        pos.y < this->min.y - extent.y * (1.0f + EPS) ||
-        pos.z < this->min.z - extent.z * (1.0f + EPS)) {
-      panic("");
-      return;
-    }
+    float EPS = 1.0e-1f;
+//    if (pos.x > this->max.x + extent.x * (1.0f + EPS) ||
+//        pos.y > this->max.y + extent.y * (1.0f + EPS) ||
+//        pos.z > this->max.z + extent.z * (1.0f + EPS) ||
+//        pos.x < this->min.x - extent.x * (1.0f + EPS) ||
+//        pos.y < this->min.y - extent.y * (1.0f + EPS) ||
+//        pos.z < this->min.z - extent.z * (1.0f + EPS)) {
+//      panic("");
+//      return;
+//    }
     ivec3 min_ids =
         ivec3((pos - min - vec3(EPS, EPS, EPS) - extent) / bin_size);
     ivec3 max_ids =
@@ -557,99 +557,98 @@ struct UG {
         break;
     }
   }
-  void fill_lines_render(std::vector<vec3> &lines) {
-    auto push_cube = [&lines](float bin_idx, float bin_idy, float bin_idz,
-                              float bin_size_x, float bin_size_y,
-                              float bin_size_z) {
-      {
-        const u32 iter_x[] = {0, 0, 1, 1, 0, 0, 1, 1, 0, 0};
-        const u32 iter_y[] = {0, 1, 1, 0, 0, 0, 0, 1, 1, 0};
-        const u32 iter_z[] = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
-        ito(9) {
-          lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i]),
-                               bin_idy + bin_size_y * f32(iter_y[i]),
-                               bin_idz + bin_size_z * f32(iter_z[i])});
-          lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i + 1]),
-                               bin_idy + bin_size_y * f32(iter_y[i + 1]),
-                               bin_idz + bin_size_z * f32(iter_z[i + 1])});
+  static void push_cube(std::vector<vec3> &lines, float bin_idx, float bin_idy,
+                   float bin_idz, float bin_size_x, float bin_size_y,
+                   float bin_size_z){
+      {const u32 iter_x[] = {0, 0, 1, 1, 0, 0, 1, 1, 0, 0};
+  const u32 iter_y[] = {0, 1, 1, 0, 0, 0, 0, 1, 1, 0};
+  const u32 iter_z[] = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
+  ito(9) {
+    lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i]),
+                         bin_idy + bin_size_y * f32(iter_y[i]),
+                         bin_idz + bin_size_z * f32(iter_z[i])});
+    lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i + 1]),
+                         bin_idy + bin_size_y * f32(iter_y[i + 1]),
+                         bin_idz + bin_size_z * f32(iter_z[i + 1])});
+  }
+} {
+  const u32 iter_x[] = {
+      0, 0, 1, 1, 1, 1,
+  };
+  const u32 iter_y[] = {
+      1, 1, 1, 1, 0, 0,
+  };
+  const u32 iter_z[] = {
+      0, 1, 0, 1, 0, 1,
+  };
+  ito(3) {
+    lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i * 2]),
+                         bin_idy + bin_size_y * f32(iter_y[i * 2]),
+                         bin_idz + bin_size_z * f32(iter_z[i * 2])});
+    lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i * 2 + 1]),
+                         bin_idy + bin_size_y * f32(iter_y[i * 2 + 1]),
+                         bin_idz + bin_size_z * f32(iter_z[i * 2 + 1])});
+  }
+}
+}
+;
+void fill_lines_render(std::vector<vec3> &lines) {
+
+  push_cube(lines, min.x, min.y, min.z, max.x - min.x, max.y - min.y, max.z - min.z);
+  for (int dx = 0; dx < bin_count.x; dx++) {
+    for (int dy = 0; dy < bin_count.y; dy++) {
+      for (int dz = 0; dz < bin_count.z; dz++) {
+        const auto flat_id = dx + dy * this->bin_count.x +
+                             dz * this->bin_count.x * this->bin_count.y;
+        const auto bin_id = this->bins_indices[flat_id];
+        if (bin_id != 0) {
+          const auto bin_idx = bin_size * f32(dx) + this->min.x;
+          const auto bin_idy = bin_size * f32(dy) + this->min.y;
+          const auto bin_idz = bin_size * f32(dz) + this->min.z;
+          push_cube(lines, bin_idx, bin_idy, bin_idz, bin_size, bin_size, bin_size);
         }
       }
-      {
-        const u32 iter_x[] = {
-            0, 0, 1, 1, 1, 1,
-        };
-        const u32 iter_y[] = {
-            1, 1, 1, 1, 0, 0,
-        };
-        const u32 iter_z[] = {
-            0, 1, 0, 1, 0, 1,
-        };
-        ito(3) {
-          lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i * 2]),
-                               bin_idy + bin_size_y * f32(iter_y[i * 2]),
-                               bin_idz + bin_size_z * f32(iter_z[i * 2])});
-          lines.push_back(vec3{bin_idx + bin_size_x * f32(iter_x[i * 2 + 1]),
-                               bin_idy + bin_size_y * f32(iter_y[i * 2 + 1]),
-                               bin_idz + bin_size_z * f32(iter_z[i * 2 + 1])});
+    }
+  }
+}
+std::vector<u32> traverse(vec3 const &pos, f32 radius) {
+  if (pos.x > this->max.x + radius || pos.y > this->max.y + radius ||
+      pos.z > this->max.z + radius || pos.x < this->min.x - radius ||
+      pos.y < this->min.y - radius || pos.z < this->min.z - radius) {
+    panic("");
+    return;
+  }
+  ivec3 min_ids = ivec3((pos + min - vec3(radius, radius, radius)) / bin_size);
+  ivec3 max_ids = ivec3((pos + min + vec3(radius, radius, radius)) / bin_size);
+  google::dense_hash_set<u32> set;
+  set.set_empty_key(UINT32_MAX);
+  for (int ix = min_ids.x; ix <= max_ids.x; ix++) {
+    for (int iy = min_ids.y; iy <= max_ids.y; iy++) {
+      for (int iz = min_ids.z; iz <= max_ids.z; iz++) {
+        // Boundary check
+        if (ix < 0 || iy < 0 || iz < 0 || ix >= int(this->bin_count.x) ||
+            iy >= int(this->bin_count.y) || iz >= int(this->bin_count.z)) {
+          continue;
         }
-      }
-    };
-    push_cube(min.x, min.y, min.z, max.x - min.x, max.y - min.y, max.z - min.z);
-    for (int dx = 0; dx < bin_count.x; dx++) {
-      for (int dy = 0; dy < bin_count.y; dy++) {
-        for (int dz = 0; dz < bin_count.z; dz++) {
-          const auto flat_id = dx + dy * this->bin_count.x +
-                               dz * this->bin_count.x * this->bin_count.y;
-          const auto bin_id = this->bins_indices[flat_id];
-          if (bin_id != 0) {
-            const auto bin_idx = bin_size * f32(dx) + this->min.x;
-            const auto bin_idy = bin_size * f32(dy) + this->min.y;
-            const auto bin_idz = bin_size * f32(dz) + this->min.z;
-            push_cube(bin_idx, bin_idy, bin_idz, bin_size, bin_size, bin_size);
+        u32 flat_id = ix + iy * this->bin_count.x +
+                      iz * this->bin_count.x * this->bin_count.y;
+        auto bin_id = this->bins_indices[flat_id];
+        if (bin_id != 0) {
+          for (auto const &item : this->bins[bin_id]) {
+            set.insert(item);
           }
         }
       }
     }
   }
-  std::vector<u32> traverse(vec3 const &pos, f32 radius) {
-    if (pos.x > this->max.x + radius || pos.y > this->max.y + radius ||
-        pos.z > this->max.z + radius || pos.x < this->min.x - radius ||
-        pos.y < this->min.y - radius || pos.z < this->min.z - radius) {
-      panic("");
-      return;
-    }
-    ivec3 min_ids =
-        ivec3((pos + min - vec3(radius, radius, radius)) / bin_size);
-    ivec3 max_ids =
-        ivec3((pos + min + vec3(radius, radius, radius)) / bin_size);
-    google::dense_hash_set<u32> set;
-    set.set_empty_key(UINT32_MAX);
-    for (int ix = min_ids.x; ix <= max_ids.x; ix++) {
-      for (int iy = min_ids.y; iy <= max_ids.y; iy++) {
-        for (int iz = min_ids.z; iz <= max_ids.z; iz++) {
-          // Boundary check
-          if (ix < 0 || iy < 0 || iz < 0 || ix >= int(this->bin_count.x) ||
-              iy >= int(this->bin_count.y) || iz >= int(this->bin_count.z)) {
-            continue;
-          }
-          u32 flat_id = ix + iy * this->bin_count.x +
-                        iz * this->bin_count.x * this->bin_count.y;
-          auto bin_id = this->bins_indices[flat_id];
-          if (bin_id != 0) {
-            for (auto const &item : this->bins[bin_id]) {
-              set.insert(item);
-            }
-          }
-        }
-      }
-    }
-    std::vector<u32> out;
-    out.reserve(set.size());
-    for (auto &i : set)
-      out.push_back(i);
-    return out;
-  }
-};
+  std::vector<u32> out;
+  out.reserve(set.size());
+  for (auto &i : set)
+    out.push_back(i);
+  return out;
+}
+}
+;
 
 struct Pair_Hash {
   u64 operator()(std::pair<u32, u32> const &pair) {

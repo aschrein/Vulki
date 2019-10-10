@@ -8,6 +8,9 @@ layout (set = 0, binding = 3) uniform sampler2D g_normal;
 layout (set = 0, binding = 4) uniform sampler2D g_metal;
 layout (set = 0, binding = 5) uniform sampler2D g_depth;
 layout (set = 0, binding = 6) uniform sampler2D g_gizmo;
+layout (set = 0, binding = 7) uniform sampler3D g_lpv_r;
+layout (set = 0, binding = 8) uniform sampler3D g_lpv_g;
+layout (set = 0, binding = 9) uniform sampler3D g_lpv_b;
 
 layout(set = 2, binding = 0) uniform sampler2D textures[128];
 
@@ -31,13 +34,54 @@ layout(set = 1, binding = 0, std140) uniform UBO {
   uint point_lights_count;
   uint plane_lights_count;
   uint dir_lights_count;
+  vec3 lpv_min;
+  vec3 lpv_max;
+  vec3 lpv_cell_size;
 } g_ubo;
 
+//>>> math.pi/math.sqrt(4.0 * math.pi)
+//0.886226925452758
+//>>> math.sqrt(math.pi/3.0)
+//1.0233267079464885
+
+float eval_sh(vec3 dir, vec4 sh) {
+  vec4 c = vec4(
+    1.0233267079464885,
+    1.0233267079464885,
+    1.0233267079464885,
+    0.886226925452758
+  );
+  return clamp(dot(vec4(dir, 1.0), sh * c), 0.0, 1.0);
+}
+
+vec3 eval_lpv(vec3 pos, vec3 normal) {
+  vec3 rel_pos = pos - g_ubo.lpv_min;
+  vec3 index = rel_pos / (g_ubo.lpv_max - g_ubo.lpv_min);
+  if (
+    index.x >= 0.0 && index.x < 1.0 &&
+    index.y >= 0.0 && index.y < 1.0 &&
+    index.z >= 0.0 && index.z < 1.0
+  ) {
+    vec4 sh_r = texture(g_lpv_r, index.xzy);
+    vec4 sh_g = texture(g_lpv_g, index.xzy);
+    vec4 sh_b = texture(g_lpv_b, index.xzy);
+    return vec3(
+      eval_sh(normal, sh_r),
+      eval_sh(normal, sh_g),
+      eval_sh(normal, sh_b)
+    );
+  }
+  return vec3(0.0f, 0.0f, 0.0f);
+}
+
+// g_ubo.mask flags
 const uint DISPLAY_GIZMO = 1;
 const uint DISPLAY_AO = 2;
+const uint ENABLE_SUN_SHADOW = 4;
+const uint ENABLE_LPV = 8;
 
-layout(set = 1, binding = 1) buffer LightTable { uint data[]; }
-g_light_table;
+layout(set = 1, binding = 1) buffer MatrixList { mat4 data[]; }
+g_matrix_list;
 
 struct Point_Light {
   vec4 position;
@@ -60,8 +104,9 @@ layout(set = 1, binding = 3) buffer PlaneLightList { vec4 data[]; }
 g_plane_light_list;
 
 struct Dir_Light {
-  vec4 dir;
-  vec4 power;
+  vec4 dir_viewproj_id;
+  // forth component is shadow map id
+  vec4 power_shadow_map_id;
 };
 
 // Really it's an array of Dir_Light
@@ -400,17 +445,35 @@ void main() {
       for (uint dir_light_id = 0u;
                 dir_light_id < g_ubo.dir_lights_count;
                 dir_light_id++) {
-        vec3 ldir = g_dir_light_list.data[dir_light_id * 2].xyz;
-        vec3 power = g_dir_light_list.data[dir_light_id * 2 + 1].xyz;
+        vec4 val_0 = g_dir_light_list.data[dir_light_id * 2];
+        vec4 val_1 = g_dir_light_list.data[dir_light_id * 2 + 1];
+        vec3 ldir = val_0.xyz;
+        uint viewproj_id = uint(val_0.w);
+        vec3 power = val_1.xyz;
+        uint shadowmap_id = uint(val_1.w);
+        float visibility = 1.0f;
+        if (viewproj_id > 0) {
+          mat4 viewproj = g_matrix_list.data[viewproj_id - 1];
+          vec4 ls_pos = (viewproj * vec4(pos + normal * 1.0e-1, 1.0));
+          ls_pos = ls_pos / ls_pos.w;
+
+          if (ls_pos.x < 1.0 && ls_pos.x > -1.0 && ls_pos.y < 1.0 && ls_pos.y > -1.0) {
+
+            float light_z = texture(textures[shadowmap_id], ls_pos.xy * 0.5 + 0.5).x;
+            if (light_z < ls_pos.z - 1.0e-3) {
+              visibility = 0.0f;
+            }
+          }
+        }
         vec3 L = -ldir;
         float NoL = clamp(dot(N, L), 0.0, 1.0);
-        if (NoL > 0.0f) {
+        if (NoL > 0.0f && visibility > 0.0) {
           vec3 brdf = eval_ggx(N, V, L, roughness, F0);
           // Diffuse
           color += (1.0 - DIELECTRIC_SPECULAR) * (1.0 - metalness) *
-                    NoL * albedo * power;
+                    NoL * albedo * power * visibility;
           // Specular
-          color += brdf * power;
+          color += brdf * power * visibility;
         }
       }
     }
@@ -455,9 +518,15 @@ void main() {
       }
     }
 
+    // Eval diffuse LPV
+    {
+      color += kD * eval_lpv(pos, -N) * albedo;
+      //vec3 L = reflect(-V, N);
+      //vec3 brdf = eval_ggx(N, V, L, roughness, F0);
+      //color += brdf * eval_lpv(pos, -L);
+    }
     if (debug_depth > 999.0)
        color = vec3(0.5);
-//      color = sample_cubemap(ray_dir, 0.0, IBL_RADIANCE);
     if ((g_ubo.mask & DISPLAY_GIZMO) != 0) {
       vec4 gizmo_value = texelFetch(g_gizmo, ivec2(gl_GlobalInvocationID.xy), 0);
       color = mix(color, gizmo_value.xyz, gizmo_value.a);
