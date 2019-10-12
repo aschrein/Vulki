@@ -77,7 +77,7 @@ vec3 eval_lpv(vec3 pos, vec3 normal) {
 // g_ubo.mask flags
 const uint DISPLAY_GIZMO = 1;
 const uint DISPLAY_AO = 2;
-const uint ENABLE_SUN_SHADOW = 4;
+const uint ENABLE_SHADOW = 4;
 const uint ENABLE_LPV = 8;
 
 layout(set = 1, binding = 1) buffer MatrixList { mat4 data[]; }
@@ -452,7 +452,7 @@ void main() {
         vec3 power = val_1.xyz;
         uint shadowmap_id = uint(val_1.w);
         float visibility = 1.0f;
-        if (viewproj_id > 0) {
+        if ((g_ubo.mask & ENABLE_SHADOW) != 0u && viewproj_id > 0) {
           mat4 viewproj = g_matrix_list.data[viewproj_id - 1];
           vec4 ls_pos = (viewproj * vec4(pos + normal * 1.0e-1, 1.0));
           ls_pos = ls_pos / ls_pos.w;
@@ -519,6 +519,7 @@ void main() {
     }
 
     // Eval diffuse LPV
+    if ((g_ubo.mask & ENABLE_LPV) != 0u)
     {
       color += kD * eval_lpv(pos, -N) * albedo;
       //vec3 L = reflect(-V, N);

@@ -79,13 +79,13 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   scene.load_model("models/cornel.gltf");
   scene.push_light(Light_Source{
       .type = Light_Type::PLANE,
-      .power = vec3(0.0f),//vec3(2.2f, 2.2f, 2.2f),
+      .power = vec3(0.0f), // vec3(2.2f, 2.2f, 2.2f),
       .plane_light = Plane_Light{.position = vec3(24.3f, 13.2f, 1.2f),
                                  .up = vec3(0.0f, 10.0f, 0.0f),
                                  .right = vec3(0.0f, 0.0f, 10.0f)}});
   scene.push_light(Light_Source{
       .type = Light_Type::POINT,
-      .power = vec3(0.0f),//5.0f * vec3(10.0f, 10.0f, 10.0f),
+      .power = vec3(0.0f), // 5.0f * vec3(10.0f, 10.0f, 10.0f),
       .point_light = Point_Light{.position = vec3(-1.4f, -12.1f, 11.6f)}});
   // @Cleanup
   const u32 sun_id = 2;
@@ -122,6 +122,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   bool display_ug = false;
   bool display_wire = false;
   bool denoise = false;
+  bool display_lpv = true;
+  bool display_shadow = true;
   gu.set_on_gui([&] {
     gizmo_layer.on_imgui_begin();
     if (gizmo_layer.mouse_click[0]) {
@@ -196,6 +198,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     ImGui::Checkbox("Gizmo layer", &display_gizmo_layer);
     ImGui::Checkbox("Denoise", &denoise);
     ImGui::Checkbox("Enable Raster AO", &enable_ao);
+    ImGui::Checkbox("Enable LPV", &display_lpv);
+    ImGui::Checkbox("Enable Shadows", &display_shadow);
     ImGui::Checkbox("Display UG", &display_ug);
     ImGui::Checkbox("Display Wire", &display_wire);
     ImGui::Checkbox("Use ISPC", &pt_manager.trace_ispc);
@@ -396,7 +400,9 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     u32 spheremap_mip_levels =
         get_mip_levels(scene.spheremap.width, scene.spheremap.height);
     gu.create_compute_pass(
-        "LPV_pass", {"sun_rsm.radiant_flux", "sun_rsm.normal", "sun_rsm.depth"},
+        "LPV_pass",
+        {"sun_rsm.radiant_flux", "sun_rsm.normal", "sun_rsm.depth", "~LPV.R",
+         "~LPV.G", "~LPV.B"},
         {
             render_graph::Resource{
                 .name = "LPV.R",
@@ -437,6 +443,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
 
         },
         [&] {
+          if (!display_lpv)
+            return;
           sh_lpv_comp::UBO ubo{};
           ubo.lpv_min = lpv.volume_min;
           ubo.lpv_max = lpv.volume_max;
@@ -460,10 +468,12 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.bind_resource("rsm_radiant_flux", "sun_rsm.radiant_flux");
           gu.bind_resource("rsm_normal", "sun_rsm.normal");
           gu.bind_resource("rsm_depth", "sun_rsm.depth");
-          gu.bind_resource("s_LPV_R", "LPV.R");
-          gu.bind_resource("s_LPV_G", "LPV.G");
-          gu.bind_resource("s_LPV_B", "LPV.B");
-
+          gu.bind_resource("s_LPV_R", "~LPV.R");
+          gu.bind_resource("s_LPV_G", "~LPV.G");
+          gu.bind_resource("s_LPV_B", "~LPV.B");
+          gu.bind_resource("n_LPV_R", "LPV.R");
+          gu.bind_resource("n_LPV_G", "LPV.G");
+          gu.bind_resource("n_LPV_B", "LPV.B");
           gu.CS_set_shader("lpv.comp.glsl");
           // Injection
           gu.dispatch((lpv.volume_width + 7) / 8, (lpv.volume_height + 7) / 8,
@@ -471,10 +481,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
 
           gu.CS_set_shader("lpv_prop.comp.glsl");
           // Propagation
-
-          ito(32)
-            gu.dispatch((lpv.volume_width + 7) / 8, (lpv.volume_height + 7) / 8,
-                        (lpv.volume_depth + 7) / 8);
+          gu.dispatch((lpv.volume_width + 7) / 8, (lpv.volume_height + 7) / 8,
+                      (lpv.volume_depth + 7) / 8);
           gu.release_resource(buf_id);
         });
     gu.create_compute_pass(
@@ -729,9 +737,13 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           prev_cam_moved = gizmo_layer.camera_moved;
           const uint DISPLAY_GIZMO = 1;
           const uint DISPLAY_AO = 2;
+          const uint ENABLE_SHADOW = 4;
+          const uint ENABLE_LPV = 8;
           ubo.mask = 0;
           ubo.mask |= display_gizmo_layer ? DISPLAY_GIZMO : 0;
           ubo.mask |= enable_ao ? DISPLAY_AO : 0;
+          ubo.mask |= display_lpv ? ENABLE_LPV : 0;
+          ubo.mask |= display_shadow ? ENABLE_SHADOW : 0;
           ubo.lpv_max = lpv.volume_max;
           ubo.lpv_min = lpv.volume_min;
           ubo.lpv_cell_size = lpv.volume_cell_size;

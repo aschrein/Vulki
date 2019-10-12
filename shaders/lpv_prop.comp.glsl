@@ -6,6 +6,9 @@ layout(set = 0, binding = 2, R16) uniform writeonly image3D LPV_B;
 layout(set = 0, binding = 3) uniform sampler3D s_LPV_R;
 layout(set = 0, binding = 4) uniform sampler3D s_LPV_G;
 layout(set = 0, binding = 5) uniform sampler3D s_LPV_B;
+layout(set = 0, binding = 6) uniform sampler3D n_LPV_R;
+layout(set = 0, binding = 7) uniform sampler3D n_LPV_G;
+layout(set = 0, binding = 8) uniform sampler3D n_LPV_B;
 #extension GL_KHR_shader_subgroup_vote : enable
 #extension GL_KHR_shader_subgroup_shuffle : enable
 
@@ -77,26 +80,26 @@ vec4 load(sampler3D volume, ivec3 index, inout int counter) {
     index.z >= 0 && index.z < dim.z
   ) {
     vec4 val = texelFetch(volume, index, 0);
-    if (length(val) > 1.0e-2) {
+    //if (length(val) > 1.0e-2) {
       counter += 1;
       return val;
-    }
+    //}
   }
   return vec4(0.0, 0.0, 0.0, 0.0);
 }
 
-void propagate(sampler3D volume, writeonly image3D w, ivec3 index) {
+void propagate(sampler3D cur_volume, sampler3D volume, writeonly image3D w, ivec3 index) {
   int counter = 1;
-  vec4 cur = load(volume, index, counter);
-  if (length(cur) < 1.0e-3) {
+  vec4 cur = load(cur_volume, index, counter);
+  //if (length(cur) < 1.0e-3) {
     cur += load(volume, index + ivec3(-1, 0, 0), counter);
     cur += load(volume, index + ivec3(1, 0, 0), counter);
     cur += load(volume, index + ivec3(0, -1, 0), counter);
     cur += load(volume, index + ivec3(0, 1, 0), counter);
     cur += load(volume, index + ivec3(0, 0, -1), counter);
     cur += load(volume, index + ivec3(0, 0, 1), counter);
-    imageStore(w, index.xyz, cur / float(counter) * 0.2);
-  }
+    imageStore(w, index.xyz, cur / float(counter) * 0.99);
+  //}
 }
 
 void main() {
@@ -108,8 +111,8 @@ void main() {
     return;
 
   ivec3 index = ivec3(gl_GlobalInvocationID.xyz);
-  propagate(s_LPV_R, LPV_R, index);
-  propagate(s_LPV_G, LPV_G, index);
-  propagate(s_LPV_B, LPV_B, index);
+  propagate(n_LPV_R, s_LPV_R, LPV_R, index);
+  propagate(n_LPV_G, s_LPV_G, LPV_G, index);
+  propagate(n_LPV_B, s_LPV_B, LPV_B, index);
 
 }

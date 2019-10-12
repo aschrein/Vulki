@@ -113,9 +113,9 @@ void main() {
     imageStore(LPV_R, index.xzy, R_SH_Value / weight_sum);
     imageStore(LPV_G, index.xzy, G_SH_Value / weight_sum);
     imageStore(LPV_B, index.xzy, B_SH_Value / weight_sum);
-  } else {
+  }/* else {
     imageStore(LPV_R, index.xzy, vec4(0.0));
     imageStore(LPV_G, index.xzy, vec4(0.0));
     imageStore(LPV_B, index.xzy, vec4(0.0));
-  }
+  }*/
 }
