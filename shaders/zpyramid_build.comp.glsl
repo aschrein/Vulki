@@ -35,7 +35,7 @@ void main() {
                           ivec2(gl_GlobalInvocationID.xy) * 2 + ivec2(1, 1), 0);
       imageStore(out_image[push_constants.dst_level],
                           ivec2(gl_GlobalInvocationID.xy),
-                          max(in_value_0, max(in_value_1, max(in_value_2, in_value_3)))
+                          min(in_value_0, min(in_value_1, min(in_value_2, in_value_3)))
                           );
     }
 }

@@ -1462,47 +1462,59 @@ struct Graphics_Utils_State {
     ASSERT_PANIC(!bound_pipe);
     id_binding_table[{name, index}] = _Resource_View{.res_id = id};
   }
+  u32 init_history(std::string const &res_name) {
+    std::string id = "~" + res_name;
+    auto res_id = resource_name_table.find(res_name)->second;
+    auto &res = resources[res_id];
+    if (res.type == Resource_Type::RT) {
+      auto &rt = rts[res.ref];
+      auto &img = images[rt.image_id];
+      u32 new_image_id = images.push(device_wrapper.alloc_state->allocate_image(
+          img.create_info, VMA_MEMORY_USAGE_GPU_ONLY));
+      // @Cleanup: Clear image upon creation
+
+      auto &cmd = device_wrapper.cur_cmd();
+      bool resume_pass = false;
+      if (bound_pass) {
+        auto &pass = passes[cur_gfx_state.pass];
+        _end_pass(cmd, pass);
+        resume_pass = true;
+      }
+      auto &new_img = images[new_image_id];
+      new_img.barrier(cmd, device_wrapper.graphics_queue_family_id,
+                      vk::ImageLayout::eTransferDstOptimal,
+                      vk::AccessFlagBits::eColorAttachmentWrite);
+      cmd.clearColorImage(
+          new_img.image, vk::ImageLayout::eTransferDstOptimal,
+          vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f}),
+          {vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0u, 1u,
+                                     0u, 1u)});
+      if (resume_pass) {
+        auto &pass = passes[cur_gfx_state.pass];
+        _begin_pass(cmd, pass);
+      }
+
+      //
+      RT_Details new_rt{};
+      new_rt.name = id;
+      new_rt.image_id = new_image_id;
+      u32 new_rt_id = rts.push(std::move(new_rt));
+      auto new_res_id =
+          resources.push({.type = Resource_Type::RT, .ref = new_rt_id});
+      history_use.insert({res_name, new_res_id});
+    } else {
+      ASSERT_PANIC(false);
+    }
+  }
   void bind_resource(std::string const &name, std::string const &id,
                      u32 index) {
     std::string res_name = id;
     if (res_name[0] == '~') {
       res_name = res_name.substr(1);
       if (history_use.find(res_name) == history_use.end()) {
-        auto res_id = resource_name_table.find(res_name)->second;
-        auto &res = resources[res_id];
-        if (res.type == Resource_Type::RT) {
-          auto &rt = rts[res.ref];
-          auto &img = images[rt.image_id];
-          u32 new_image_id =
-              images.push(device_wrapper.alloc_state->allocate_image(
-                  img.create_info, VMA_MEMORY_USAGE_GPU_ONLY));
-          // @Cleanup: Clear image upon creation
-          auto &pass = passes[cur_gfx_state.pass];
-          auto &cmd = device_wrapper.cur_cmd();
-          _end_pass(cmd, pass);
-          auto &new_img = images[new_image_id];
-          new_img.barrier(cmd, device_wrapper.graphics_queue_family_id,
-                          vk::ImageLayout::eTransferDstOptimal,
-                          vk::AccessFlagBits::eColorAttachmentWrite);
-          cmd.clearColorImage(
-              new_img.image, vk::ImageLayout::eTransferDstOptimal,
-              vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f}),
-              {vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0u,
-                                         1u, 0u, 1u)});
-          _begin_pass(cmd, pass);
-          //
-          RT_Details new_rt{};
-          new_rt.name = id;
-          new_rt.image_id = new_image_id;
-          u32 new_rt_id = rts.push(std::move(new_rt));
-          auto new_res_id =
-              resources.push({.type = Resource_Type::RT, .ref = new_rt_id});
-          history_use.insert({res_name, new_res_id});
-
-        } else {
-          ASSERT_PANIC(false);
-        }
+        init_history(res_name);
       }
+
       // Images only for now
       bind_resource(name, history_use.find(res_name)->second, index);
     } else {
@@ -1701,7 +1713,8 @@ struct Graphics_Utils_State {
           img.barrier(cmd, device_wrapper.graphics_queue_family_id,
                       vk::ImageLayout::eGeneral,
                       vk::AccessFlagBits::eShaderRead |
-                          vk::AccessFlagBits::eShaderWrite, true);
+                          vk::AccessFlagBits::eShaderWrite,
+                      true);
         }
         dframe.update_sampled_image_descriptor(pipeline, item.first.first,
                                                _get_view(_view), sampler.get(),
@@ -1907,7 +1920,9 @@ struct Graphics_Utils_State {
       auto &rt = rts[res.ref];
       image_id = rt.image_id;
       auto &img = images[image_id];
-      ASSERT_PANIC(history_use.find(rt.name) != history_use.end());
+      if (history_use.find(rt.name) == history_use.end()) {
+        init_history(rt.name);
+      }
       auto &res_1 = resources[history_use.find(rt.name)->second];
       auto &rt_1 = rts[res_1.ref];
       auto &img_1 = images[rt_1.image_id];

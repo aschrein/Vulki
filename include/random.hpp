@@ -52,6 +52,7 @@ static vec3 sample_ggx(vec2 xi, vec3 n, vec3 v, vec3 F0, float roughness,
   float alpha = roughness * roughness;
   float alpha2 = alpha * alpha;
 
+  // Src: https://patapom.com/blog/Math/ImportanceSampling/
   float epsilon = clamp(xi.x, 0.001f, 1.0f);
   float cosTheta2 = (1.0f - epsilon) / (epsilon * (alpha2 - 1.0f) + 1.0f);
   float cosTheta = std::sqrt(cosTheta2);

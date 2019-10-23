@@ -6,7 +6,13 @@
 #include <string.h>
 
 #ifdef __GNUC__
+#include <fenv.h>
 #include <signal.h>
+// Enable floating point exceptions
+//static void __attribute__((constructor)) trapfpe() {
+//  /* Enable some exceptions.  At startup all exceptions are masked.  */
+//  feenableexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW);
+//}
 #endif
 
 static void panic_impl(char const *msg, int line) {
@@ -86,7 +92,8 @@ public:
 
 #define CONCAT_INTERNAL(x, y) x##y
 #define CONCAT(x, y) CONCAT_INTERNAL(x, y)
-#define vulki_defer const auto &CONCAT(defer__, __LINE__) = ExitScopeHelp() + [&]()
+#define vulki_defer                                                            \
+  const auto &CONCAT(defer__, __LINE__) = ExitScopeHelp() + [&]()
 
 template <typename T> struct Onetime {
   Onetime(T lambda) { lambda(); }

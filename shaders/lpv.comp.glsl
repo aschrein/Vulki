@@ -96,9 +96,9 @@ void main() {
       vec3 ndr = normalize(dr);
       float NoL = clamp(dot(ndr, normal), 0.0, 1.0);
       if (NoL > 0.0) {
-        float weight = xi.x * xi.x;
+        float weight = xi.x * xi.x + 1.0e-6;
         weight_sum += weight;
-        vec3 radiance =   10.0 * weight
+        vec3 radiance =   100.0 * weight
                           * radiant_flux
                           * NoL
                           / dist2;
@@ -113,9 +113,10 @@ void main() {
     imageStore(LPV_R, index.xzy, R_SH_Value / weight_sum);
     imageStore(LPV_G, index.xzy, G_SH_Value / weight_sum);
     imageStore(LPV_B, index.xzy, B_SH_Value / weight_sum);
-  }/* else {
-    imageStore(LPV_R, index.xzy, vec4(0.0));
-    imageStore(LPV_G, index.xzy, vec4(0.0));
-    imageStore(LPV_B, index.xzy, vec4(0.0));
-  }*/
+  }
+//  else {
+//    imageStore(LPV_R, index.xzy, vec4(0.0));
+//    imageStore(LPV_G, index.xzy, vec4(0.0));
+//    imageStore(LPV_B, index.xzy, vec4(0.0));
+//  }
 }

@@ -449,15 +449,15 @@ struct UG {
   }
   void put(vec3 const &pos, vec3 const &extent, uint index) {
     float EPS = 1.0e-1f;
-//    if (pos.x > this->max.x + extent.x * (1.0f + EPS) ||
-//        pos.y > this->max.y + extent.y * (1.0f + EPS) ||
-//        pos.z > this->max.z + extent.z * (1.0f + EPS) ||
-//        pos.x < this->min.x - extent.x * (1.0f + EPS) ||
-//        pos.y < this->min.y - extent.y * (1.0f + EPS) ||
-//        pos.z < this->min.z - extent.z * (1.0f + EPS)) {
-//      panic("");
-//      return;
-//    }
+    //    if (pos.x > this->max.x + extent.x * (1.0f + EPS) ||
+    //        pos.y > this->max.y + extent.y * (1.0f + EPS) ||
+    //        pos.z > this->max.z + extent.z * (1.0f + EPS) ||
+    //        pos.x < this->min.x - extent.x * (1.0f + EPS) ||
+    //        pos.y < this->min.y - extent.y * (1.0f + EPS) ||
+    //        pos.z < this->min.z - extent.z * (1.0f + EPS)) {
+    //      panic("");
+    //      return;
+    //    }
     ivec3 min_ids =
         ivec3((pos - min - vec3(EPS, EPS, EPS) - extent) / bin_size);
     ivec3 max_ids =
@@ -500,6 +500,9 @@ struct UG {
   void
   iterate(vec3 ray_dir, vec3 ray_origin,
           std::function<bool(std::vector<u32> const &, float t_max)> on_hit) {
+          // @Cleanup: Fix devision by zero
+    ito(3) if (std::abs(ray_dir[i]) < 1.0e-7f) ray_dir[i] =
+        (std::signbit(ray_dir[i]) ? -1.0f : 1.0f) * 1.0e-7f;
     vec3 ray_invdir = 1.0f / ray_dir;
     float hit_min;
     float hit_max;
@@ -558,8 +561,8 @@ struct UG {
     }
   }
   static void push_cube(std::vector<vec3> &lines, float bin_idx, float bin_idy,
-                   float bin_idz, float bin_size_x, float bin_size_y,
-                   float bin_size_z){
+                        float bin_idz, float bin_size_x, float bin_size_y,
+                        float bin_size_z){
       {const u32 iter_x[] = {0, 0, 1, 1, 0, 0, 1, 1, 0, 0};
   const u32 iter_y[] = {0, 1, 1, 0, 0, 0, 0, 1, 1, 0};
   const u32 iter_z[] = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
@@ -594,7 +597,8 @@ struct UG {
 ;
 void fill_lines_render(std::vector<vec3> &lines) {
 
-  push_cube(lines, min.x, min.y, min.z, max.x - min.x, max.y - min.y, max.z - min.z);
+  push_cube(lines, min.x, min.y, min.z, max.x - min.x, max.y - min.y,
+            max.z - min.z);
   for (int dx = 0; dx < bin_count.x; dx++) {
     for (int dy = 0; dy < bin_count.y; dy++) {
       for (int dz = 0; dz < bin_count.z; dz++) {
@@ -605,7 +609,8 @@ void fill_lines_render(std::vector<vec3> &lines) {
           const auto bin_idx = bin_size * f32(dx) + this->min.x;
           const auto bin_idy = bin_size * f32(dy) + this->min.y;
           const auto bin_idz = bin_size * f32(dz) + this->min.z;
-          push_cube(lines, bin_idx, bin_idy, bin_idz, bin_size, bin_size, bin_size);
+          push_cube(lines, bin_idx, bin_idy, bin_idz, bin_size, bin_size,
+                    bin_size);
         }
       }
     }

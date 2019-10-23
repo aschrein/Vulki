@@ -70,6 +70,13 @@ cmake --build . --target all
   * Sparse surface splats
 
 ## References
+[Lighting of Halo 3](http://developer.amd.com/wordpress/media/2013/01/Chapter01-Chen-Lighting_and_Material_of_Halo3.pdf)
+
+[MJP: SG Series](https://mynameismjp.wordpress.com/2016/10/09/sg-series-part-1-a-brief-and-incomplete-history-of-baked-lighting-representations/)
+
+[Frostbite precomputed GI](https://media.contentapi.ea.com/content/dam/eacom/frostbite/files/gdc2018-precomputedgiobalilluminationinfrostbite.pdf)
+
+[Tatarchuk: Irradiance volumes](http://developer.amd.com/wordpress/media/2012/10/Tatarchuk_Irradiance_Volumes.pdf)
 
 [Learn OpenGL: Specular IBL](https://learnopengl.com/PBR/IBL/Specular-IBL)
 
@@ -92,6 +99,16 @@ cmake --build . --target all
 [Vulkan Synchronization Primer - Part II](https://www.jeremyong.com/vulkan/graphics/rendering/2018/11/23/vulkan-synchonization-primer-part-ii/)
 
 [GPU Zen 2: Advanced Rendering Techniques](https://www.amazon.com/GPU-Zen-Advanced-Rendering-Techniques/dp/179758314X)
+
+[Patapom: Importance sampling](https://patapom.com/blog/Math/ImportanceSampling/)
+
+[Veach: Multiple importance sampling](https://graphics.stanford.edu/courses/cs348b-03/papers/veach-chapter9.pdf)
+
+[Past, Present and Future Challenges of Global Illumination in Games](https://www.slideshare.net/colinbb/past-present-and-future-challenges-of-global-illumination-in-games)
+
+[Ready at dawn: the order 1886](https://readyatdawn.sharefile.com/share/view/se5db3017e9b48a88)
+
+[Stochastic Screen-Space Reflections](https://www.slideshare.net/DICEStudio/stochastic-screenspace-reflections)
 
 ## Assets
 ### Models downloaded from Sketchfab

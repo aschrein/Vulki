@@ -581,6 +581,7 @@ void Device_Wrapper::window_loop() {
       this->update_swap_chain();
     }
   }
+  // @TODO: Remove this
   device->waitIdle();
   ImGui_ImplVulkan_Shutdown();
   ImGui_ImplGlfw_Shutdown();

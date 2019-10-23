@@ -35,16 +35,16 @@ using namespace glm;
 TEST(math, solid_angle) {
   float dim = 10.0f;
   vec3 points[] = {
-    vec3(-dim, 0.0f, 1.0f),
-    vec3(dim, 0.0f, 1.0f),
-    vec3(dim, dim, 1.0f),
-    vec3(-dim, dim, 1.0f),
+      vec3(-dim, 0.0f, 1.0f),
+      vec3(dim, 0.0f, 1.0f),
+      vec3(dim, dim, 1.0f),
+      vec3(-dim, dim, 1.0f),
   };
   vec3 N = vec3(0.0f, 1.0f, 0.0f);
   vec3 V = glm::normalize(vec3(1.0f, 1.0f, 0.0f));
   vec3 P = vec3(0.0f, 0.0f, 0.0f);
   std::cout << LTC::plane_solid_angle(N, V, P, points) << "\n";
-
+  { float t = 1.0f / 0.0f; }
 }
 
 int main(int argc, char **argv) {

@@ -76,7 +76,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   scene.init_black_env();
   //  scene.load_model("models/demon_in_thought_3d_print/scene.gltf");
   //  scene.load_model("models/MetalRoughSpheres/MetalRoughSpheres.gltf");
-  scene.load_model("models/cornel.gltf");
+  scene.load_model("models/ssr_test_0.gltf");
   scene.push_light(Light_Source{
       .type = Light_Type::PLANE,
       .power = vec3(0.0f), // vec3(2.2f, 2.2f, 2.2f),
@@ -117,13 +117,13 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
   float drag_val = 0.0;
 
   // #IMGUI
-  bool display_gizmo_layer = true;
+  bool display_gizmo_layer = false;
   bool enable_ao = false;
   bool display_ug = false;
   bool display_wire = false;
   bool denoise = false;
-  bool display_lpv = true;
-  bool display_shadow = true;
+  bool display_lpv = false;
+  bool display_shadow = false;
   gu.set_on_gui([&] {
     gizmo_layer.on_imgui_begin();
     if (gizmo_layer.mouse_click[0]) {
@@ -317,8 +317,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
     lpv.dir_light_id = sun_id;
     lpv.farz = 200.0f;
     lpv.nearz = 0.0f;
-    lpv.width = 70.0f;
-    lpv.height = 70.0f;
+    lpv.width = 32.0f;
+    lpv.height = 32.0f;
     lpv.volume_min = vec3(-32.0f);
     lpv.volume_max = vec3(32.0f);
     lpv.volume_cell_size = (lpv.volume_max - lpv.volume_min) / 32.0f;
@@ -644,7 +644,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           });
     }
     gu.create_compute_pass(
-        "postprocess", {"shading.HDR"},
+        "postprocess", {"shading.HDR", "SSR.UV"},
         {render_graph::Resource{
             .name = "postprocess.HDR",
             .type = render_graph::Type::Image,
@@ -663,14 +663,59 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.push_constants(&pc, sizeof(pc));
           gu.bind_resource("out_image", "postprocess.HDR");
           gu.bind_resource("in_image", "shading.HDR");
+          gu.bind_resource("in_ssr_uv", "SSR.UV");
           gu.CS_set_shader("postprocess.comp.glsl");
           gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
         });
+        gu.create_compute_pass(
+        "SSR",
+        {"g_pass.normal", "g_pass.metal", "depth_mips"},
+        {render_graph::Resource{
+            .name = "SSR.UV",
+            .type = render_graph::Type::Image,
+            .image_info =
+                render_graph::Image{.format = vk::Format::eR32G32B32A32Sfloat,
+                                    .use = render_graph::Use::UAV,
+                                    .width = u32(wsize.x),
+                                    .height = u32(wsize.y),
+                                    .depth = 1,
+                                    .levels = 1,
+                                    .layers = 1}}},
+        [&] {
+          sh_ssr_comp::UBO ubo{};
+          ubo.camera_up = gizmo_layer.camera.up;
+          ubo.camera_pos = gizmo_layer.camera.pos;
+          ubo.camera_right = gizmo_layer.camera.right;
+          ubo.camera_look = gizmo_layer.camera.look;
+          ubo.camera_inv_tan = 1.0f / std::tan(gizmo_layer.camera.fov / 2.0f);
+          ubo.camera_jitter = gizmo_layer.camera_jitter;
+          ubo.viewproj = gizmo_layer.camera.viewproj();
+          ubo.view = gizmo_layer.camera.view;
+
+          u32 ubo_id = gu.create_buffer(
+              render_graph::Buffer{.usage_bits =
+                                       vk::BufferUsageFlagBits::eUniformBuffer,
+                                   .size = sizeof(ubo)},
+              &ubo);
+          gu.bind_resource("UBO", ubo_id);
+
+          gu.bind_resource("out_image", "SSR.UV");
+          gu.bind_resource("g_normal", "g_pass.normal");
+          gu.bind_resource("g_metal", "g_pass.metal");
+          gu.bind_resource("g_depth", "depth_mips");
+
+          gu.CS_set_shader("ssr.comp.glsl");
+          gu.dispatch(u32(wsize.x + 15) / 16, u32(wsize.y + 15) / 16, 1);
+          gu.release_resource(ubo_id);
+
+        });
+
     gu.create_compute_pass(
         "shading",
         {"g_pass.albedo", "g_pass.normal", "g_pass.metal", "depth_mips",
          "~shading.HDR", "IBL.specular", "IBL.LUT", "IBL.diffuse",
-         "g_pass.gizmo", "LPV.R", "LPV.G", "LPV.B"},
+         "g_pass.gizmo", "LPV.R", "LPV.G", "LPV.B"
+         },
         {render_graph::Resource{
             .name = "shading.HDR",
             .type = render_graph::Type::Image,
@@ -768,6 +813,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.bind_resource("textures", ltc_invm_id, 3);
           gu.bind_resource("textures", ltc_amp_id, 4);
           gu.bind_resource("textures", "sun_rsm.depth", 5);
+//          gu.bind_resource("textures", "SSR.UV", 6);
           gu.bind_resource("g_lpv_r", "LPV.R");
           gu.bind_resource("g_lpv_g", "LPV.G");
           gu.bind_resource("g_lpv_b", "LPV.B");
@@ -873,6 +919,8 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
 
         },
         2048, 2048, [&] {
+          if (!display_shadow)
+            return;
           gu.clear_color({0.0f, 0.0f, 0.0f, 0.0f});
           gu.clear_depth(1.0f);
           gu.VS_set_shader("glrf.rsm.vert.glsl");
@@ -905,7 +953,7 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
           gu.release_resource(ubo_id);
         });
     gu.create_render_pass(
-        "g_pass", {},
+        "g_pass", {"LPV.R", "LPV.G", "LPV.B"},
         {
             render_graph::Resource{
                 .name = "g_pass.albedo",
@@ -946,10 +994,10 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
 
         },
         wsize.x, wsize.y, [&] {
-          gu.clear_color({0.0f, 0.0f, 0.0f, 0.0f});
-          gu.clear_depth(1.0f);
-          gu.VS_set_shader("gltf.vert.glsl");
-          gu.PS_set_shader("gltf.frag.glsl");
+          // Bindings
+          gu.bind_resource("s_LPV_R", "LPV.R");
+          gu.bind_resource("s_LPV_G", "LPV.G");
+          gu.bind_resource("s_LPV_B", "LPV.B");
           sh_gltf_vert::UBO ubo{};
           ubo.proj = gizmo_layer.camera.proj;
           ubo.view = gizmo_layer.camera.view;
@@ -960,19 +1008,47 @@ TEST(graphics, vulkan_graphics_test_render_graph) try {
                                    .size = sizeof(sh_gltf_vert::UBO)},
               &ubo);
           gu.bind_resource("UBO", ubo_id);
+          ito(textures.size()) {
+            auto &tex = textures[i];
+            gu.bind_resource("textures", tex, i);
+          }
+
+          //
+          gu.clear_color({0.0f, 0.0f, 0.0f, 0.0f});
+          gu.clear_depth(1.0f);
+          gu.VS_set_shader("gltf.vert.glsl");
+          gu.PS_set_shader("gltf.frag.glsl");
+
           gu.IA_set_topology(vk::PrimitiveTopology::eTriangleList);
           gu.IA_set_cull_mode(vk::CullModeFlagBits::eBack,
                               vk::FrontFace::eClockwise, vk::PolygonMode::eFill,
                               1.0f);
           gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual, true,
                                         1.0f);
-          ito(textures.size()) {
-            auto &tex = textures[i];
-            gu.bind_resource("textures", tex, i);
-          }
 
           traverse_node(0);
           if (display_gizmo_layer) {
+            {
+              sh_lpv_debug_vert::g_ubo pc{};
+              pc.viewproj = gizmo_layer.camera.viewproj();
+              pc.lpv_min = lpv.volume_min;
+              pc.lpv_max = lpv.volume_max;
+              pc.lpv_cell_size = lpv.volume_cell_size;
+              pc.lpv_size =
+                  uvec3(lpv.volume_width, lpv.volume_height, lpv.volume_depth);
+              gu.push_constants(&pc, sizeof(pc));
+              gu.IA_set_topology(vk::PrimitiveTopology::eLineList);
+              gu.IA_set_cull_mode(vk::CullModeFlagBits::eBack,
+                                  vk::FrontFace::eClockwise,
+                                  vk::PolygonMode::eLine, 1.0f);
+              gu.RS_set_depth_stencil_state(true, vk::CompareOp::eLessOrEqual,
+                                            false, 1.0f, -0.1f);
+
+              gu.VS_set_shader("lpv.debug.vert.glsl");
+              gu.PS_set_shader("gizmo.frag.glsl");
+              gu.draw(pc.lpv_size.x * pc.lpv_size.y * pc.lpv_size.z * 2 * 3, 1,
+                      0, 0);
+            }
             if (display_wire) {
               gu.VS_set_shader("gltf.vert.glsl");
               gu.PS_set_shader("red.frag.glsl");

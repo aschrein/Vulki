@@ -523,8 +523,8 @@ struct Gizmo_Layer {
       camera_jitter = vec2(0.0f, 0.0f);
     }
     cur_halton_id = (cur_halton_id + 1) % MAX_HALTON;
-    camera.fov =
-        M_PI / 8.0f + 5.0f * M_PI / 8.0f * std::exp(-camera.distance * 0.01f);
+//    camera.fov =
+//        M_PI / 8.0f + 5.0f * M_PI / 8.0f * std::exp(-camera.distance * 0.01f);
     camera.aspect =
         float(example_viewport.extent.width) / example_viewport.extent.height;
     camera.update(

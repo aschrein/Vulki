@@ -72,33 +72,44 @@ vec4 eval_SH_L1(vec3 l) {
   return c * vec4(l, 1.0);
 }
 
-vec4 load(sampler3D volume, ivec3 index, inout int counter) {
+vec4 load(sampler3D volume, ivec3 cur_index, ivec3 direction, inout int counter) {
   ivec3 dim = ivec3(g_ubo.lpv_size);
+  ivec3 index = cur_index + direction;
   if (
     index.x >= 0 && index.x < dim.x &&
     index.y >= 0 && index.y < dim.y &&
     index.z >= 0 && index.z < dim.z
-  ) {
-    vec4 val = texelFetch(volume, index, 0);
-    //if (length(val) > 1.0e-2) {
-      counter += 1;
-      return val;
-    //}
+  )
+  {
+    vec4 sh = texelFetch(volume, index, 0);
+    if (length(sh) > 1.0e-6) {
+      vec4 incoming_cone = vec4(-direction, 0.2);
+      vec3 sh_dir = normalize(sh.xyz);
+      float incoming_lum = clamp(dot(sh, incoming_cone), 0.0, 1.0);
+//      if (dp > 0.0) {
+        counter += 1;
+        return mix(incoming_cone * incoming_lum, sh, vec4(0.2));
+//      }
+    }
   }
   return vec4(0.0, 0.0, 0.0, 0.0);
 }
 
 void propagate(sampler3D cur_volume, sampler3D volume, writeonly image3D w, ivec3 index) {
-  int counter = 1;
-  vec4 cur = load(cur_volume, index, counter);
+  int counter = 0;
+  vec4 cur = vec4(0.0);
   //if (length(cur) < 1.0e-3) {
-    cur += load(volume, index + ivec3(-1, 0, 0), counter);
-    cur += load(volume, index + ivec3(1, 0, 0), counter);
-    cur += load(volume, index + ivec3(0, -1, 0), counter);
-    cur += load(volume, index + ivec3(0, 1, 0), counter);
-    cur += load(volume, index + ivec3(0, 0, -1), counter);
-    cur += load(volume, index + ivec3(0, 0, 1), counter);
-    imageStore(w, index.xyz, cur / float(counter) * 0.99);
+    cur += load(volume, index, ivec3(-1, 0, 0), counter);
+    cur += load(volume, index, ivec3(1, 0, 0), counter);
+    cur += load(volume, index, ivec3(0, -1, 0), counter);
+    cur += load(volume, index, ivec3(0, 1, 0), counter);
+    cur += load(volume, index, ivec3(0, 0, -1), counter);
+    cur += load(volume, index, ivec3(0, 0, 1), counter);
+    float weight = 1.0 / float(counter);
+    if (counter > 0)
+    imageStore(w, index.xyz, texelFetch(cur_volume, index, 0) * 0.01 +
+                              cur * 0.45);
+//    imageStore(w, index.xyz, vec4(0.0));
   //}
 }
 
